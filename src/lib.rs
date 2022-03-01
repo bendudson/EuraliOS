@@ -16,6 +16,8 @@ use core::panic::PanicInfo;
 pub fn init() {
     gdt::init();
     interrupts::init_idt();
+    unsafe { interrupts::PICS.lock().initialize() }; // Configure hardware interrupt controller
+    x86_64::instructions::interrupts::enable(); // CPU starts listening for hardware interrupts
 }
 
 // Custom test framework
