@@ -6,12 +6,45 @@
 
 use core::panic::PanicInfo;
 use blog_os::println;
+use bootloader::{BootInfo, entry_point};
 
-#[no_mangle]
-pub extern "C" fn _start() -> ! {
+entry_point!(kernel_main);
+
+/// Function called by the bootloader
+/// via _start entry point declared in entry_point! above
+///
+/// Inputs
+///  BootInfo    Bootloader memory mapping information
+///
+fn kernel_main(boot_info: &'static BootInfo) -> ! {
+    use blog_os::memory;
+    use x86_64::{structures::paging::Translate, VirtAddr};
+
     println!("Hello World{}", "!");
 
     blog_os::init();
+
+    // Initialise the memory mapper
+    let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
+    let mapper = unsafe { memory::init(phys_mem_offset) };
+
+    let addresses = [
+        // the identity-mapped vga buffer page
+        0xb8000,
+        // some code page
+        0x201008,
+        // some stack page
+        0x0100_0020_1a10,
+        // virtual address mapped to physical address 0
+        boot_info.physical_memory_offset,
+    ];
+
+    for &address in &addresses {
+        let virt = VirtAddr::new(address);
+        // new: use the `mapper.translate_addr` method
+        let phys = mapper.translate_addr(virt);
+        println!("{:?} -> {:?}", virt, phys);
+    }
 
     #[cfg(test)]
     test_main();
