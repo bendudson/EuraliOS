@@ -68,3 +68,13 @@ fn many_boxes() {
         assert_eq!(*x, i);
     }
 }
+
+#[test_case]
+fn many_boxes_long_lived() {
+    let long_lived = Box::new(1); // A single long-lived allocation
+    for i in 0..HEAP_SIZE {
+        let x = Box::new(i); // Many short-lived allocations
+        assert_eq!(*x, i);
+    }
+    assert_eq!(*long_lived, 1); // new
+}
