@@ -3,6 +3,8 @@ use x86_64::structures::tss::TaskStateSegment;
 use lazy_static::lazy_static;
 
 pub const DOUBLE_FAULT_IST_INDEX: u16 = 0;
+pub const PAGE_FAULT_IST_INDEX: u16 = 0;
+pub const GENERAL_PROTECTION_FAULT_IST_INDEX: u16 = 0;
 
 lazy_static! {
     static ref TSS: TaskStateSegment = {
