@@ -22,26 +22,42 @@ lazy_static! {
 use x86_64::structures::gdt::{GlobalDescriptorTable, Descriptor, SegmentSelector};
 
 lazy_static! {
+    // Set up the Global Descriptor Table the first time this is accessed
+    // This adapted from MOROS https://github.com/vinc/moros/blob/trunk/src/sys/gdt.rs#L37
     static ref GDT: (GlobalDescriptorTable, Selectors) = {
         let mut gdt = GlobalDescriptorTable::new();
+        // Ring 0 segments for the kernel
         let code_selector = gdt.add_entry(Descriptor::kernel_code_segment());
+        let data_selector = gdt.add_entry(Descriptor::kernel_data_segment());
         let tss_selector = gdt.add_entry(Descriptor::tss_segment(&TSS));
-        (gdt, Selectors { code_selector, tss_selector })
+        // Ring 3 data and code segments for user code
+        let user_data_selector = gdt.add_entry(Descriptor::user_data_segment());
+        let user_code_selector = gdt.add_entry(Descriptor::user_code_segment());
+        (gdt, Selectors { code_selector, data_selector, tss_selector,
+                          user_code_selector, user_data_selector})
     };
 }
 
 struct Selectors {
     code_selector: SegmentSelector,
+    data_selector: SegmentSelector,
     tss_selector: SegmentSelector,
+    user_data_selector: SegmentSelector,
+    user_code_selector: SegmentSelector
 }
 
 pub fn init() {
-    use x86_64::instructions::segmentation::set_cs;
+    use x86_64::instructions::segmentation::{Segment, CS, DS};
     use x86_64::instructions::tables::load_tss;
 
     GDT.0.load();
     unsafe {
-        set_cs(GDT.1.code_selector);
+        CS::set_reg(GDT.1.code_selector);
+        DS::set_reg(GDT.1.data_selector);
         load_tss(GDT.1.tss_selector);
     }
+}
+
+pub fn get_user_segments() -> (SegmentSelector, SegmentSelector) {
+    (GDT.1.user_code_selector, GDT.1.user_data_selector)
 }
