@@ -12,8 +12,13 @@ use bootloader::{BootInfo, entry_point};
 // use alloc::{boxed::Box, vec, vec::Vec, rc::Rc};
 
 use blog_os::memory;
+use blog_os::process;
 
 entry_point!(kernel_main);
+
+fn test_kernel_fn() {
+    println!("Hello from kernel function!");
+}
 
 /// Function called by the bootloader
 /// via _start entry point declared in entry_point! above
@@ -28,6 +33,9 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     // Set up memory and kernel heap with allocator
     memory::init(boot_info);
+
+
+    process::new_kernel_thread(test_kernel_fn);
 
     #[cfg(test)]
     test_main();

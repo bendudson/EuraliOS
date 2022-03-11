@@ -12,6 +12,7 @@ pub mod interrupts;
 pub mod gdt;
 pub mod memory;
 pub mod allocator;
+pub mod process;
 
 extern crate alloc; // Memory allocation in stdlib
 
