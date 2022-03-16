@@ -1,0 +1,198 @@
+* Interrupts and processes
+
+This begins after [[https://os.phil-opp.com/heap-allocation/][Phil-Opp's excellent post on heap allocation]]: We
+have a kernel with basic terminal and keyboard I/O, and kernel memory
+allocation from a fixed size heap.
+
+** Accessing processor context
+
+The x86-interrupt calling convention saves scratch registers, and passes a pointer
+to the exception stack frame to the handler function. It was introduced in
+[[https://github.com/rust-lang/rust/pull/39832][this PR]] which has some useful comparisons and links. 
+
+In =interrupts.rs= :
+#+BEGIN_SRC rust
+#[derive(Debug)]
+#[repr(packed)]
+pub struct Context {
+    // These are pushed in the handler function
+    fs: usize,
+    r11: usize,
+    r10: usize,
+    r9: usize,
+    r8: usize,
+    rsi: usize,
+    rdi: usize,
+    rdx: usize,
+    rcx: usize,
+    rax: usize,
+    // Below is the exception stack frame pushed by the CPU on interrupt
+    // Note: For some interrupts (e.g. Page fault), an error code is pushed here
+    rip: usize,     // Instruction pointer
+    cs: usize,      // Code segment
+    rflags: usize,  // Processor flags
+    rsp: usize,     // Stack pointer
+    ss: usize,      // Stack segment
+    // Here the CPU may push values to align the stack on a 16-byte boundary (for SSE)
+}
+#+END_SRC
+
+We now define a function
+
+#+BEGIN_SRC rust
+#[naked]
+pub extern "x86-interrupt" fn timer_handler_naked (
+   _stack_frame: InterruptStackFrame) {
+  unsafe {
+  ...
+  }
+}
+#+END_SRC
+Here the =x86-interrupt= calling convention is specified to satisfy
+the requirements of the IDT =set_handler_fn= method, but doesn't have
+any effect because the function is =[naked]=.
+
+Because naked functions are still somewhat experimental, we
+need to enable this feature in =lib.rs=:
+#+BEGIN_SRC rust
+#![feature(naked_functions)]
+#+END_SRC
+
+While we're editing =lib.rs=, add another feature we'll need soon:
+#+BEGIN_SRC rust
+#![feature(asm_sym)]
+#+END_SRC
+which enables the =sym= operands in assembly blocks, used to take
+the address of symbols.
+
+Now we can fill in the =unsafe= block in the =timer_handler_naked=
+function. In =interrupts.rs= import the =asm!= macro:
+#+BEGIN_SRC rust
+use core::arch::asm;
+#+END_SRC
+and then create an =asm!= block inside the unsafe scope of
+=timer_handler_naked=:
+#+BEGIN_SRC rust
+  asm!(
+      // Disable interrupts
+      "cli",
+      // Push registers
+      "push rax
+       push rcx
+       push rdx
+       push rdi
+       push rsi
+       push r8
+       push r9
+       push r10
+       push r11
+       push fs",
+
+      // First argument in rdi with C calling convention
+      "mov rdi, rsp",
+      // Call the hander function. Note that this might switch stack.
+      "call {handler}",
+
+      // Pop scratch registers
+      "pop fs
+       pop r11
+       pop r10
+       pop r9
+       pop r8
+       pop rsi
+       pop rdi
+       pop rdx
+       pop rcx
+       pop rax",
+      // Enable interrupts
+      "sti",
+      // Interrupt return
+      "iretq",
+      // Note: Getting the handler pointer here using `sym` operand, because
+      // an `in` operand would clobber a register that we need to save, and we
+      // can't have two asm blocks
+      handler = sym timer_handler,
+      options(noreturn)
+  );
+#+END_SRC
+
+The final part is to create the actual handler which will be
+called:
+#+BEGIN_SRC rust
+extern "C" fn timer_handler(context: &mut Context) {
+    print!("+");
+
+    // Tell the PIC that the interrupt has been processed
+    unsafe {
+        PICS.lock()
+            .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
+    }
+}
+#+END_SRC
+Note that the C calling convention here means some registers will
+be pushed onto the stack again.
+We then set the IDT entry to the new handler:
+#+BEGIN_SRC rust
+idt[InterruptIndex::Timer.as_usize()]
+            .set_handler_fn(timer_handler_naked); // new
+#+END_SRC
+
+*** Testing
+
+First check that this compiles and runs (=cargo run=). We can
+then check that the values of the registers are saved and
+restored correctly. In the new =timer_handler= function we can
+print some registers, change change them, and then checking
+that the change is seen in the interrupted code.
+
+In =main.rs=, before the =hlt_loop()= call we can try this:
+#+BEGIN_SRC rust
+  // Set some registers
+  unsafe {
+    asm!("mov r11, 0x4242",
+         "mov rdi, 0x22",
+         "mov rcx, 0x93"
+    );
+  }
+
+  // Wait for an interrupt
+  unsafe {asm!("hlt");}
+
+  // Get the register values
+  let (r11, rdi, rcx): (i64, i64, i64);
+  unsafe {asm!("nop",
+               lateout("r11") r11,
+               lateout("rdi") rdi,
+               lateout("rcx") rcx);}
+  println!("R11: 0x{:x} RDI: 0x{:x} RCX: 0x{:x}", r11, rdi, rcx);
+#+END_SRC
+which will need the =asm!= macro so put =use core::arch::asm;= near
+the top of =main.rs=. When this runs we should see
+=R11: 0x4242 RDI: 0x22 RCX: 0x93=, so the registers weren't modified by
+the interrupt.
+
+Now in =interrupt.rs= we can access and modify some registers, and check
+that they are set correctly:
+#+BEGIN_SRC rust
+extern "C" fn timer_handler(context: &mut Context) {
+    print!("<0x{:x}, 0x{:x}>", context.r11, context.rcx);
+    context.r11 = context.rdi + 0x5321;
+    context.rcx = 0xdeadbeef;
+
+    // Tell the PIC that the interrupt has been processed
+    unsafe {
+        PICS.lock()
+            .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
+    }
+}
+#+END_SRC
+So we now print the values of some registers, and modify the =r11= and =rcx=
+registers. Running again we should see:
+#+BEGIN_SRC
+<0x4242, 0x93> R11: 0x5343 RDI: 0x22 RCX: 0xDEADBEEF
+It did not crash!
+<0x5343, 0xDEADBEEF><0x5343, 0xDEADBEEF>...
+#+END_SRC
+This shows that the timer handler can read and modify the process state,
+which we'll need when we want to switch processes.
+
