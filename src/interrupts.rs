@@ -86,53 +86,61 @@ extern "C" fn timer_handler(context: &mut Context) {
 ///    are read and written. During a context switch we want to pop
 ///    different values to those pushed.
 ///
-#[naked]
-pub extern "x86-interrupt" fn timer_handler_naked (_stack_frame: InterruptStackFrame) {
-    // Naked functions must consist of a single asm! block
-    unsafe{
-    asm!(
-        // Disable interrupts
-        "cli",
-        // Push registers
-        "push rax
-         push rcx
-         push rdx
-         push rdi
-         push rsi
-         push r8
-         push r9
-         push r10
-         push r11
-         push fs",
+/// Macro wrapper adapted from MOROS by Vincent Ollivier
+/// https://github.com/vinc/moros/blob/trunk/src/sys/idt.rs#L123
+macro_rules! wrap {
+    ($func: ident => $wrapper:ident) => {
+        #[naked]
+        pub extern "x86-interrupt" fn $wrapper (_stack_frame: InterruptStackFrame) {
+            // Naked functions must consist of a single asm! block
+            unsafe{
+                asm!(
+                    // Disable interrupts
+                    "cli",
+                    // Push registers
+                    "push rax",
+                    "push rcx",
+                    "push rdx",
+                    "push rdi",
+                    "push rsi",
+                    "push r8",
+                    "push r9",
+                    "push r10",
+                    "push r11",
+                    "push fs",
 
-        // First argument in rdi with C calling convention
-        "mov rdi, rsp",
-        // Call the hander function. Note that this might switch stack.
-        "call {handler}",
+                    // First argument in rdi with C calling convention
+                    "mov rdi, rsp",
+                    // Call the hander function. Note that this might switch stack.
+                    "call {handler}",
 
-        // Pop scratch registers
-        "pop fs
-         pop r11
-         pop r10
-         pop r9
-         pop r8
-         pop rsi
-         pop rdi
-         pop rdx
-         pop rcx
-         pop rax",
-        // Enable interrupts
-        "sti",
-        // Interrupt return
-         "iretq",
-        // Note: Getting the handler pointer here using `sym` operand, because
-        // an `in` operand would clobber a register that we need to save, and we
-        // can't have two asm blocks
-        handler = sym timer_handler,
-        options(noreturn)
-    );
-    }
+                    // Pop scratch registers
+                    "pop fs",
+                    "pop r11",
+                    "pop r10",
+                    "pop r9",
+                    "pop r8",
+                    "pop rsi",
+                    "pop rdi",
+                    "pop rdx",
+                    "pop rcx",
+                    "pop rax",
+                    // Enable interrupts
+                    "sti",
+                    // Interrupt return
+                    "iretq",
+                    // Note: Getting the handler pointer here using `sym` operand, because
+                    // an `in` operand would clobber a register that we need to save, and we
+                    // can't have two asm blocks
+                    handler = sym $func,
+                    options(noreturn)
+                );
+            }
+        }
+    };
 }
+
+wrap!(timer_handler => timer_handler_naked);
 
 extern "x86-interrupt" fn breakpoint_handler(
     stack_frame: InterruptStackFrame)

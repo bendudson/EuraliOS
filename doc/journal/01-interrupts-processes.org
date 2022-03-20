@@ -196,3 +196,28 @@ It did not crash!
 This shows that the timer handler can read and modify the process state,
 which we'll need when we want to switch processes.
 
+*** Test case
+
+To turn this into a test case we can keep around, we need some way to test the
+wrapper code while replacing the =timer_handler=.
+Based on the [[https://github.com/vinc/moros/blob/trunk/src/sys/idt.rs#L123][MOROS]] code, turn the =timer_handler_naked= function into a macro:
+
+#+BEGIN_SRC rust
+  macro_rules! wrap {
+      ($func: ident => $wrapper:ident) => {
+          #[naked]
+          pub extern "x86-interrupt" fn $wrapper (_stack_frame: InterruptStackFrame) {
+              unsafe{
+                ...
+              }
+          }
+      };
+  }
+#+END_SRC
+which can create the hander as before:
+#+BEGIN_SRC rust
+wrap!(timer_handler => timer_handler_naked);
+#+END_SRC
+Running (=cargo run=) should give the same result as before, but now we can
+write tests for the macro by wrapping different functions.
+
