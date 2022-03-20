@@ -221,3 +221,6 @@ wrap!(timer_handler => timer_handler_naked);
 Running (=cargo run=) should give the same result as before, but now we can
 write tests for the macro by wrapping different functions.
 
+We can make a standalone test like the =stack_overflow= test by making the =Context= struct
+members public, exporting the =wrap= function (renamed to =interrupt_wrap=), and setting up a minimal
+IDT in the test case. This is in =tests/interrupt_wrap.rs=.

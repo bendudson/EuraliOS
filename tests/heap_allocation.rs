@@ -8,14 +8,11 @@ extern crate alloc;
 
 use bootloader::{entry_point, BootInfo};
 use core::panic::PanicInfo;
+use blog_os::memory;
 
 entry_point!(main);
 
 fn main(boot_info: &'static BootInfo) -> ! {
-    use blog_os::allocator;
-    use blog_os::memory::{self, BootInfoFrameAllocator};
-    use x86_64::VirtAddr;
-
     blog_os::init();
     memory::init(boot_info);
 

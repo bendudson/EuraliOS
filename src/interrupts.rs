@@ -35,34 +35,31 @@ pub fn init_idt() {
 }
 
 /// Structure representing values pushed on the stack when an interrupt occurs
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 #[repr(packed)]
 pub struct Context {
     // These are pushed in the handler function
-    fs: usize,
-    r11: usize,
-    r10: usize,
-    r9: usize,
-    r8: usize,
-    rsi: usize,
-    rdi: usize,
-    rdx: usize,
-    rcx: usize,
-    rax: usize,
+    pub fs: usize,
+    pub r11: usize,
+    pub r10: usize,
+    pub r9: usize,
+    pub r8: usize,
+    pub rsi: usize,
+    pub rdi: usize,
+    pub rdx: usize,
+    pub rcx: usize,
+    pub rax: usize,
     // Below is the exception stack frame pushed by the CPU on interrupt
     // Note: For some interrupts (e.g. Page fault), an error code is pushed here
-    rip: usize,     // Instruction pointer
-    cs: usize,      // Code segment
-    rflags: usize,  // Processor flags
-    rsp: usize,     // Stack pointer
-    ss: usize,      // Stack segment
+    pub rip: usize,     // Instruction pointer
+    pub cs: usize,      // Code segment
+    pub rflags: usize,  // Processor flags
+    pub rsp: usize,     // Stack pointer
+    pub ss: usize,      // Stack segment
     // Here the CPU may push values to align the stack on a 16-byte boundary (for SSE)
 }
 
 extern "C" fn timer_handler(context: &mut Context) {
-    print!("<0x{:x}, 0x{:x}>", context.r11, context.rcx);
-    context.r11 = context.rdi + 0x5321;
-    context.rcx = 0xdeadbeef;
 
     // Tell the PIC that the interrupt has been processed
     unsafe {
@@ -88,7 +85,8 @@ extern "C" fn timer_handler(context: &mut Context) {
 ///
 /// Macro wrapper adapted from MOROS by Vincent Ollivier
 /// https://github.com/vinc/moros/blob/trunk/src/sys/idt.rs#L123
-macro_rules! wrap {
+#[macro_export]
+macro_rules! interrupt_wrap {
     ($func: ident => $wrapper:ident) => {
         #[naked]
         pub extern "x86-interrupt" fn $wrapper (_stack_frame: InterruptStackFrame) {
@@ -140,7 +138,7 @@ macro_rules! wrap {
     };
 }
 
-wrap!(timer_handler => timer_handler_naked);
+interrupt_wrap!(timer_handler => timer_handler_naked);
 
 extern "x86-interrupt" fn breakpoint_handler(
     stack_frame: InterruptStackFrame)
@@ -204,11 +202,11 @@ pub enum InterruptIndex {
 }
 
 impl InterruptIndex {
-    fn as_u8(self) -> u8 {
+    pub fn as_u8(self) -> u8 {
         self as u8
     }
 
-    fn as_usize(self) -> usize {
+    pub fn as_usize(self) -> usize {
         usize::from(self.as_u8())
     }
 }
