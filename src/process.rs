@@ -4,14 +4,13 @@
 
 use x86_64::VirtAddr;
 use x86_64::instructions::interrupts;
-use spin::{Mutex, RwLock};
+use spin::RwLock;
 use lazy_static::lazy_static;
 extern crate alloc;
-use alloc::{boxed::Box, vec, vec::Vec};
-use crate::println;
-use crate::gdt;
+use alloc::{boxed::Box, vec::Vec};
+use crate::{print, println};
 
-use core::arch::asm;
+use crate::interrupts::{Context, INTERRUPT_CONTEXT_SIZE};
 
 /// Size of the kernel stack for each process, in bytes
 const KERNEL_STACK_SIZE: usize = 4096 * 2;
@@ -49,68 +48,106 @@ struct Process {
     kernel: bool, // Kernel process? False -> user
     state: State, // Is the process running?
 
-    pid: u16, // Process ID
+    /// Process ID
+    pid: usize,
 
     // List of mounted namespaces
 
-    // Kernel stack needed to handle system calls
-    // and save/restore process state
+    /// Kernel stack needed to handle system calls
+    /// and save/restore process state
     kernel_stack: [u8; KERNEL_STACK_SIZE],
 
+    /// The current kernel stack pointer
+    kernel_stack_ptr: u64,
+
     // User stack
+
+    /// Registers in a Context structure
+    /// This is stored on the kernel stack
+    context: u64,
 }
 
-/// Start a new kernel thread
+/// Start a new kernel thread, by adding it to the process table.
+/// This won't run immediately, but will run when the scheduler
+/// next switches to it.
 ///
 /// Inputs
 /// ------
 ///
 /// function : fn() -> ()
-///    The function to call
+///    The new thread entry point
 ///
+/// Returns
+/// -------
+/// The PID of the new thread
 ///
-pub fn new_kernel_thread(function: fn()->()) {
-    let process_table_len = interrupts::without_interrupts(|| {PROCESS_TABLE.read().len()});
-    if process_table_len == 0 {
-        // Empty process table. This should only happen once during initialisation
-        let new_process = Box::new(Process {
-            kernel: true,
-            state: State::Runnable,
-            pid: 0,
-            kernel_stack: [0; KERNEL_STACK_SIZE]
-        });
-        println!("New PID: {}", new_process.pid);
+pub fn new_kernel_thread(function: fn()->()) -> usize {
+    // Create a new process table entry
+    let mut new_process = Box::new(Process {
+        kernel: true,
+        state: State::Runnable,
+        pid: 0, // This will be set once a slot has been found
+        kernel_stack: [0; KERNEL_STACK_SIZE],
+        kernel_stack_ptr: 0,
+        context:0
+    });
 
-        // Get a pointer to the start of the kernel stack
-        let kernel_stack_start = VirtAddr::from_ptr(unsafe { &new_process.kernel_stack });
+    // Get a pointer to the kernel stack for the new process
+    // Note that stacks move backwards, so SP points to the end
+    new_process.kernel_stack_ptr = {
+        let kernel_stack_start = VirtAddr::from_ptr(&new_process.kernel_stack);
         let kernel_stack_end = kernel_stack_start + KERNEL_STACK_SIZE;
+        // Push a Context struct on the stack
+        (kernel_stack_end - INTERRUPT_CONTEXT_SIZE).as_u64()
+    };
 
-        // Note: Turn off interrupts while modifying process table
-        interrupts::without_interrupts(|| {
-            let mut process_table = PROCESS_TABLE.write();
-            process_table.push(Some(new_process));
-        });
+    // Address of the Context
+    new_process.context = new_process.kernel_stack_ptr;
 
-        // Switch stack, push the current stack onto it, and call the function
-        // Note that function may be on the old stack
-        unsafe {
-            asm!(
-                "mov rdx, rsp",
-                "mov rsp, rcx", // Switch to new stack
-                "push rdx", // Save the old stack pointer on the new stack
-                "call rax", // Call function
-                // Returned -> process ended
-                "pop rsp",  // Restore the old stack pointer
-                in("rcx") kernel_stack_end.as_u64(),  // New stack pointer
-                in("rax") function); // Make sure that the function address is in register
+    // Cast kernel stack to Context struct
+    let context = unsafe {&mut *(new_process.context as *mut Context)};
+
+    // Set the instruction pointer
+    context.rip = function as usize;
+
+    // Turn off interrupts while modifying process table
+    interrupts::without_interrupts(|| {
+        let mut process_table = PROCESS_TABLE.write();
+
+        // Find an empty slot in the process table
+        let mut empty_slot: Option<usize> = None;
+        for (id, proc) in process_table.iter().enumerate() {
+            if proc.is_none() {
+                // empty slot found
+                empty_slot = Some(id);
+                break;
+            }
         }
+        match empty_slot {
+            Some(id) => {
+                // Empty slot found, so use it
+                new_process.pid = id;
+                println!("New PID {}: IP 0x{:X} SP 0x{:X}", id, context.rip, new_process.kernel_stack_ptr);
+                process_table[id] = Some(new_process);
+                id // Return PID
+            },
+            None => {
+                // No empty slot, so extend table
+                let id = process_table.len();
+                new_process.pid = id;
+                println!("New PID {}: IP 0x{:X} SP 0x{:X}", id, context.rip, new_process.kernel_stack_ptr);
+                process_table.push(Some(new_process));
+                id // Return PID
+            }
+        }
+    })
+}
 
-        // Remove process from table
-        // Note that we don't want an interrupt to occur and the handler try to
-        // read the process table while we're modifying it
-        interrupts::without_interrupts(|| {
-            let mut process_table = PROCESS_TABLE.write();
-            process_table[0] = None;
-        });
-    }
+/// This is called by the timer interrupt handler
+///
+/// Returns the stack containing the process state
+/// (interrupts::Context struct)
+pub fn schedule_next() -> usize {
+    print!(".");
+    return 0;
 }

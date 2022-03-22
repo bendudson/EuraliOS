@@ -7,6 +7,7 @@ use lazy_static::lazy_static;
 use crate::println;
 use crate::gdt;
 use crate::print;
+use crate::process;
 
 lazy_static! {
     static ref IDT: InterruptDescriptorTable = {
@@ -35,8 +36,10 @@ pub fn init_idt() {
 }
 
 /// Structure representing values pushed on the stack when an interrupt occurs
+/// Note: Is repr(packed) needed? No padding should be inserted
+///       since all fields are usize.
 #[derive(Clone, Debug)]
-#[repr(packed)]
+#[repr(C)]
 pub struct Context {
     // These are pushed in the handler function
     pub fs: usize,
@@ -59,13 +62,21 @@ pub struct Context {
     // Here the CPU may push values to align the stack on a 16-byte boundary (for SSE)
 }
 
-extern "C" fn timer_handler(context: &mut Context) {
+/// Number of bytes needed to store a Context struct
+pub const INTERRUPT_CONTEXT_SIZE: usize = 15 * 8;
+
+extern "C" fn timer_handler(_context: &mut Context) -> usize {
+
+    // Process scheduler decides which process to schedule
+    // Returns the stack pointer to switch to.
+    let next_stack = process::schedule_next();
 
     // Tell the PIC that the interrupt has been processed
     unsafe {
         PICS.lock()
             .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
     }
+    next_stack
 }
 
 /// Handler for the timer interrupt.
@@ -112,7 +123,14 @@ macro_rules! interrupt_wrap {
                     // Call the hander function. Note that this might switch stack.
                     "call {handler}",
 
-                    // Pop scratch registers
+                    // New stack pointer is in RAX
+                    // (C calling convention return value)
+                    "cmp rax, 0",
+                    "je 2f", // If RAX is zero, keep stack
+                    "mov rsp, rax",
+                     "2:",
+
+                    // Pop scratch registers from new stack
                     "pop fs",
                     "pop r11",
                     "pop r10",
