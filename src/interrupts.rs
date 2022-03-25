@@ -22,9 +22,10 @@ lazy_static! {
             idt.general_protection_fault.
                 set_handler_fn(general_protection_fault_handler).
                 set_stack_index(gdt::GENERAL_PROTECTION_FAULT_IST_INDEX);
+            idt[InterruptIndex::Timer.as_usize()]
+                .set_handler_fn(timer_handler_naked)
+                .set_stack_index(gdt::TIMER_INTERRUPT_INDEX);
         }
-        idt[InterruptIndex::Timer.as_usize()]
-            .set_handler_fn(timer_handler_naked);
         idt[InterruptIndex::Keyboard.as_usize()]
             .set_handler_fn(keyboard_interrupt_handler);
         idt
@@ -36,6 +37,10 @@ pub fn init_idt() {
 }
 
 /// Structure representing values pushed on the stack when an interrupt occurs
+///
+/// CPU registers in x86-64 mode
+///   https://wiki.osdev.org/CPU_Registers_x86-64
+///
 /// Note: Is repr(packed) needed? No padding should be inserted
 ///       since all fields are usize.
 #[derive(Clone, Debug)]
@@ -51,6 +56,7 @@ pub struct Context {
     pub rdi: usize,
     pub rdx: usize,
     pub rcx: usize,
+    pub rbx: usize,
     pub rax: usize,
     // Below is the exception stack frame pushed by the CPU on interrupt
     // Note: For some interrupts (e.g. Page fault), an error code is pushed here
@@ -63,13 +69,12 @@ pub struct Context {
 }
 
 /// Number of bytes needed to store a Context struct
-pub const INTERRUPT_CONTEXT_SIZE: usize = 15 * 8;
+pub const INTERRUPT_CONTEXT_SIZE: usize = 16 * 8;
 
-extern "C" fn timer_handler(_context: &mut Context) -> usize {
-
+extern "C" fn timer_handler(context: &mut Context) -> usize {
     // Process scheduler decides which process to schedule
     // Returns the stack pointer to switch to.
-    let next_stack = process::schedule_next();
+    let next_stack = process::schedule_next(context);
 
     // Tell the PIC that the interrupt has been processed
     unsafe {
@@ -108,6 +113,7 @@ macro_rules! interrupt_wrap {
                     "cli",
                     // Push registers
                     "push rax",
+                    "push rbx",
                     "push rcx",
                     "push rdx",
                     "push rdi",
@@ -120,7 +126,7 @@ macro_rules! interrupt_wrap {
 
                     // First argument in rdi with C calling convention
                     "mov rdi, rsp",
-                    // Call the hander function. Note that this might switch stack.
+                    // Call the hander function
                     "call {handler}",
 
                     // New stack pointer is in RAX
@@ -140,6 +146,7 @@ macro_rules! interrupt_wrap {
                     "pop rdi",
                     "pop rdx",
                     "pop rcx",
+                    "pop rbx",
                     "pop rax",
                     // Enable interrupts
                     "sti",

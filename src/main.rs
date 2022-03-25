@@ -8,16 +8,52 @@ use core::panic::PanicInfo;
 use blog_os::println;
 use bootloader::{BootInfo, entry_point};
 
-// extern crate alloc;
-// use alloc::{boxed::Box, vec, vec::Vec, rc::Rc};
-
 use blog_os::memory;
 use blog_os::process;
 
 entry_point!(kernel_main);
 
-fn test_kernel_fn() {
-    println!("Hello from kernel function!");
+use core::arch::asm;
+
+#[inline(never)]
+fn test_fn() {
+    // Print the current stack pointer, to check we're in the right range
+    let rsp: usize;
+    unsafe {
+        asm!{
+            "mov rax, rsp",
+            lateout("rax") rsp
+        }
+    }
+    println!("Hello from test fn! (0x{:X})", rsp)
+}
+
+/// Entry point for the kernel thread.
+/// This is the first process added to the scheduler
+/// which is started once basic kernel functions have
+/// been initialised in kernel_main
+fn kernel_thread_main() {
+    println!("Kernel thread start");
+
+    // Call a function, to check call/return on stack
+    test_fn();
+
+    // Launch another kernel thread
+    process::new_kernel_thread(test_kernel_fn2);
+
+    loop {
+        println!("<< 1 >>");
+        x86_64::instructions::hlt();
+    }
+}
+
+fn test_kernel_fn2() {
+    println!("Hello from kernel function 2!");
+    test_fn();
+    loop {
+        println!("       << 2 >>");
+        x86_64::instructions::hlt();
+    }
 }
 
 /// Function called by the bootloader
@@ -35,12 +71,14 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     memory::init(boot_info);
 
 
-    process::new_kernel_thread(test_kernel_fn);
 
     #[cfg(test)]
     test_main();
 
-    println!("It did not crash!");
+    // Launch the main kernel thread
+    // which will be scheduled and take over from here
+    process::new_kernel_thread(kernel_thread_main);
+
     blog_os::hlt_loop();
 }
 
