@@ -1,12 +1,30 @@
 
 use x86_64::{
-    structures::paging::{PageTable, PhysFrame, Size4KiB, FrameAllocator, OffsetPageTable},
+    structures::paging::{Page, PageTable, PhysFrame, Size4KiB, FrameAllocator, OffsetPageTable, mapper::MapToError, PageTableFlags, Mapper
+    },
     PhysAddr, VirtAddr
 };
 
 use crate::println;
 use crate::allocator;
 use bootloader::BootInfo;
+
+struct MemoryInfo<'a> {
+    boot_info: &'static BootInfo,
+
+    physical_memory_offset: VirtAddr,
+
+    /// Maps kernel virtual memory
+    kernel_mapper: OffsetPageTable<'a>,
+
+    /// Allocate empty frames
+    frame_allocator: BootInfoFrameAllocator
+}
+
+/// Store BootInfo struct and other useful things for later use
+/// This is set in the init() function and should not be
+/// modified after that.
+static mut MEMORY_INFO: Option<MemoryInfo> = None;
 
 /// Initialize a new OffsetPageTable.
 ///
@@ -26,12 +44,18 @@ pub fn init(boot_info: &'static BootInfo) {
         }
         println!("Memory size: {} KB\n", memory_size >> 10);
 
-        let phys_memory_offset = VirtAddr::new(boot_info.physical_memory_offset);
+        let physical_memory_offset = VirtAddr::new(boot_info.physical_memory_offset);
 
-        let level_4_table = unsafe {active_level_4_table(phys_memory_offset)};
+        let level_4_table = unsafe {active_level_4_table(physical_memory_offset)};
+
+        for (i, entry) in level_4_table.iter().enumerate() {
+            if !entry.is_unused() {
+                println!("L4 Entry {}: {:?}", i, entry);
+            }
+        }
 
         // Initialise the memory mapper
-        let mut mapper = unsafe {OffsetPageTable::new(level_4_table, phys_memory_offset)};
+        let mut mapper = unsafe {OffsetPageTable::new(level_4_table, physical_memory_offset)};
         let mut frame_allocator = unsafe {
             BootInfoFrameAllocator::init(&boot_info.memory_map)
         };
@@ -56,7 +80,36 @@ pub fn init(boot_info: &'static BootInfo) {
 
         allocator::init_heap(&mut mapper, &mut frame_allocator)
             .expect("heap initialization failed");
+
+        // Store boot_info for later calls
+        unsafe { MEMORY_INFO = Some(MemoryInfo {
+            boot_info,
+            physical_memory_offset,
+            kernel_mapper: mapper,
+            frame_allocator
+        }) };
     });
+}
+
+/// Create a new page table
+///
+pub fn create_user_pagetable() -> *mut PageTable {
+    // Need to borrow as mutable so that we can allocate new frames
+    // and so modify the frame allocator
+    let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+
+    // Get a frame to store the level 4 frame
+    let level_4_table_frame = memory_info.frame_allocator.allocate_frame().unwrap();
+    let phys = level_4_table_frame.start_address(); // Physical address
+    let virt = memory_info.physical_memory_offset + phys.as_u64(); // Kernel virtual address
+    let page_table_ptr: *mut PageTable = virt.as_mut_ptr();
+
+    // Clear all entries
+    unsafe {
+        (*page_table_ptr).zero();
+    }
+
+    page_table_ptr
 }
 
 /// This should only be called from the init function
@@ -72,6 +125,79 @@ unsafe fn active_level_4_table(physical_memory_offset: VirtAddr)
     let page_table_ptr: *mut PageTable = virt.as_mut_ptr();
 
     &mut *page_table_ptr // unsafe
+}
+
+/// Allocate pages in the specified page table
+/// starting at the page containing virtual address \p start_addr
+/// and large enough to contain \p size bytes.
+///
+/// \p flags  PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
+pub fn allocate_pages_mapper(
+    mapper: &mut impl Mapper<Size4KiB>,
+    frame_allocator: &mut impl FrameAllocator<Size4KiB>,
+    start_addr: VirtAddr,
+    size: u64,
+    flags: PageTableFlags)
+    -> Result<(), MapToError<Size4KiB>> {
+
+    let page_range = {
+        let end_addr = start_addr + size - 1u64;
+        let start_page = Page::containing_address(start_addr);
+        let end_page = Page::containing_address(end_addr);
+        Page::range_inclusive(start_page, end_page)
+    };
+
+    for page in page_range {
+        let frame = frame_allocator
+            .allocate_frame()
+            .ok_or(MapToError::FrameAllocationFailed)?;
+        unsafe {
+            mapper.map_to(page,
+                          frame,
+                          flags,
+                          frame_allocator)?.flush()
+        };
+    }
+
+    Ok(())
+}
+
+pub fn allocate_pages(level_4_table: *mut PageTable,
+                      start_addr: VirtAddr,
+                      size: u64,
+                      flags: PageTableFlags)
+                      -> Result<(), MapToError<Size4KiB>> {
+
+    let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+
+    let mut mapper = unsafe {
+        OffsetPageTable::new(&mut *level_4_table,
+                             memory_info.physical_memory_offset)};
+
+    allocate_pages_mapper(&mut mapper,
+                          &mut memory_info.frame_allocator,
+                          start_addr, size, flags)
+}
+
+/// Allocate pages in the active (kernel) page table
+///
+/// Inputs
+/// ------
+///
+/// start_addr  Virtual address in the first page
+/// size        Size of the region in bytes.
+/// flags       Set permissions / properties
+///
+pub fn allocate_kernel_pages(
+    start_addr: VirtAddr,
+    size: u64,
+    flags: PageTableFlags)
+    -> Result<(), MapToError<Size4KiB>> {
+
+    let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+    let level_4_table = unsafe {active_level_4_table(memory_info.physical_memory_offset)};
+
+    allocate_pages(&mut *level_4_table, start_addr, size, flags)
 }
 
 use bootloader::bootinfo::MemoryMap;
