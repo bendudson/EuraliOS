@@ -18,8 +18,8 @@ pub fn init_heap(
 ) -> Result<(), MapToError<Size4KiB>> {
 
     memory::allocate_pages_mapper(
-        mapper,
         frame_allocator,
+        mapper,
         VirtAddr::new(HEAP_START as u64),
         HEAP_SIZE as u64,
         PageTableFlags::PRESENT | PageTableFlags::WRITABLE)?;

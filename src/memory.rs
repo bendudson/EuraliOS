@@ -9,13 +9,10 @@ use crate::println;
 use crate::allocator;
 use bootloader::BootInfo;
 
-struct MemoryInfo<'a> {
+struct MemoryInfo {
     boot_info: &'static BootInfo,
 
     physical_memory_offset: VirtAddr,
-
-    /// Maps kernel virtual memory
-    kernel_mapper: OffsetPageTable<'a>,
 
     /// Allocate empty frames
     frame_allocator: BootInfoFrameAllocator
@@ -85,7 +82,6 @@ pub fn init(boot_info: &'static BootInfo) {
         unsafe { MEMORY_INFO = Some(MemoryInfo {
             boot_info,
             physical_memory_offset,
-            kernel_mapper: mapper,
             frame_allocator
         }) };
     });
@@ -127,14 +123,17 @@ unsafe fn active_level_4_table(physical_memory_offset: VirtAddr)
     &mut *page_table_ptr // unsafe
 }
 
+///////////////////////////////////////////////////////////////////////
+// Routines to allocate memory in a single page table
+
 /// Allocate pages in the specified page table
 /// starting at the page containing virtual address \p start_addr
 /// and large enough to contain \p size bytes.
 ///
 /// \p flags  PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
 pub fn allocate_pages_mapper(
-    mapper: &mut impl Mapper<Size4KiB>,
     frame_allocator: &mut impl FrameAllocator<Size4KiB>,
+    mapper: &mut impl Mapper<Size4KiB>,
     start_addr: VirtAddr,
     size: u64,
     flags: PageTableFlags)
@@ -174,12 +173,13 @@ pub fn allocate_pages(level_4_table: *mut PageTable,
         OffsetPageTable::new(&mut *level_4_table,
                              memory_info.physical_memory_offset)};
 
-    allocate_pages_mapper(&mut mapper,
-                          &mut memory_info.frame_allocator,
-                          start_addr, size, flags)
+    allocate_pages_mapper(
+        &mut memory_info.frame_allocator,
+        &mut mapper,
+        start_addr, size, flags)
 }
 
-/// Allocate pages in the active (kernel) page table
+/// Allocate pages in the active page table
 ///
 /// Inputs
 /// ------
@@ -188,7 +188,7 @@ pub fn allocate_pages(level_4_table: *mut PageTable,
 /// size        Size of the region in bytes.
 /// flags       Set permissions / properties
 ///
-pub fn allocate_kernel_pages(
+pub fn allocate_active_pages(
     start_addr: VirtAddr,
     size: u64,
     flags: PageTableFlags)
@@ -198,6 +198,84 @@ pub fn allocate_kernel_pages(
     let level_4_table = unsafe {active_level_4_table(memory_info.physical_memory_offset)};
 
     allocate_pages(&mut *level_4_table, start_addr, size, flags)
+}
+
+///////////////////////////////////////////////////////////////////////
+// Routines to allocate the same memory frames in two page tables
+
+/// Allocate memory, and map to virtual addresses in two page tables
+///
+pub fn allocate_two_pages_mappers(
+    frame_allocator: &mut impl FrameAllocator<Size4KiB>,
+    mapper1: &mut impl Mapper<Size4KiB>,
+    start_addr1: VirtAddr,
+    size: u64,
+    flags1: PageTableFlags,
+    mapper2: &mut impl Mapper<Size4KiB>,
+    start_addr2: VirtAddr,
+    flags2: PageTableFlags)
+    -> Result<(), MapToError<Size4KiB>> {
+
+    let page_range1 = {
+        let end_addr1 = start_addr1 + size - 1u64;
+        let start_page = Page::containing_address(start_addr1);
+        let end_page = Page::containing_address(end_addr1);
+        Page::range_inclusive(start_page, end_page)
+    };
+
+    let page_range2 = {
+        let end_addr2 = start_addr2 + size - 1u64;
+        let start_page = Page::containing_address(start_addr2);
+        let end_page = Page::containing_address(end_addr2);
+        Page::range_inclusive(start_page, end_page)
+    };
+
+    for (page1, page2) in page_range1.zip(page_range2) {
+        let frame = frame_allocator
+            .allocate_frame()
+            .ok_or(MapToError::FrameAllocationFailed)?;
+        unsafe {
+            // Map both pages to the same frame
+            mapper1.map_to(page1,
+                           frame,
+                           flags1,
+                           frame_allocator)?.flush();
+            mapper2.map_to(page2,
+                           frame,
+                           flags2,
+                           frame_allocator)?.flush()
+        };
+    }
+
+    Ok(())
+}
+
+pub fn allocate_two_pages(
+    // First table
+    level_4_table1: *mut PageTable,
+    start_addr1: VirtAddr,
+    size: u64,
+    flags1: PageTableFlags,
+    level_4_table2: *mut PageTable,
+    start_addr2: VirtAddr,
+    flags2: PageTableFlags)
+    -> Result<(), MapToError<Size4KiB>> {
+
+    let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+
+    let mut mapper1 = unsafe {
+        OffsetPageTable::new(&mut *level_4_table1,
+                             memory_info.physical_memory_offset)};
+    let mut mapper2 = unsafe {
+        OffsetPageTable::new(&mut *level_4_table2,
+                             memory_info.physical_memory_offset)};
+
+    allocate_two_pages_mappers(
+        &mut memory_info.frame_allocator,
+        &mut mapper1,
+        start_addr1, size, flags1,
+        &mut mapper2,
+        start_addr2, flags2)
 }
 
 use bootloader::bootinfo::MemoryMap;
