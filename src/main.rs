@@ -81,7 +81,7 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     // Using MOROS approach of including ELF files
     // https://github.com/vinc/moros/blob/trunk/src/usr/install.rs
-    process::new_user_thread(include_bytes!("../target/x86_64-blog_os/debug/hello"));
+    process::new_user_thread(include_bytes!("../user/hello"));
 
     blog_os::hlt_loop();
 }

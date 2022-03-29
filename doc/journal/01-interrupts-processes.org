@@ -308,7 +308,7 @@ which should create an executable =target/x86_64-blog_os/debug/hello=
 #+END_SRC
 
 In =main.rs= we now include the =hello= executable using the
-=include_bytes!= macro:
+[[https://doc.rust-lang.org/std/macro.include_bytes.html][include_bytes]] macro:
 #+BEGIN_SRC rust
 process::new_user_thread(include_bytes!("../target/x86_64-blog_os/debug/hello"));
 #+END_SRC
@@ -325,5 +325,47 @@ Section Ok(None) : 0x00000000200000
 Section Ok(None) : 0x00000000201120
 #+END_SRC
 
-Unfortunately this entry point virtual memory address is in the
-same range as the kernel.
+Unfortunately this entry point virtual memory address is in the same
+range as the kernel. To handle this we can try to use separate page
+tables for kernel and users, but this means frequently switching page
+tables (and flushing the TLB). In addition interrupt handlers must be
+mapped in the user virtual memory because page tables are not changed
+when an interrupt occurs. Instead what many (all?) operating systems
+do is keep kernel memory mapped in a reserved part of virtual memory:
+Linux is a "high half" operating system, where the high half of
+virtual memory is reserved for kernel use. Note that the kernel pages
+can in principle only be accessed from ring 0 (kernel).
+
+To change the address of the user code, we can use the GNU [[https://man7.org/linux/man-pages/man1/ld.1.html][ld]] linker,
+which has options to control the virtual address where code and data
+segments are loaded. Choosing a memory range which is not
+currently unused e.g above =0x5000000=, we can build userspace programs
+with this =makefile= rule:
+#+BEGIN_SRC makefile
+.PHONY: user
+
+# Compile user programs in src/bin
+user: user/hello
+
+user/% : src/bin/%.rs makefile
+	cargo rustc --release --bin $* -- \
+		-C linker-flavor=ld \
+		-C link-args="-Ttext-segment=5000000 -Trodata-segment=5100000" \
+		-C relocation-model=static
+	mkdir -p user
+	cp target/x86_64-blog_os/release/$* user/
+#+END_SRC
+
+which will build the =hello= executable and copy it into a =user/=
+directory. The =main.rs= code can be changed to point to this new location:
+#+BEGIN_SRC rust
+process::new_user_thread(include_bytes!("../user/hello"));
+#+END_SRC
+
+While we're at it, we can add another rule:
+#+BEGIN_SRC makefile
+run : user
+	cargo run --bin blog_os
+#+END_SRC
+so running =make run= will build everything and run.
+
