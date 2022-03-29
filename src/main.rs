@@ -77,7 +77,11 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     // Launch the main kernel thread
     // which will be scheduled and take over from here
-    process::new_kernel_thread(kernel_thread_main);
+    //process::new_kernel_thread(kernel_thread_main);
+
+    // Using MOROS approach of including ELF files
+    // https://github.com/vinc/moros/blob/trunk/src/usr/install.rs
+    process::new_user_thread(include_bytes!("../target/x86_64-blog_os/debug/hello"));
 
     blog_os::hlt_loop();
 }

@@ -224,3 +224,106 @@ write tests for the macro by wrapping different functions.
 We can make a standalone test like the =stack_overflow= test by making the =Context= struct
 members public, exporting the =wrap= function (renamed to =interrupt_wrap=), and setting up a minimal
 IDT in the test case. This is in =tests/interrupt_wrap.rs=.
+
+** Kernel task switching
+
+Pre-emptive multitasking with kernel threads, using the timer
+interrupt to switch between threads.
+
+There is a lot of confusing information online about interrupt
+handling in x86.  Most of this confusion is due to the different
+behaviour which has evolved over the last 40-some years: Real mode,
+32-bit protected mode and 64-bit mode all work somewhat differently.
+For 64-bit mode there is a good summary [[https://os.phil-opp.com/cpu-exceptions/][here]]. 
+
+There is sometimes a distinction between interrupts which result in a
+change in privilege level (interrupt occurs when running user code in
+ring 3), and interrupts which don't (interrupt occurs while running
+kernel code).
+
+In 64-bit mode interrupts can switch to known-good stacks which are
+listed in the Interrupt Stack Table (IST), which has 7 entries. The
+index into this table which should be used is specified in the
+Interrupt Descriptor Table (IDT).
+** Loading executables
+
+The standard executable format on Unix-like operating systems is ELF.
+
+This follows closely what MOROS does. We use the [[https://crates.io/crates/object][object]] crate to parse
+the ELF format
+#+BEGIN_SRC
+object = { version = "0.27.1", default-features = false, features = ["read"] }
+#+END_SRC
+then in =process.rs=
+#+BEGIN_SRC rust
+use object::{Object, ObjectSegment};
+#+END_SRC
+
+To create a simple executable, create a file =src/bin/hello.rs=
+#+BEGIN_SRC rust
+#![no_std]
+#![no_main]
+
+use core::panic::PanicInfo;
+
+#[panic_handler]
+fn panic(_info: &PanicInfo) -> ! {
+    loop {}
+}
+
+#[no_mangle]
+pub unsafe extern "sysv64" fn _start() -> ! {
+    loop {}
+}
+#+END_SRC
+
+then compile with
+#+BEGIN_SRC
+$ cargo build
+#+END_SRC
+which should create an executable =target/x86_64-blog_os/debug/hello=
+
+#+BEGIN_SRC rust
+  pub fn new_user_thread(bin: &[u8]) -> Result<usize, &'static str> {
+      // Check the header
+      const ELF_MAGIC: [u8; 4] = [0x7f, b'E', b'L', b'F'];
+
+      if bin[0..4] != ELF_MAGIC {
+          return Err("Expected ELF binary");
+      }
+      // Use the object crate to parse the ELF file
+      // https://crates.io/crates/object
+      if let Ok(obj) = object::File::parse(bin) {
+          let entry_point = obj.entry();
+          println!("Entry point: {:#016X}", entry_point);
+
+          for segment in obj.segments() {
+              println!("Section {:?} : {:#016X}", segment.name(), segment.address());
+          }
+      } else {
+          return Err("Could not parse ELF");
+      }
+      Ok(0)
+  }
+#+END_SRC
+
+In =main.rs= we now include the =hello= executable using the
+=include_bytes!= macro:
+#+BEGIN_SRC rust
+process::new_user_thread(include_bytes!("../target/x86_64-blog_os/debug/hello"));
+#+END_SRC
+
+Running this with
+#+BEGIN_SRC
+$ cargo run --bin blog_os
+#+END_SRC
+should produce a result like
+
+#+BEGIN_SRC
+Entry point: 0x00000000201120
+Section Ok(None) : 0x00000000200000
+Section Ok(None) : 0x00000000201120
+#+END_SRC
+
+Unfortunately this entry point virtual memory address is in the
+same range as the kernel.

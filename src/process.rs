@@ -16,6 +16,8 @@ use crate::interrupts::{Context, INTERRUPT_CONTEXT_SIZE};
 
 use crate::gdt;
 
+use object::{Object, ObjectSegment};
+
 /// Size of the kernel stack for each process, in bytes
 const KERNEL_STACK_SIZE: usize = 4096 * 2;
 
@@ -144,6 +146,28 @@ pub fn new_kernel_thread(function: fn()->()) -> usize {
         RUNNING_QUEUE.write().push_back(new_process);
     });
     pid
+}
+
+pub fn new_user_thread(bin: &[u8]) -> Result<usize, &'static str> {
+    // Check the header
+    const ELF_MAGIC: [u8; 4] = [0x7f, b'E', b'L', b'F'];
+
+    if bin[0..4] != ELF_MAGIC {
+        return Err("Expected ELF binary");
+    }
+    // Use the object crate to parse the ELF file
+    // https://crates.io/crates/object
+    if let Ok(obj) = object::File::parse(bin) {
+        let entry_point = obj.entry();
+        println!("Entry point: {:#016X}", entry_point);
+
+        for segment in obj.segments() {
+            println!("Section {:?} : {:#016X}", segment.name(), segment.address());
+        }
+    } else {
+        return Err("Could not parse ELF");
+    }
+    Ok(0)
 }
 
 /// This is called by the timer interrupt handler
