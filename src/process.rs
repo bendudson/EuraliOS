@@ -75,6 +75,33 @@ struct Process {
     user_stack: Vec<u8>
 }
 
+use core::fmt;
+
+/// Enable Process structs to be printed
+impl fmt::Display for Process {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // Cast context address to Context struct
+        let context = unsafe {&mut *(self.context as *mut Context)};
+
+        let kernel_stack_start = VirtAddr::from_ptr(self.kernel_stack.as_ptr()).as_u64();
+        let user_stack_start = VirtAddr::from_ptr(self.user_stack.as_ptr()).as_u64();
+
+        write!(f, "\
+PID: {}, rip: {:#016X}
+    Kernel stack: {:#016X} - {:#016X} Context: {:#016X}
+    Thread stack: {:#016X} - {:#016X} RSP: {:#016X}",
+               self.pid, context.rip,
+               // Second line
+               kernel_stack_start,
+               kernel_stack_start + (KERNEL_STACK_SIZE as u64),
+               self.context,
+               // Third line
+               user_stack_start,
+               user_stack_start + (USER_STACK_SIZE as u64),
+               context.rsp)
+    }
+}
+
 /// Start a new kernel thread, by adding it to the process table.
 /// This won't run immediately, but will run when the scheduler
 /// next switches to it.
@@ -136,15 +163,7 @@ pub fn new_kernel_thread(function: fn()->()) -> usize {
 
     let pid = new_process.pid;
 
-    println!("New process PID: {:#016X}, rip: {:#016X}", pid, context.rip);
-    println!("   Kernel stack: {:#016X} - {:#016X} Context: {:#016X}",
-             VirtAddr::from_ptr(new_process.kernel_stack.as_ptr()).as_u64(),
-             (VirtAddr::from_ptr(new_process.kernel_stack.as_ptr()) + KERNEL_STACK_SIZE).as_u64(),
-             new_process.context);
-    println!("   Thread stack: {:#016X} - {:#016X} RSP: {:#016X}",
-             VirtAddr::from_ptr(new_process.user_stack.as_ptr()).as_u64(),
-             (VirtAddr::from_ptr(new_process.user_stack.as_ptr()) + USER_STACK_SIZE).as_u64(),
-             context.rsp);
+    println!("New kernel thread {}", new_process);
 
     // Turn off interrupts while modifying process table
     interrupts::without_interrupts(|| {
@@ -241,15 +260,7 @@ pub fn new_user_thread(bin: &[u8]) -> Result<usize, &'static str> {
 
         let pid = new_process.pid;
 
-        println!("New process PID: {:#016X}, rip: {:#016X}", pid, context.rip);
-        println!("   Kernel stack: {:#016X} - {:#016X} Context: {:#016X}",
-                 VirtAddr::from_ptr(new_process.kernel_stack.as_ptr()).as_u64(),
-                 (VirtAddr::from_ptr(new_process.kernel_stack.as_ptr()) + KERNEL_STACK_SIZE).as_u64(),
-                 new_process.context);
-        println!("   Thread stack: {:#016X} - {:#016X} RSP: {:#016X}",
-                 VirtAddr::from_ptr(new_process.user_stack.as_ptr()).as_u64(),
-                 (VirtAddr::from_ptr(new_process.user_stack.as_ptr()) + USER_STACK_SIZE).as_u64(),
-                 context.rsp);
+        println!("New Process {}", new_process);
 
         //Turn off interrupts while modifying process table
         interrupts::without_interrupts(|| {
