@@ -121,23 +121,21 @@ pub fn new_kernel_thread(function: fn()->()) -> usize {
     //
     // Note this is first created on the stack, then moved into a Box
     // on the heap.
-    let mut new_process = Box::new(Process {
-        pid: 0,
-        kernel_stack: Vec::with_capacity(KERNEL_STACK_SIZE),
-        kernel_stack_end: 0,
-        context: 0,
-        user_stack: Vec::with_capacity(USER_STACK_SIZE)
-    });
+    let mut new_process = {
+        let kernel_stack = Vec::with_capacity(KERNEL_STACK_SIZE);
+        let kernel_stack_start = VirtAddr::from_ptr(kernel_stack.as_ptr());
+        let kernel_stack_end = (kernel_stack_start + KERNEL_STACK_SIZE).as_u64();
 
-    // Get a pointer to the context for the new process
-    // Note that stacks move backwards, so SP points to the end
-    new_process.kernel_stack_end = {
-        let kernel_stack_start = VirtAddr::from_ptr(new_process.kernel_stack.as_ptr());
-        (kernel_stack_start + KERNEL_STACK_SIZE).as_u64()
+        Box::new(Process {
+            pid: 0,
+            kernel_stack,
+            // Note that stacks move backwards, so SP points to the end
+            kernel_stack_end,
+            // Push a Context struct on the kernel stack
+            context: kernel_stack_end - INTERRUPT_CONTEXT_SIZE as u64,
+            user_stack: Vec::with_capacity(USER_STACK_SIZE)
+        })
     };
-
-    // Push a Context struct on the stack
-    new_process.context = new_process.kernel_stack_end - INTERRUPT_CONTEXT_SIZE as u64;
 
     // Cast context address to Context struct
     let context = unsafe {&mut *(new_process.context as *mut Context)};
@@ -218,24 +216,23 @@ pub fn new_user_thread(bin: &[u8]) -> Result<usize, &'static str> {
             }
         }
 
-        let mut new_process = Box::new(Process {
-            pid: 0,
-            kernel_stack: Vec::with_capacity(KERNEL_STACK_SIZE),
-            kernel_stack_end: 0,
-            context: 0,
-            // User stack needs new pages
-            user_stack: Vec::with_capacity(USER_STACK_SIZE)
-        });
+        // Create the new Process struct
+        let mut new_process = {
+            let kernel_stack = Vec::with_capacity(KERNEL_STACK_SIZE);
+            let kernel_stack_start = VirtAddr::from_ptr(kernel_stack.as_ptr());
+            let kernel_stack_end = (kernel_stack_start + KERNEL_STACK_SIZE).as_u64();
 
-        // Get a pointer to the context for the new process
-        // Note that stacks move backwards, so SP points to the end
-        new_process.kernel_stack_end = {
-            let kernel_stack_start = VirtAddr::from_ptr(new_process.kernel_stack.as_ptr());
-            (kernel_stack_start + KERNEL_STACK_SIZE).as_u64()
+            Box::new(Process {
+                pid: 0,
+                kernel_stack,
+                // Note that stacks move backwards, so SP points to the end
+                kernel_stack_end,
+                // Push a Context struct on the kernel stack
+                context: kernel_stack_end - INTERRUPT_CONTEXT_SIZE as u64,
+                // User stack needs new pages
+                user_stack: Vec::with_capacity(USER_STACK_SIZE)
+            })
         };
-
-        // Push a Context struct on the stack
-        new_process.context = new_process.kernel_stack_end - INTERRUPT_CONTEXT_SIZE as u64;
 
         // Cast context address to Context struct
         let context = unsafe {&mut *(new_process.context as *mut Context)};
