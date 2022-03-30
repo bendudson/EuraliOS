@@ -326,15 +326,24 @@ Section Ok(None) : 0x00000000201120
 #+END_SRC
 
 Unfortunately this entry point virtual memory address is in the same
-range as the kernel. To handle this we can try to use separate page
-tables for kernel and users, but this means frequently switching page
-tables (and flushing the TLB). In addition interrupt handlers must be
-mapped in the user virtual memory because page tables are not changed
-when an interrupt occurs. Instead what many (all?) operating systems
-do is keep kernel memory mapped in a reserved part of virtual memory:
-Linux is a "high half" operating system, where the high half of
-virtual memory is reserved for kernel use. Note that the kernel pages
-can in principle only be accessed from ring 0 (kernel).
+range as the kernel. The user program has to be loaded at these memory
+addresses to work correctly, but if we do that we will overwrite part
+of the kernel.
+
+To handle this we can try to use separate page tables for kernel and
+users, so they can have the same virtual memory address but different
+physical addresses. This means frequently switching page tables (and
+flushing the TLB). In addition interrupt handlers must be mapped in
+the user virtual memory because page tables are not changed when an
+interrupt occurs. Instead all operating systems keep at least some
+kernel memory mapped in a reserved part of virtual memory: Linux is a
+"high half" operating system, where the high half of virtual memory is
+reserved for kernel use. Note that the kernel pages can in principle
+only be accessed from ring 0 (kernel), but the Meltdown security
+vulnerability allowed this to be bypassed on some processors (Intel
+x86 & some ARM Cortex). Linux can use [[https://en.wikipedia.org/wiki/Kernel_page-table_isolation][Kernel page-table isolation
+(KPTI)]] to keep only minimal interrupt handlers mapped while in user
+mode and mitigate this vulnerability.
 
 To change the address of the user code, we can use the GNU [[https://man7.org/linux/man-pages/man1/ld.1.html][ld]] linker,
 which has options to control the virtual address where code and data
@@ -367,5 +376,39 @@ While we're at it, we can add another rule:
 run : user
 	cargo run --bin blog_os
 #+END_SRC
-so running =make run= will build everything and run.
+so running =make run= will build everything and run. Check that the new entry
+point is correct.
+
+To load the ELF into this new virtual memory address we need to create entries
+in the page table.
+#+BEGIN_SRC rust
+  for segment in obj.segments() {
+      let segment_address = segment.address() as u64;
+
+      println!("Section {:?} : {:#016X}", segment.name(), segment_address);
+
+      if let Ok(data) = segment.data() {
+          println!("  len : {}", data.len());
+
+          // Allocate memory in the pagetable
+          memory::allocate_pages(user_page_table_ptr,
+                                 VirtAddr::new(segment_address), // Start address
+                                 data.len() as u64, // Size (bytes)
+                                 PageTableFlags::PRESENT |
+                                 PageTableFlags::WRITABLE |
+                                 PageTableFlags::USER_ACCESSIBLE);
+
+          // Copy data
+          let dest_ptr = segment_address as *mut u8;
+          for (i, value) in data.iter().enumerate() {
+              unsafe {
+                  let ptr = dest_ptr.add(i);
+                  core::ptr::write(ptr, *value);
+              }
+          }
+      } else {
+          return Err("Could not get segment data");
+      }
+  }
+#+END_SRC
 

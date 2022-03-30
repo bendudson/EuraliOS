@@ -4,6 +4,8 @@
 
 use x86_64::VirtAddr;
 use x86_64::instructions::interrupts;
+use x86_64::structures::paging::PageTableFlags;
+
 use spin::RwLock;
 use lazy_static::lazy_static;
 extern crate alloc;
@@ -15,6 +17,9 @@ use crate::println;
 use crate::interrupts::{Context, INTERRUPT_CONTEXT_SIZE};
 
 use crate::gdt;
+use crate::memory;
+
+use core::ptr;
 
 use object::{Object, ObjectSegment};
 
@@ -158,15 +163,102 @@ pub fn new_user_thread(bin: &[u8]) -> Result<usize, &'static str> {
     // Use the object crate to parse the ELF file
     // https://crates.io/crates/object
     if let Ok(obj) = object::File::parse(bin) {
+
+        // Create a user pagetable
+        let user_page_table_ptr = memory::create_user_pagetable();
+
         let entry_point = obj.entry();
         println!("Entry point: {:#016X}", entry_point);
 
         for segment in obj.segments() {
-            println!("Section {:?} : {:#016X}", segment.name(), segment.address());
+            let segment_address = segment.address() as u64;
+
+            println!("Section {:?} : {:#016X}", segment.name(), segment_address);
+
+            if let Ok(data) = segment.data() {
+                println!("  len : {}", data.len());
+
+                // Allocate memory in the pagetable
+                memory::allocate_pages(user_page_table_ptr,
+                                       VirtAddr::new(segment_address), // Start address
+                                       data.len() as u64, // Size (bytes)
+                                       PageTableFlags::PRESENT |
+                                       PageTableFlags::WRITABLE |
+                                       PageTableFlags::USER_ACCESSIBLE);
+
+                // Copy data
+                let dest_ptr = segment_address as *mut u8;
+                for (i, value) in data.iter().enumerate() {
+                    unsafe {
+                        let ptr = dest_ptr.add(i);
+                        core::ptr::write(ptr, *value);
+                    }
+                }
+            } else {
+                return Err("Could not get segment data");
+            }
         }
+
+        let mut new_process = Box::new(Process {
+            pid: 0,
+            kernel_stack: Vec::with_capacity(KERNEL_STACK_SIZE),
+            kernel_stack_end: 0,
+            context: 0,
+            // User stack needs new pages
+            user_stack: Vec::with_capacity(USER_STACK_SIZE)
+        });
+
+        // Get a pointer to the context for the new process
+        // Note that stacks move backwards, so SP points to the end
+        new_process.kernel_stack_end = {
+            let kernel_stack_start = VirtAddr::from_ptr(new_process.kernel_stack.as_ptr());
+            (kernel_stack_start + KERNEL_STACK_SIZE).as_u64()
+        };
+
+        // Push a Context struct on the stack
+        new_process.context = new_process.kernel_stack_end - INTERRUPT_CONTEXT_SIZE as u64;
+
+        // Cast context address to Context struct
+        let context = unsafe {&mut *(new_process.context as *mut Context)};
+
+        context.rip = entry_point as usize;
+
+        // Set flags
+        unsafe {
+            asm!{
+                "pushf",
+                "pop rax", // Get RFLAGS in RAX
+                lateout("rax") context.rflags,
+            }
+        }
+
+        context.cs = 8; // Code segment flags
+
+        // The kernel thread has its own stack
+        // Note: Need to point to the end of the memory region
+        //       because the stack moves down in memory
+        context.rsp = (VirtAddr::from_ptr(new_process.user_stack.as_ptr()) + USER_STACK_SIZE).as_u64() as usize;
+
+        let pid = new_process.pid;
+
+        println!("New process PID: {:#016X}, rip: {:#016X}", pid, context.rip);
+        println!("   Kernel stack: {:#016X} - {:#016X} Context: {:#016X}",
+                 VirtAddr::from_ptr(new_process.kernel_stack.as_ptr()).as_u64(),
+                 (VirtAddr::from_ptr(new_process.kernel_stack.as_ptr()) + KERNEL_STACK_SIZE).as_u64(),
+                 new_process.context);
+        println!("   Thread stack: {:#016X} - {:#016X} RSP: {:#016X}",
+                 VirtAddr::from_ptr(new_process.user_stack.as_ptr()).as_u64(),
+                 (VirtAddr::from_ptr(new_process.user_stack.as_ptr()) + USER_STACK_SIZE).as_u64(),
+                 context.rsp);
+
+        //Turn off interrupts while modifying process table
+        interrupts::without_interrupts(|| {
+            RUNNING_QUEUE.write().push_back(new_process);
+        });
     } else {
         return Err("Could not parse ELF");
     }
+
     Ok(0)
 }
 

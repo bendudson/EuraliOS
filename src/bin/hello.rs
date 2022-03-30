@@ -3,6 +3,8 @@
 
 use core::panic::PanicInfo;
 
+use core::arch::asm;
+
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
     loop {}
@@ -10,5 +12,11 @@ fn panic(_info: &PanicInfo) -> ! {
 
 #[no_mangle]
 pub unsafe extern "sysv64" fn _start() -> ! {
-    loop {}
+    loop {
+        unsafe {
+            asm!(
+                "hlt"
+            );
+        }
+    }
 }

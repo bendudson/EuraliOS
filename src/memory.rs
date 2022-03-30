@@ -87,9 +87,24 @@ pub fn init(boot_info: &'static BootInfo) {
     });
 }
 
+/// This should only be called from the init function
+/// because each call will result in a mutable reference
+unsafe fn active_level_4_table(physical_memory_offset: VirtAddr)
+                               -> &'static mut PageTable {
+    use x86_64::registers::control::Cr3;
+
+    let (level_4_table_frame, _) = Cr3::read();
+
+    let phys = level_4_table_frame.start_address();
+    let virt = physical_memory_offset + phys.as_u64();
+    let page_table_ptr: *mut PageTable = virt.as_mut_ptr();
+
+    &mut *page_table_ptr // unsafe
+}
+
 /// Create a new page table
 ///
-pub fn create_user_pagetable() -> *mut PageTable {
+pub fn create_empty_pagetable() -> *mut PageTable {
     // Need to borrow as mutable so that we can allocate new frames
     // and so modify the frame allocator
     let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
@@ -108,19 +123,15 @@ pub fn create_user_pagetable() -> *mut PageTable {
     page_table_ptr
 }
 
-/// This should only be called from the init function
-/// because each call will result in a mutable reference
-unsafe fn active_level_4_table(physical_memory_offset: VirtAddr)
-                               -> &'static mut PageTable {
-    use x86_64::registers::control::Cr3;
+/// FIXME!
+///
+///
+pub fn create_user_pagetable() -> *mut PageTable {
+    let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
 
-    let (level_4_table_frame, _) = Cr3::read();
+    let table = unsafe {active_level_4_table(memory_info.physical_memory_offset)};
 
-    let phys = level_4_table_frame.start_address();
-    let virt = physical_memory_offset + phys.as_u64();
-    let page_table_ptr: *mut PageTable = virt.as_mut_ptr();
-
-    &mut *page_table_ptr // unsafe
+    table as *mut PageTable
 }
 
 ///////////////////////////////////////////////////////////////////////
