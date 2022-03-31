@@ -13,10 +13,6 @@ fn panic(_info: &PanicInfo) -> ! {
 #[no_mangle]
 pub unsafe extern "sysv64" fn _start() -> ! {
     loop {
-        unsafe {
-            asm!(
-                "hlt"
-            );
-        }
+        // Note: hlt is a privileged instruction
     }
 }

@@ -8,6 +8,7 @@ pub const DOUBLE_FAULT_IST_INDEX: u16 = 0;
 pub const PAGE_FAULT_IST_INDEX: u16 = 0;
 pub const GENERAL_PROTECTION_FAULT_IST_INDEX: u16 = 0;
 pub const TIMER_INTERRUPT_INDEX: u16 = 1;
+pub const KEYBOARD_INTERRUPT_INDEX: u16 = 0;
 
 lazy_static! {
     /// The Task State Segment (TSS)

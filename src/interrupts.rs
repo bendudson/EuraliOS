@@ -25,9 +25,10 @@ lazy_static! {
             idt[InterruptIndex::Timer.as_usize()]
                 .set_handler_fn(timer_handler_naked)
                 .set_stack_index(gdt::TIMER_INTERRUPT_INDEX);
+            idt[InterruptIndex::Keyboard.as_usize()]
+                .set_handler_fn(keyboard_interrupt_handler)
+                .set_stack_index(gdt::KEYBOARD_INTERRUPT_INDEX);
         }
-        idt[InterruptIndex::Keyboard.as_usize()]
-            .set_handler_fn(keyboard_interrupt_handler);
         idt
     };
 }

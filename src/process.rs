@@ -229,8 +229,8 @@ pub fn new_user_thread(bin: &[u8]) -> Result<usize, &'static str> {
                 kernel_stack_end,
                 // Push a Context struct on the kernel stack
                 context: kernel_stack_end - INTERRUPT_CONTEXT_SIZE as u64,
-                // User stack needs new pages
-                user_stack: Vec::with_capacity(USER_STACK_SIZE)
+                // User stack needs new pages, not allocated on the kernel heap
+                user_stack: Vec::new()
             })
         };
 
@@ -248,12 +248,23 @@ pub fn new_user_thread(bin: &[u8]) -> Result<usize, &'static str> {
             }
         }
 
-        context.cs = 8; // Code segment flags
+        let (code_selector, data_selector) = gdt::get_user_segments();
+        context.cs = code_selector.0 as usize; // Code segment flags
+        context.ss = data_selector.0 as usize; // Without this we get a GPF
 
-        // The kernel thread has its own stack
-        // Note: Need to point to the end of the memory region
+        // Allocate pages for the user stack
+        const USER_STACK_START: u64 = 0x5002000;
+
+        memory::allocate_pages(user_page_table_ptr,
+                               VirtAddr::new(USER_STACK_START), // Start address
+                               USER_STACK_SIZE as u64, // Size (bytes)
+                               PageTableFlags::PRESENT |
+                               PageTableFlags::WRITABLE |
+                               PageTableFlags::USER_ACCESSIBLE);
+
+        // Note: Need to point to the end of the allocated region
         //       because the stack moves down in memory
-        context.rsp = (VirtAddr::from_ptr(new_process.user_stack.as_ptr()) + USER_STACK_SIZE).as_u64() as usize;
+        context.rsp = (USER_STACK_START as usize) + USER_STACK_SIZE;
 
         let pid = new_process.pid;
 

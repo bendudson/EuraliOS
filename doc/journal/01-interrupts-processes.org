@@ -412,3 +412,116 @@ in the page table.
   }
 #+END_SRC
 
+** Switching to userspace
+
+Following [[https://nfil.dev/kernel/rust/coding/rust-kernel-to-userspace-and-back/][this blog by Nikos Filippakis]], we are now going to switch programs
+to user mode.
+
+Note: TSS contains the Privilege Stack Table, which contains stack
+pointers to switch to when the privilege level changes.
+
+From [[ https://github.com/vinc/moros/blob/trunk/src/sys/gdt.rs#L37][MOROS]]
+
+#+BEGIN_SRC rust
+   static ref GDT: (GlobalDescriptorTable, Selectors) = {
+        let mut gdt = GlobalDescriptorTable::new();
+        let code_selector = gdt.add_entry(Descriptor::kernel_code_segment());
+        let data_selector = gdt.add_entry(Descriptor::kernel_data_segment());
+        let tss_selector = gdt.add_entry(Descriptor::tss_segment(&TSS));
+        let user_code_selector = gdt.add_entry(Descriptor::user_code_segment());
+        let user_data_selector = gdt.add_entry(Descriptor::user_data_segment());
+        (gdt, Selectors { code_selector, data_selector, tss_selector,
+                          user_code_selector, user_data_selector})
+    };
+#+END_SRC
+
+According to [[https://nfil.dev/kernel/rust/coding/rust-kernel-to-userspace-and-back/][this post]] the actual code and data segments are obsolete
+and not used, but the code segment (CS register) sets the processor
+privilege level ("ring").  The order of the segments in the GDT does
+not seem to matter if interrupts are going to be used for system
+calls. The order is however important if the faster (and more recent)
+syscall/sysret mechanism is used.
+
+#+BEGIN_SRC rust
+context.cs = code_selector.0 as usize; // Code segment flags
+context.ss = data_selector.0 as usize; // Without this we get a GPF
+#+END_SRC
+
+Setting the CS register without also setting the SS register results
+in a General Protection Fault on the =iretq= instruction. Fixing this we get
+a different error:
+#+BEGIN_SRC
+New process PID: 0x00000000000000, rip: 0x00000005001000
+    Kernel stack: 0x00444444440068 - 0x00444444442068 Context: 0x000444444441FE8
+    Thread stack: 0x00444444442068 - 0x00444444447068 RSP: 0x00444444447068
+EXCEPTION: PAGE FAULT
+Accessed Address: VirtAddr(0x444444447060)
+Error Code: PROTECTION_VIOLATION | CAUSED_BY_WRITE | USER_MODE
+InterruptStackFrame {
+    instruction_pointer: VirtAddr(
+        0x5001000,
+    ),
+    code_segment: 51,
+    cpu_flags: 0x246,
+    stack_pointer: VirtAddr(
+        0x444444447068,
+    ),
+    stack_segment: 43,
+}
+#+END_SRC
+
+The error code (=USER_MODE= flag) means that we're running in user
+mode (Ring 3)!  Unfortunately our code has tried to write to an
+address that it's not allowed to: It tried to write to
+=0x444444447060= which is in the thread stack address range
+(=0x00444444442068 - 0x00444444447068=). The error occurred because we
+are allocating the stacks on the kernel heap with =Vec= objects, and
+those kernel pages are not accessible to user programs.
+
+#+BEGIN_SRC rust
+  // Allocate pages for the user stack
+  const USER_STACK_START: u64 = 0x5002000;
+
+  memory::allocate_pages(user_page_table_ptr,
+                         VirtAddr::new(USER_STACK_START), // Start address
+                         USER_STACK_SIZE as u64, // Size (bytes)
+                         PageTableFlags::PRESENT |
+                         PageTableFlags::WRITABLE |
+                         PageTableFlags::USER_ACCESSIBLE);
+  context.rsp = (USER_STACK_START as usize) + USER_STACK_SIZE;
+#+END_SRC
+
+
+
+Now the userspace code runs! Until we press a key. Then we get:
+#+BEGIN_SRC
+EXCEPTION: PAGE FAULT
+Accessed Address: VirtAddr(0xfffffffffffffff8)
+Error Code: CAUSED_BY_WRITE
+InterruptStackFrame {
+    instruction_pointer: VirtAddr(
+      0x5001000,
+    ),
+    code_segment: 51,
+    cpu_flags: 0x202,
+    stack_pointer: VirtAddr(
+        0x5007000,
+    ),
+    stack_segment: 43
+}
+#+END_SRC
+The accessed address is 8 bytes below address 0, and the access
+occurred in kernel mode (no USER_MODE flag).
+
+Ensure that the keyboard interrupt handler has a valid kernel stack.
+In =interrupts.rs=:
+#+BEGIN_SRC rust
+  idt[InterruptIndex::Keyboard.as_usize()]
+      .set_handler_fn(keyboard_interrupt_handler)
+      .set_stack_index(gdt::KEYBOARD_INTERRUPT_INDEX); // new
+#+END_SRC
+and in =gdt.rs=
+#+BEGIN_SRC rust
+pub const KEYBOARD_INTERRUPT_INDEX: u16 = 0;
+#+END_SRC
+
