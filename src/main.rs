@@ -9,6 +9,7 @@ use blog_os::println;
 use bootloader::{BootInfo, entry_point};
 
 use blog_os::memory;
+use blog_os::syscalls;
 use blog_os::process;
 
 entry_point!(kernel_main);
@@ -70,7 +71,8 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Set up memory and kernel heap with allocator
     memory::init(boot_info);
 
-
+    // Set up system calls
+    syscalls::init();
 
     #[cfg(test)]
     test_main();

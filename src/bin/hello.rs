@@ -12,6 +12,9 @@ fn panic(_info: &PanicInfo) -> ! {
 
 #[no_mangle]
 pub unsafe extern "sysv64" fn _start() -> ! {
+
+    asm!("syscall");
+
     loop {
         // Note: hlt is a privileged instruction
     }
