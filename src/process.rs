@@ -253,7 +253,7 @@ pub fn new_user_thread(bin: &[u8]) -> Result<usize, &'static str> {
         context.ss = data_selector.0 as usize; // Without this we get a GPF
 
         // Allocate pages for the user stack
-        const USER_STACK_START: u64 = 0x5002000;
+        const USER_STACK_START: u64 = 0x5200000;
 
         memory::allocate_pages(user_page_table_ptr,
                                VirtAddr::new(USER_STACK_START), // Start address
