@@ -33,29 +33,28 @@ lazy_static! {
     /// Queue of processes which can run
     ///
     /// Notes:
-    ///  - Process structure must not be moved
-    ///  - Processes are added to the back of the queue with push_back
-    ///  - The next process to run is removed from the front with pop_front
-    static ref RUNNING_QUEUE: RwLock<VecDeque<Box<Process>>> =
+    ///  - Threads are added to the back of the queue with push_back
+    ///  - The next thread to run is removed from the front with pop_front
+    static ref RUNNING_QUEUE: RwLock<VecDeque<Box<Thread>>> =
         RwLock::new(VecDeque::new());
 
     /// The process which is currently running
-    static ref CURRENT_PROCESS: RwLock<Option<Box<Process>>> = RwLock::new(None);
+    static ref CURRENT_THREAD: RwLock<Option<Box<Thread>>> = RwLock::new(None);
 }
 
-/// Per-process state
+/// Per-thread state
 ///
 ///
 /// https://samwho.dev/blog/context-switching-on-x86/
 ///
 /// Notes:
-///  - Box::new(Process { .. }) first constructs a new Process
+///  - Box::new(Thread { .. }) first constructs a new Thread
 ///    on the stack, then moves it onto the heap. Fixed sized arrays
 ///    therefore can't be used for the new process' stack because they
 ///    overflow the current stack.
-struct Process {
-    /// Process ID
-    pid: usize,
+struct Thread {
+    /// Thread ID
+    tid: usize,
 
     /// Kernel stack needed to handle system calls
     /// and interrupts including
@@ -77,8 +76,8 @@ struct Process {
 
 use core::fmt;
 
-/// Enable Process structs to be printed
-impl fmt::Display for Process {
+/// Enable Thread structs to be printed
+impl fmt::Display for Thread {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         // Cast context address to Context struct
         let context = unsafe {&mut *(self.context as *mut Context)};
@@ -87,10 +86,10 @@ impl fmt::Display for Process {
         let user_stack_start = VirtAddr::from_ptr(self.user_stack.as_ptr()).as_u64();
 
         write!(f, "\
-PID: {}, rip: {:#016X}
+TID: {}, rip: {:#016X}
     Kernel stack: {:#016X} - {:#016X} Context: {:#016X}
     Thread stack: {:#016X} - {:#016X} RSP: {:#016X}",
-               self.pid, context.rip,
+               self.tid, context.rip,
                // Second line
                kernel_stack_start,
                kernel_stack_start + (KERNEL_STACK_SIZE as u64),
@@ -114,7 +113,7 @@ PID: {}, rip: {:#016X}
 ///
 /// Returns
 /// -------
-/// The PID of the new thread
+/// The TID of the new thread
 ///
 pub fn new_kernel_thread(function: fn()->()) -> usize {
     // Create a new process table entry
@@ -126,8 +125,8 @@ pub fn new_kernel_thread(function: fn()->()) -> usize {
         let kernel_stack_start = VirtAddr::from_ptr(kernel_stack.as_ptr());
         let kernel_stack_end = (kernel_stack_start + KERNEL_STACK_SIZE).as_u64();
 
-        Box::new(Process {
-            pid: 0,
+        Box::new(Thread {
+            tid: 0,
             kernel_stack,
             // Note that stacks move backwards, so SP points to the end
             kernel_stack_end,
@@ -159,7 +158,7 @@ pub fn new_kernel_thread(function: fn()->()) -> usize {
     //       because the stack moves down in memory
     context.rsp = (VirtAddr::from_ptr(new_process.user_stack.as_ptr()) + USER_STACK_SIZE).as_u64() as usize;
 
-    let pid = new_process.pid;
+    let tid = new_process.tid;
 
     println!("New kernel thread {}", new_process);
 
@@ -167,7 +166,7 @@ pub fn new_kernel_thread(function: fn()->()) -> usize {
     interrupts::without_interrupts(|| {
         RUNNING_QUEUE.write().push_back(new_process);
     });
-    pid
+    tid
 }
 
 pub fn new_user_thread(bin: &[u8]) -> Result<usize, &'static str> {
@@ -216,14 +215,14 @@ pub fn new_user_thread(bin: &[u8]) -> Result<usize, &'static str> {
             }
         }
 
-        // Create the new Process struct
+        // Create the new Thread struct
         let mut new_process = {
             let kernel_stack = Vec::with_capacity(KERNEL_STACK_SIZE);
             let kernel_stack_start = VirtAddr::from_ptr(kernel_stack.as_ptr());
             let kernel_stack_end = (kernel_stack_start + KERNEL_STACK_SIZE).as_u64();
 
-            Box::new(Process {
-                pid: 0,
+            Box::new(Thread {
+                tid: 0,
                 kernel_stack,
                 // Note that stacks move backwards, so SP points to the end
                 kernel_stack_end,
@@ -266,9 +265,9 @@ pub fn new_user_thread(bin: &[u8]) -> Result<usize, &'static str> {
         //       because the stack moves down in memory
         context.rsp = (USER_STACK_START as usize) + USER_STACK_SIZE;
 
-        let pid = new_process.pid;
+        let tid = new_process.tid;
 
-        println!("New Process {}", new_process);
+        println!("New Thread {}", new_process);
 
         //Turn off interrupts while modifying process table
         interrupts::without_interrupts(|| {
@@ -288,34 +287,34 @@ pub fn new_user_thread(bin: &[u8]) -> Result<usize, &'static str> {
 pub fn schedule_next(context: &Context) -> usize {
 
     let mut running_queue = RUNNING_QUEUE.write();
-    let mut current_process = CURRENT_PROCESS.write();
+    let mut current_thread = CURRENT_THREAD.write();
 
-    if let Some(process) = current_process.take() {
-        // Put the current process to the back of the queue
+    if let Some(thread) = current_thread.take() {
+        // Put the current thread to the back of the queue
 
         // Update the stack pointer
-        let mut proc_mut = process;
+        let mut thread_mut = thread;
 
         // Store context location. This should almost always be in the same
         // location on the kernel stack. The exception is the
         // first time a context switch occurs from the original kernel
         // stack to the first kernel thread stack.
-        proc_mut.context = (context as *const Context) as u64;
+        thread_mut.context = (context as *const Context) as u64;
 
-        running_queue.push_back(proc_mut);
+        running_queue.push_back(thread_mut);
     }
-    *current_process = running_queue.pop_front();
+    *current_thread = running_queue.pop_front();
 
-    match current_process.as_ref() {
-        Some(process) => {
+    match current_thread.as_ref() {
+        Some(thread) => {
             // Set the kernel stack for the next interrupt
             gdt::set_interrupt_stack_table(
                 gdt::TIMER_INTERRUPT_INDEX as usize,
                 // Note: Point to the end of the stack
-                VirtAddr::new(process.kernel_stack_end));
+                VirtAddr::new(thread.kernel_stack_end));
             // Point the stack to the new context
             // (which is usually stored on the kernel stack)
-            process.context as usize
+            thread.context as usize
         },
         None => 0
     }
