@@ -45,35 +45,12 @@ pub fn init(boot_info: &'static BootInfo) {
 
         let level_4_table = unsafe {active_level_4_table(physical_memory_offset)};
 
-        for (i, entry) in level_4_table.iter().enumerate() {
-            if !entry.is_unused() {
-                println!("L4 Entry {}: {:?}", i, entry);
-            }
-        }
-
         // Initialise the memory mapper
         let mut mapper = unsafe {OffsetPageTable::new(level_4_table, physical_memory_offset)};
         let mut frame_allocator = unsafe {
             BootInfoFrameAllocator::init(&boot_info.memory_map)
         };
 
-        let addresses = [
-            // the identity-mapped vga buffer page
-            0xb8000,
-            // some code page
-            0x201008,
-            // some stack page
-            0x0100_0020_1a10,
-            // virtual address mapped to physical address 0
-            boot_info.physical_memory_offset,
-        ];
-
-        for &address in &addresses {
-            let virt = VirtAddr::new(address);
-            // new: use the `mapper.translate_addr` method
-            let phys = mapper.translate_addr(virt);
-            println!("{:?} -> {:?}", virt, phys);
-        }
 
         allocator::init_heap(&mut mapper, &mut frame_allocator)
             .expect("heap initialization failed");
@@ -123,15 +100,45 @@ pub fn create_empty_pagetable() -> *mut PageTable {
     page_table_ptr
 }
 
-/// FIXME!
+/// Creates a PageTable containing only kernel pages
 ///
+/// Using the currently active PageTable, copy level 4
+/// entries only if they are NOT user accessible.
 ///
-pub fn create_user_pagetable() -> *mut PageTable {
+/// This creates a blank PageTable for a user process
+///
+/// Returns
+/// -------
+///
+/// - A pointer to the PageTable (virtual address in kernel mapped pages)
+/// - The physical address which can be written to cr3
+///
+pub fn create_kernel_only_pagetable() -> (*mut PageTable, u64) {
     let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
 
-    let table = unsafe {active_level_4_table(memory_info.physical_memory_offset)};
+    // Get the current page table
+    let current_table = unsafe {active_level_4_table(memory_info.physical_memory_offset)};
 
-    table as *mut PageTable
+    // Create a new page table
+    let mut table_ptr = create_empty_pagetable();
+    let mut table = unsafe {&mut *table_ptr};
+
+    // Copy top-level page table entries
+
+    for (i, entry) in current_table.iter().enumerate() {
+        if !entry.is_unused() {
+            println!("L4 Entry {}: {:?}", i, entry);
+            // Copy entry if it's not user accessible i.e. kernel pages only
+            // (includes the mapped memory which enables the kernel to access all
+            // physical memory).
+            if !entry.flags().contains(PageTableFlags::USER_ACCESSIBLE) {
+                println!(" -> Copying");
+                table[i].set_addr(entry.addr(), entry.flags());
+            }
+        }
+    }
+
+    (table_ptr, VirtAddr::from_ptr(table_ptr) - memory_info.physical_memory_offset)
 }
 
 ///////////////////////////////////////////////////////////////////////

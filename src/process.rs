@@ -180,8 +180,13 @@ pub fn new_user_thread(bin: &[u8]) -> Result<usize, &'static str> {
     // https://crates.io/crates/object
     if let Ok(obj) = object::File::parse(bin) {
 
-        // Create a user pagetable
-        let user_page_table_ptr = memory::create_user_pagetable();
+        // Create a user pagetable with only kernel pages
+        let (user_page_table_ptr, user_page_table_physaddr) = memory::create_kernel_only_pagetable();
+
+        // Switch to this page table
+        unsafe {
+            asm!("mov cr3, {addr}", addr = in(reg) user_page_table_physaddr);
+        }
 
         let entry_point = obj.entry();
         println!("Entry point: {:#016X}", entry_point);
