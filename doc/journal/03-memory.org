@@ -1,0 +1,12 @@
+* Memory management
+
+  In the [[file:02-userspace.org][last section]] we worked out how to run a program in ring 3,
+but couldn't protect programs from each other or run more than one
+without having to manually choose memory ranges for each program.
+
+To isolate programs from each other we need to set up separate
+page tables for each process. We will want to keep the kernel
+pages mapped, and add the user pages.
+
+
+

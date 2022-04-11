@@ -1,0 +1,506 @@
+* Userspace
+
+Continuing from the [[file:01-interrupts-processes.org][last section]], here we'll give the kernel the ability to
+load programs and run them in a restricted "user mode", while talking to the
+kernel using system calls ("syscall"s).
+
+** Loading executables
+
+As with many other parts of this guide, this follows closely what [[https://github.com/vinc/moros/][MOROS]] does.
+
+The standard executable format on Unix-like operating systems is ELF.
+
+ We use the [[https://crates.io/crates/object][object]] crate to parse
+the ELF format
+#+BEGIN_SRC
+object = { version = "0.27.1", default-features = false, features = ["read"] }
+#+END_SRC
+then in =process.rs=
+#+BEGIN_SRC rust
+use object::{Object, ObjectSegment};
+#+END_SRC
+
+To create a simple executable, create a file =src/bin/hello.rs=
+#+BEGIN_SRC rust
+#![no_std]
+#![no_main]
+
+use core::panic::PanicInfo;
+
+#[panic_handler]
+fn panic(_info: &PanicInfo) -> ! {
+    loop {}
+}
+
+#[no_mangle]
+pub unsafe extern "sysv64" fn _start() -> ! {
+    loop {}
+}
+#+END_SRC
+
+then compile with
+#+BEGIN_SRC
+$ cargo build
+#+END_SRC
+which should create an executable =target/x86_64-blog_os/debug/hello=
+
+#+BEGIN_SRC rust
+  pub fn new_user_thread(bin: &[u8]) -> Result<usize, &'static str> {
+      // Check the header
+      const ELF_MAGIC: [u8; 4] = [0x7f, b'E', b'L', b'F'];
+
+      if bin[0..4] != ELF_MAGIC {
+          return Err("Expected ELF binary");
+      }
+      // Use the object crate to parse the ELF file
+      // https://crates.io/crates/object
+      if let Ok(obj) = object::File::parse(bin) {
+          let entry_point = obj.entry();
+          println!("Entry point: {:#016X}", entry_point);
+
+          for segment in obj.segments() {
+              println!("Section {:?} : {:#016X}", segment.name(), segment.address());
+          }
+      } else {
+          return Err("Could not parse ELF");
+      }
+      Ok(0)
+  }
+#+END_SRC
+
+In =main.rs= we now include the =hello= executable using the
+[[https://doc.rust-lang.org/std/macro.include_bytes.html][include_bytes]] macro:
+#+BEGIN_SRC rust
+process::new_user_thread(include_bytes!("../target/x86_64-blog_os/debug/hello"));
+#+END_SRC
+
+Running this with
+#+BEGIN_SRC
+$ cargo run --bin blog_os
+#+END_SRC
+should produce a result like
+
+#+BEGIN_SRC
+Entry point: 0x00000000201120
+Section Ok(None) : 0x00000000200000
+Section Ok(None) : 0x00000000201120
+#+END_SRC
+
+Unfortunately this entry point virtual memory address is in the same
+range as the kernel. The user program has to be loaded at these memory
+addresses to work correctly, but if we do that we will overwrite part
+of the kernel.
+
+To handle this we can try to use separate page tables for kernel and
+users, so they can have the same virtual memory address but different
+physical addresses. This means frequently switching page tables (and
+flushing the TLB). In addition interrupt handlers must be mapped in
+the user virtual memory because page tables are not changed when an
+interrupt occurs. Instead all operating systems keep at least some
+kernel memory mapped in a reserved part of virtual memory: Linux is a
+"high half" operating system, where the high half of virtual memory is
+reserved for kernel use. Note that the kernel pages can in principle
+only be accessed from ring 0 (kernel), but the Meltdown security
+vulnerability allowed this to be bypassed on some processors (Intel
+x86 & some ARM Cortex). Linux can use [[https://en.wikipedia.org/wiki/Kernel_page-table_isolation][Kernel page-table isolation
+(KPTI)]] to keep only minimal interrupt handlers mapped while in user
+mode and mitigate this vulnerability.
+
+To change the address of the user code, we can use the GNU [[https://man7.org/linux/man-pages/man1/ld.1.html][ld]] linker,
+which has options to control the virtual address where code and data
+segments are loaded. Choosing a memory range which is not
+currently unused e.g above =0x5000000=, we can build userspace programs
+with this =makefile= rule:
+#+BEGIN_SRC makefile
+.PHONY: user
+
+# Compile user programs in src/bin
+user: user/hello
+
+user/% : src/bin/%.rs makefile
+	cargo rustc --release --bin $* -- \
+		-C linker-flavor=ld \
+		-C link-args="-Ttext-segment=5000000 -Trodata-segment=5100000" \
+		-C relocation-model=static
+	mkdir -p user
+	cp target/x86_64-blog_os/release/$* user/
+#+END_SRC
+
+which will build the =hello= executable and copy it into a =user/=
+directory. The =main.rs= code can be changed to point to this new location:
+#+BEGIN_SRC rust
+process::new_user_thread(include_bytes!("../user/hello"));
+#+END_SRC
+
+While we're at it, we can add another rule:
+#+BEGIN_SRC makefile
+run : user
+	cargo run --bin blog_os
+#+END_SRC
+so running =make run= will build everything and run. Check that the new entry
+point is correct.
+
+To load the ELF into this new virtual memory address we need to create entries
+in the page table.
+#+BEGIN_SRC rust
+  for segment in obj.segments() {
+      let segment_address = segment.address() as u64;
+
+      println!("Section {:?} : {:#016X}", segment.name(), segment_address);
+
+      if let Ok(data) = segment.data() {
+          println!("  len : {}", data.len());
+
+          // Allocate memory in the pagetable
+          memory::allocate_pages(user_page_table_ptr,
+                                 VirtAddr::new(segment_address), // Start address
+                                 data.len() as u64, // Size (bytes)
+                                 PageTableFlags::PRESENT |
+                                 PageTableFlags::WRITABLE |
+                                 PageTableFlags::USER_ACCESSIBLE);
+
+          // Copy data
+          let dest_ptr = segment_address as *mut u8;
+          for (i, value) in data.iter().enumerate() {
+              unsafe {
+                  let ptr = dest_ptr.add(i);
+                  core::ptr::write(ptr, *value);
+              }
+          }
+      } else {
+          return Err("Could not get segment data");
+      }
+  }
+#+END_SRC
+
+** Switching to userspace
+
+Following [[https://nfil.dev/kernel/rust/coding/rust-kernel-to-userspace-and-back/][this blog by Nikos Filippakis]], we are now going to switch programs
+to user mode.
+
+Note: TSS contains the Privilege Stack Table, which contains stack
+pointers to switch to when the privilege level changes.
+
+From [[ https://github.com/vinc/moros/blob/trunk/src/sys/gdt.rs#L37][MOROS]]
+
+#+BEGIN_SRC rust
+   static ref GDT: (GlobalDescriptorTable, Selectors) = {
+        let mut gdt = GlobalDescriptorTable::new();
+        let code_selector = gdt.add_entry(Descriptor::kernel_code_segment());
+        let data_selector = gdt.add_entry(Descriptor::kernel_data_segment());
+        let tss_selector = gdt.add_entry(Descriptor::tss_segment(&TSS));
+        let user_code_selector = gdt.add_entry(Descriptor::user_code_segment());
+        let user_data_selector = gdt.add_entry(Descriptor::user_data_segment());
+        (gdt, Selectors { code_selector, data_selector, tss_selector,
+                          user_code_selector, user_data_selector})
+    };
+#+END_SRC
+
+According to [[https://nfil.dev/kernel/rust/coding/rust-kernel-to-userspace-and-back/][this post]] the actual code and data segments are obsolete
+and not used, but the code segment (CS register) sets the processor
+privilege level ("ring").  The order of the segments in the GDT does
+not seem to matter if interrupts are going to be used for system
+calls. The order is however important if the faster (and more recent)
+syscall/sysret mechanism is used.
+
+#+BEGIN_SRC rust
+context.cs = code_selector.0 as usize; // Code segment flags
+context.ss = data_selector.0 as usize; // Without this we get a GPF
+#+END_SRC
+
+Setting the CS register without also setting the SS register results
+in a General Protection Fault on the =iretq= instruction. Fixing this we get
+a different error:
+#+BEGIN_SRC
+New process PID: 0x00000000000000, rip: 0x00000005001000
+    Kernel stack: 0x00444444440068 - 0x00444444442068 Context: 0x000444444441FE8
+    Thread stack: 0x00444444442068 - 0x00444444447068 RSP: 0x00444444447068
+EXCEPTION: PAGE FAULT
+Accessed Address: VirtAddr(0x444444447060)
+Error Code: PROTECTION_VIOLATION | CAUSED_BY_WRITE | USER_MODE
+InterruptStackFrame {
+    instruction_pointer: VirtAddr(
+        0x5001000,
+    ),
+    code_segment: 51,
+    cpu_flags: 0x246,
+    stack_pointer: VirtAddr(
+        0x444444447068,
+    ),
+    stack_segment: 43,
+}
+#+END_SRC
+
+The error code (=USER_MODE= flag) means that we're running in user
+mode (Ring 3)!  Unfortunately our code has tried to write to an
+address that it's not allowed to: It tried to write to
+=0x444444447060= which is in the thread stack address range
+(=0x00444444442068 - 0x00444444447068=). The error occurred because we
+are allocating the stacks on the kernel heap with =Vec= objects, and
+those kernel pages are not accessible to user programs.
+
+#+BEGIN_SRC rust
+  // Allocate pages for the user stack
+  const USER_STACK_START: u64 = 0x5002000;
+
+  memory::allocate_pages(user_page_table_ptr,
+                         VirtAddr::new(USER_STACK_START), // Start address
+                         USER_STACK_SIZE as u64, // Size (bytes)
+                         PageTableFlags::PRESENT |
+                         PageTableFlags::WRITABLE |
+                         PageTableFlags::USER_ACCESSIBLE);
+  context.rsp = (USER_STACK_START as usize) + USER_STACK_SIZE;
+#+END_SRC
+
+Now the userspace code runs! Until we press a key. Then we get:
+#+BEGIN_SRC
+EXCEPTION: PAGE FAULT
+Accessed Address: VirtAddr(0xfffffffffffffff8)
+Error Code: CAUSED_BY_WRITE
+InterruptStackFrame {
+    instruction_pointer: VirtAddr(
+      0x5001000,
+    ),
+    code_segment: 51,
+    cpu_flags: 0x202,
+    stack_pointer: VirtAddr(
+        0x5007000,
+    ),
+    stack_segment: 43
+}
+#+END_SRC
+The accessed address is 8 bytes below address 0, and the access
+occurred in kernel mode (no USER_MODE flag).
+
+Ensure that the keyboard interrupt handler has a valid kernel stack.
+In =interrupts.rs=:
+#+BEGIN_SRC rust
+  idt[InterruptIndex::Keyboard.as_usize()]
+      .set_handler_fn(keyboard_interrupt_handler)
+      .set_stack_index(gdt::KEYBOARD_INTERRUPT_INDEX); // new
+#+END_SRC
+and in =gdt.rs=
+#+BEGIN_SRC rust
+pub const KEYBOARD_INTERRUPT_INDEX: u16 = 0;
+#+END_SRC
+
+
+** Calling the kernel
+
+Right now the user process can't do much because printing to screen
+requires ring 0 (kernel) privileges. It has to ask the kernel to
+perform this task and many others. Every operating system therefore
+has a system call interface, for example this is the [[https://filippo.io/linux-syscall-table/][Linux syscall
+table]].
+
+First we need to enable syscalls, and specify the function to be called.
+In a new file =syscalls.rs= we're going to need some assembly code:
+#+BEGIN_SRC rust
+use core::arch::asm;
+#+END_SRC
+Then define some constants which refer to the Model Specific Registers (MSRs)
+used to control syscalls:
+#+BEGIN_SRC rust
+const MSR_STAR: usize = 0xc0000081;
+const MSR_LSTAR: usize = 0xc0000082;
+const MSR_FMASK: usize = 0xc0000084;
+#+END_SRC
+
+Define a function which will be called when a syscall occurs:
+#+BEGIN_SRC rust
+  #[naked]
+  extern "C" fn handle_syscall() {
+      // Empty for now
+  }
+#+END_SRC
+Then an =init= function to set up syscalls to call this function
+#+BEGIN_SRC rust
+  pub fn init() {
+      let handler_addr = handle_syscall as *const () as u64;
+      unsafe {
+        // Assembly code to go here
+      }
+  }
+#+END_SRC
+
+There are four steps needed to set this up: (1) enable the syscall
+and sysret opcodes by setting the last bit in the MSR IA32_EFER,
+which has code =0xC0000080=:
+#+BEGIN_SRC rust
+  asm!("mov ecx, 0xC0000080",
+       "rdmsr",
+       "or eax, 1",
+       "wrmsr");
+#+END_SRC
+When a syscall is made we need to disable interrupts. Step (2)
+is therefore to use =FMASK= MSR to appliy a mask to the RFLAGS
+when a syscall occurs:
+#+BEGIN_SRC rust
+  asm!("xor rdx, rdx",
+             "mov rax, 0x200",
+             "wrmsr",
+             in("rcx") MSR_FMASK);
+#+END_SRC
+
+Step (3) is to set the =LSTAR= MSR to the address of the handler
+which gets called:
+#+BEGIN_SRC rust
+  asm!("mov rdx, rax",
+       "shr rdx, 32",
+       "wrmsr",
+       in("rax") handler_addr,
+       in("rcx") MSR_LSTAR);
+#+END_SRC
+
+Finally (4) is to set the segment selectors (i.e. ring 0 or ring 3)
+which get changed when =syscall= and =sysret= are executed:
+#+BEGIN_SRC rust
+  asm!(
+      "xor rax, rax",
+      "mov rdx, 0x230008",
+      "wrmsr",
+      in("rcx") MSR_STAR);
+#+END_SRC
+The value =0x230008= specifies that selectors 8, 16 are used for
+syscall (going to kernel code) and 43, 51 for sysret (returning to
+user code).
+
+Now to call our (empty) syscall handler, modify ==src/bin/hello.rs=
+so that it now executes =syscall=:
+#+BEGIN_SRC rust
+#[no_mangle]
+pub unsafe extern "sysv64" fn _start() -> ! {
+    asm!("syscall");
+
+    loop {}
+}
+#+END_SRC
+Try running this, to ensure that everything is working so far.
+
+Now we can make the syscall handler do something, but to do that we
+need to save the registers so we can restore them afterwards. In
+future we will want to distinguish between cases where we will return
+to the same process, and cases where we will want to switch to a
+different process. We'll also want to change stack so that we're not
+messing with, or leaking kernel data into, the user's stack. For now
+we'll just push registers on the user's stack in the body of the
+=handle_syscall()= function.
+
+Since naked functions can only contain a single =asm= block, it's
+probably best to do the minimum necessary to get to Rust code.
+
+#+BEGIN_SRC rust
+  #[naked]
+  extern "C" fn handle_syscall() {
+      unsafe {
+          asm!(
+              // Here should switch stack to avoid messing with user stack
+              // backup registers for sysretq
+              "push rcx",
+              "push r11",
+              "push rbp",
+              "push rbx", // save callee-saved registers
+              "push r12",
+              "push r13",
+              "push r14",
+              "push r15",
+
+              // Call the rust handler
+              "call {sys_write}",
+
+              "pop r15", // restore callee-saved registers
+              "pop r14",
+              "pop r13",
+              "pop r12",
+              "pop rbx",
+              "pop rbp", // restore stack and registers for sysretq
+              "pop r11",
+              "pop rcx",
+              "sysretq", // back to userland
+              sys_write = sym sys_write,
+              options(noreturn));
+      }
+  }
+#+END_SRC
+where the =sym= keyword is replaced with the address of the
+symbol (i.e function in this case) by the linker. The =sys_write= function
+will just print something so we can see if it's working:
+#+BEGIN_SRC rust
+  extern "C" fn sys_write() {
+      println!("write");
+  }
+#+END_SRC
+Try running again, now should see "write" appear.
+
+** Choosing syscall function
+
+To be able to do anything useful, we need to be able to pass
+parameters to our syscall, typically through registers though perhaps
+also on the stack. From [[https://blog.rchapman.org/posts/Linux_System_Call_Table_for_x86_64/][this summary of Linux syscalls]], it can be seen
+that Linux does this in two stages: First a syscall function is
+selected by setting the RAX register. Then other registers are used to
+pass parameters to the syscall function. The order of these parameters
+(rdi, rsi, rdx, r10, r8, r9) is slightly different from the [[https://wiki.osdev.org/System_V_ABI][System V
+ABI]] and C calling conventions (rdi, rsi, rdx, rcx, r8, r9) because the
+RCX register is used to store the caller's instruction pointer.
+
+Linux uses a call table to choose which function to call: The RAX
+register is the index into an array of function pointers.
+At some point we'll need to implement something like this in Rust,
+but for now we'll just implement a simple conditional.
+Replacing =call sys_write= with:
+
+#+BEGIN_SRC rust
+  "cmp rax, 0",       // if rax == 0 {
+  "jne 1f",
+  "call {sys_read}",  //   sys_read();
+  "1: cmp rax, 1",    // } if rax == 1 {
+  "jne 2f",
+  "call {sys_write}", //   sys_write();
+  "2: ",              // }
+#+END_SRC
+and get the addresses of both functions in the =asm!= macro:
+#+BEGIN_SRC rust
+  sys_read = sym sys_read, // new
+  sys_write = sym sys_write,
+#+END_SRC
+and add the other syscall function:
+#+BEGIN_SRC rust
+  extern "C" fn sys_read() {
+      println!("read");
+  }
+#+END_SRC
+Now we can modify the =hello.rs= userland code, setting
+the =rax= register to select which syscall to run:
+#+BEGIN_SRC rust
+  asm!("mov rax, 1", // write
+       "syscall");
+#+END_SRC
+
+** Syscall arguments
+
+Now we have called the syscall function, we can use the other
+registers to pass parameters. To start with we'll use =sys_write= to
+print strings. Then we'll be able to print debugging information from
+user programs.
+
+We can change the =sys_write= function to accept two arguments,
+which will be in the RDI and RSI registers:
+#+BEGIN_SRC rust
+  extern "C" fn sys_write(ptr: *mut u8, len:usize) {
+      // Body to go here...
+  }
+#+END_SRC
+
+The first argument (in RDI) is the pointer to the start of the string,
+and the second (in RSI) is its length.  Both of these arguments should
+be thoroughly checked before use, as user code may be malfunctioning
+or malicious. All =len= bytes of the string must be in the
+user's memory range, for example, and not part of kernel memory.
+
+
+Note: HLT is privileged instruction (needs ring 0)
+- Linux has sched_yield() syscall, to call if no work needs to be done
+  -> kernel calls hlt if every process is sleeping or waiting
+
+
