@@ -8,5 +8,163 @@ To isolate programs from each other we need to set up separate
 page tables for each process. We will want to keep the kernel
 pages mapped, and add the user pages.
 
+First add a new function to =memory.rs= which creates a new empty
+level 4 pagetable for the user process:
+#+BEGIN_SRC rust
+fn create_empty_pagetable() -> (*mut PageTable, u64) {
+    // Need to borrow as mutable so that we can allocate new frames
+    // and so modify the frame allocator
+    let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+
+    // Get a frame to store the level 4 table
+    let level_4_table_frame = memory_info.frame_allocator.allocate_frame().unwrap();
+    let phys = level_4_table_frame.start_address(); // Physical address
+    let virt = memory_info.physical_memory_offset + phys.as_u64(); // Kernel virtual address
+    let page_table_ptr: *mut PageTable = virt.as_mut_ptr();
+
+    // Clear all entries in the page table
+    unsafe {
+        (*page_table_ptr).zero();
+    }
+
+    (page_table_ptr, phys.as_u64())
+}
+#+END_SRC
+
+If we switch to this page table then none of the kernel code or data
+will be accessible. Before using this page table we therefore want to
+add all the kernel pages which are in the currently active page table.
+The following function in =memory.rs= does this:
+#+BEGIN_SRC rust
+  pub fn create_kernel_only_pagetable() -> (*mut PageTable, u64) {
+      let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+
+      // Get the current page table
+      let current_table = unsafe {active_level_4_table(memory_info.physical_memory_offset)};
+
+      // Create a new page table
+      let (table_ptr, table_physaddr) = create_empty_pagetable();
+      let mut table = unsafe {&mut *table_ptr};
+
+      // Copy top-level page table entries
+      for (i, entry) in current_table.iter().enumerate() {
+          if !entry.is_unused() {
+              // Copy entry if it's not user accessible i.e. kernel pages only
+              // (includes the mapped memory which enables the kernel to access all
+              // physical memory).
+              if !entry.flags().contains(PageTableFlags::USER_ACCESSIBLE) {
+                  table[i].set_addr(entry.addr(), entry.flags());
+              }
+          }
+      }
+
+      (table_ptr, table_physaddr)
+  }
+#+END_SRC
+Note that it returns both a pointer (i.e. a virtual memory address) to
+the new page table, and also the physical address of the table. That
+physical address is what needs to be written to the CR3 register in
+order for this page table to be used.
+
+In the =new_user_thread= function in =process.rs= we can now get the page table pointer
+and physical address, and then switch to the new table:
+#+BEGIN_SRC rust
+  if let Ok(obj) = object::File::parse(bin) {
+      let (user_page_table_ptr, user_page_table_physaddr) =
+          memory::create_kernel_only_pagetable(); // New
+      unsafe {
+          asm!("mov cr3, {addr}", addr = in(reg) user_page_table_physaddr); // New
+      }
+      ...
+#+END_SRC
+So when memory is allocated and the ELF data is read, the new page
+table entries are in the new page table. This writes the physical
+address of the page table to CR3 (Control Register 3), which triggers
+a TLB flush. Since we are not changing the kernel pages, these can be
+kept rather than flushed by setting the Global bit in the page table,
+as explained in [[https://wiki.osdev.org/TLB][this OSdev wiki page]].
+
+The user program should now run with the new page table, producing the
+same output as before!  Unfortunately this pagetable is now used for
+all threads, and creating a new user process will change the page
+table for all threads. To really separate processes we need to change
+page tables during context switches, which brings us to discussing
+processes and threads.
+
+** Single-threaded programs
+
+   At this point we need to make some choices which will affect the kind of
+kernel that we end up with. The simplest solution for now is to assign each
+thread its own page table, so each program is single-threaded. To do this,
+in =processes.rs= add a field to the =Thread= struct:
+#+BEGIN_SRC rust
+struct Thread {
+    /// Thread ID
+    tid: usize,
+#+END_SRC
+
+#+begin_src rust
+  struct Thread {
+    /// Thread ID
+    tid: usize,
+
+    /// Page table physical address
+    page_table_physaddr: u64, // New
+    ...
+  }
+#+end_src
+
+In the =new_kernel_thread= function we'll set this address to
+zero, to indicate that no page table switch is needed, since
+kernel pages are mapped in all tables.
+#+begin_src rust
+  Box::new(Thread {
+      tid: 0,
+      page_table_physaddr: 0, // New
+#+end_src
+
+In the =new_user_thread= we'll store the physical address of the
+new page table:
+#+begin_src rust
+  Box::new(Thread {
+      tid: 0,
+      page_table_physaddr: user_page_table_physaddr, // New
+#+end_src
+
+We're going to need to switch page tables in a couple of places now
+(the context switch and new user thread code) so let's define
+a function in =memory.rs= to do this:
+#+begin_src rust
+  pub fn switch_to_pagetable(physaddr: u64) {
+      unsafe {
+          asm!("mov cr3, {addr}",
+               addr = in(reg) physaddr);
+      }
+  }
+#+end_src
+And add =use core::arch::asm;= near the top of =memory.rs=.  We can
+then call this function in =new_user_thread=, replacing the unsafe asm
+block:
+#+begin_src rust
+  memory::switch_to_pagetable(user_page_table_physaddr);
+#+end_src
+
+Finally in =process.rs= the function =schedule_next=, which is called by
+the timer interrupt to switch context, can be modified:
+#+begin_src rust
+  match current_thread.as_ref() {
+      Some(thread) => {
+          gdt::set_interrupt_stack_table(
+              gdt::TIMER_INTERRUPT_INDEX as usize,
+              VirtAddr::new(thread.kernel_stack_end));
+
+          if thread.page_table_physaddr != 0 {
+              memory::switch_to_pagetable(thread.page_table_physaddr); // New
+          }
+          thread.context as usize
+#+end_src
+An optimisation here would be to only switch pagetable if it's
+different from the already active pagetable e.g if there is only one
+running thread.
 
 

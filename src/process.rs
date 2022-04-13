@@ -1,6 +1,7 @@
-///
-/// Handle processes
-///
+//! Handle processes
+//!
+//! Create processes, and determine which one to run next
+//!
 
 use x86_64::VirtAddr;
 use x86_64::instructions::interrupts;
@@ -18,8 +19,6 @@ use crate::interrupts::{Context, INTERRUPT_CONTEXT_SIZE};
 
 use crate::gdt;
 use crate::memory;
-
-use core::ptr;
 
 use object::{Object, ObjectSegment};
 
@@ -55,6 +54,9 @@ lazy_static! {
 struct Thread {
     /// Thread ID
     tid: usize,
+
+    /// Page table physical address
+    page_table_physaddr: u64,
 
     /// Kernel stack needed to handle system calls
     /// and interrupts including
@@ -120,13 +122,14 @@ pub fn new_kernel_thread(function: fn()->()) -> usize {
     //
     // Note this is first created on the stack, then moved into a Box
     // on the heap.
-    let mut new_process = {
+    let new_thread = {
         let kernel_stack = Vec::with_capacity(KERNEL_STACK_SIZE);
         let kernel_stack_start = VirtAddr::from_ptr(kernel_stack.as_ptr());
         let kernel_stack_end = (kernel_stack_start + KERNEL_STACK_SIZE).as_u64();
 
         Box::new(Thread {
             tid: 0,
+            page_table_physaddr: 0, // Don't need to switch PT
             kernel_stack,
             // Note that stacks move backwards, so SP points to the end
             kernel_stack_end,
@@ -137,7 +140,7 @@ pub fn new_kernel_thread(function: fn()->()) -> usize {
     };
 
     // Cast context address to Context struct
-    let context = unsafe {&mut *(new_process.context as *mut Context)};
+    let context = unsafe {&mut *(new_thread.context as *mut Context)};
 
     // Set the instruction pointer
     context.rip = function as usize;
@@ -156,15 +159,15 @@ pub fn new_kernel_thread(function: fn()->()) -> usize {
     // The kernel thread has its own stack
     // Note: Need to point to the end of the memory region
     //       because the stack moves down in memory
-    context.rsp = (VirtAddr::from_ptr(new_process.user_stack.as_ptr()) + USER_STACK_SIZE).as_u64() as usize;
+    context.rsp = (VirtAddr::from_ptr(new_thread.user_stack.as_ptr()) + USER_STACK_SIZE).as_u64() as usize;
 
-    let tid = new_process.tid;
+    let tid = new_thread.tid;
 
-    println!("New kernel thread {}", new_process);
+    println!("New kernel thread {}", new_thread);
 
     // Turn off interrupts while modifying process table
     interrupts::without_interrupts(|| {
-        RUNNING_QUEUE.write().push_back(new_process);
+        RUNNING_QUEUE.write().push_back(new_thread);
     });
     tid
 }
@@ -181,12 +184,11 @@ pub fn new_user_thread(bin: &[u8]) -> Result<usize, &'static str> {
     if let Ok(obj) = object::File::parse(bin) {
 
         // Create a user pagetable with only kernel pages
-        let (user_page_table_ptr, user_page_table_physaddr) = memory::create_kernel_only_pagetable();
+        let (user_page_table_ptr, user_page_table_physaddr) =
+            memory::create_kernel_only_pagetable();
 
         // Switch to this page table
-        unsafe {
-            asm!("mov cr3, {addr}", addr = in(reg) user_page_table_physaddr);
-        }
+        memory::switch_to_pagetable(user_page_table_physaddr);
 
         let entry_point = obj.entry();
         println!("Entry point: {:#016X}", entry_point);
@@ -221,13 +223,14 @@ pub fn new_user_thread(bin: &[u8]) -> Result<usize, &'static str> {
         }
 
         // Create the new Thread struct
-        let mut new_process = {
+        let new_thread = {
             let kernel_stack = Vec::with_capacity(KERNEL_STACK_SIZE);
             let kernel_stack_start = VirtAddr::from_ptr(kernel_stack.as_ptr());
             let kernel_stack_end = (kernel_stack_start + KERNEL_STACK_SIZE).as_u64();
 
             Box::new(Thread {
                 tid: 0,
+                page_table_physaddr: user_page_table_physaddr,
                 kernel_stack,
                 // Note that stacks move backwards, so SP points to the end
                 kernel_stack_end,
@@ -270,13 +273,13 @@ pub fn new_user_thread(bin: &[u8]) -> Result<usize, &'static str> {
         //       because the stack moves down in memory
         context.rsp = (USER_STACK_START as usize) + USER_STACK_SIZE;
 
-        let tid = new_process.tid;
+        let tid = new_thread.tid;
 
-        println!("New Thread {}", new_process);
+        println!("New Thread {}", new_thread);
 
-        //Turn off interrupts while modifying process table
+        // Turn off interrupts while modifying process table
         interrupts::without_interrupts(|| {
-            RUNNING_QUEUE.write().push_back(new_process);
+            RUNNING_QUEUE.write().push_back(new_thread);
         });
     } else {
         return Err("Could not parse ELF");
@@ -317,6 +320,13 @@ pub fn schedule_next(context: &Context) -> usize {
                 gdt::TIMER_INTERRUPT_INDEX as usize,
                 // Note: Point to the end of the stack
                 VirtAddr::new(thread.kernel_stack_end));
+
+            if thread.page_table_physaddr != 0 {
+                // Change page table
+                // Note: zero for kernel thread
+                memory::switch_to_pagetable(thread.page_table_physaddr);
+            }
+
             // Point the stack to the new context
             // (which is usually stored on the kernel stack)
             thread.context as usize

@@ -9,6 +9,8 @@ use crate::println;
 use crate::allocator;
 use bootloader::BootInfo;
 
+use core::arch::asm;
+
 struct MemoryInfo {
     boot_info: &'static BootInfo,
 
@@ -29,7 +31,6 @@ static mut MEMORY_INFO: Option<MemoryInfo> = None;
 /// references (which is undefined behavior).
 pub fn init(boot_info: &'static BootInfo) {
     use x86_64::instructions::interrupts;
-    use x86_64::{structures::paging::Translate}; // provides translate_addr
 
     interrupts::without_interrupts(|| {
         let mut memory_size = 0;
@@ -50,7 +51,6 @@ pub fn init(boot_info: &'static BootInfo) {
         let mut frame_allocator = unsafe {
             BootInfoFrameAllocator::init(&boot_info.memory_map)
         };
-
 
         allocator::init_heap(&mut mapper, &mut frame_allocator)
             .expect("heap initialization failed");
@@ -81,23 +81,29 @@ unsafe fn active_level_4_table(physical_memory_offset: VirtAddr)
 
 /// Create a new page table
 ///
-pub fn create_empty_pagetable() -> *mut PageTable {
+/// Returns
+/// -------
+///
+/// - A pointer to the PageTable (virtual address in kernel mapped pages)
+/// - The physical address which can be written to cr3
+///
+fn create_empty_pagetable() -> (*mut PageTable, u64) {
     // Need to borrow as mutable so that we can allocate new frames
     // and so modify the frame allocator
     let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
 
-    // Get a frame to store the level 4 frame
+    // Get a frame to store the level 4 table
     let level_4_table_frame = memory_info.frame_allocator.allocate_frame().unwrap();
     let phys = level_4_table_frame.start_address(); // Physical address
     let virt = memory_info.physical_memory_offset + phys.as_u64(); // Kernel virtual address
     let page_table_ptr: *mut PageTable = virt.as_mut_ptr();
 
-    // Clear all entries
+    // Clear all entries in the page table
     unsafe {
         (*page_table_ptr).zero();
     }
 
-    page_table_ptr
+    (page_table_ptr, phys.as_u64())
 }
 
 /// Creates a PageTable containing only kernel pages
@@ -120,25 +126,34 @@ pub fn create_kernel_only_pagetable() -> (*mut PageTable, u64) {
     let current_table = unsafe {active_level_4_table(memory_info.physical_memory_offset)};
 
     // Create a new page table
-    let mut table_ptr = create_empty_pagetable();
-    let mut table = unsafe {&mut *table_ptr};
+    let (table_ptr, table_physaddr) = create_empty_pagetable();
+    let table = unsafe {&mut *table_ptr};
 
     // Copy top-level page table entries
-
     for (i, entry) in current_table.iter().enumerate() {
         if !entry.is_unused() {
-            println!("L4 Entry {}: {:?}", i, entry);
             // Copy entry if it's not user accessible i.e. kernel pages only
             // (includes the mapped memory which enables the kernel to access all
             // physical memory).
             if !entry.flags().contains(PageTableFlags::USER_ACCESSIBLE) {
-                println!(" -> Copying");
                 table[i].set_addr(entry.addr(), entry.flags());
             }
         }
     }
 
-    (table_ptr, VirtAddr::from_ptr(table_ptr) - memory_info.physical_memory_offset)
+    (table_ptr, table_physaddr)
+}
+
+/// Switch to the specified page table
+///
+/// # Input
+///
+/// physaddr   Physical address of the L4 page table
+pub fn switch_to_pagetable(physaddr: u64) {
+    unsafe {
+        asm!("mov cr3, {addr}",
+             addr = in(reg) physaddr);
+    }
 }
 
 ///////////////////////////////////////////////////////////////////////
