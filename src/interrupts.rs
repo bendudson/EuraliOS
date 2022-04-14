@@ -48,13 +48,20 @@ pub fn init_idt() {
 #[repr(C)]
 pub struct Context {
     // These are pushed in the handler function
-    pub fs: usize,
+    pub r15: usize,
+    pub r14: usize,
+    pub r13: usize,
+
+    pub r12: usize,
     pub r11: usize,
     pub r10: usize,
     pub r9: usize,
+
     pub r8: usize,
+    pub rbp: usize,
     pub rsi: usize,
     pub rdi: usize,
+
     pub rdx: usize,
     pub rcx: usize,
     pub rbx: usize,
@@ -70,7 +77,7 @@ pub struct Context {
 }
 
 /// Number of bytes needed to store a Context struct
-pub const INTERRUPT_CONTEXT_SIZE: usize = 16 * 8;
+pub const INTERRUPT_CONTEXT_SIZE: usize = 20 * 8;
 
 extern "C" fn timer_handler(context: &mut Context) -> usize {
     // Process scheduler decides which process to schedule
@@ -117,13 +124,20 @@ macro_rules! interrupt_wrap {
                     "push rbx",
                     "push rcx",
                     "push rdx",
+
                     "push rdi",
                     "push rsi",
+                    "push rbp",
                     "push r8",
+
                     "push r9",
                     "push r10",
                     "push r11",
-                    "push fs",
+                    "push r12",
+
+                    "push r13",
+                    "push r14",
+                    "push r15",
 
                     // First argument in rdi with C calling convention
                     "mov rdi, rsp",
@@ -138,13 +152,20 @@ macro_rules! interrupt_wrap {
                      "2:",
 
                     // Pop scratch registers from new stack
-                    "pop fs",
+                    "pop r15",
+                    "pop r14",
+                    "pop r13",
+
+                    "pop r12",
                     "pop r11",
                     "pop r10",
                     "pop r9",
+
                     "pop r8",
+                    "pop rbp",
                     "pop rsi",
                     "pop rdi",
+
                     "pop rdx",
                     "pop rcx",
                     "pop rbx",

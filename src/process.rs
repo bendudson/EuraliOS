@@ -187,105 +187,101 @@ pub fn new_user_thread(bin: &[u8]) -> Result<usize, &'static str> {
         let (user_page_table_ptr, user_page_table_physaddr) =
             memory::create_kernel_only_pagetable();
 
-        // Switch to this page table
-        memory::switch_to_pagetable(user_page_table_physaddr);
+        // No interrupts while using new page table
+        return interrupts::without_interrupts(|| {
+            // Switch to this page table
+            memory::switch_to_pagetable(user_page_table_physaddr);
 
-        let entry_point = obj.entry();
-        println!("Entry point: {:#016X}", entry_point);
+            let entry_point = obj.entry();
+            println!("Entry point: {:#016X}", entry_point);
 
-        for segment in obj.segments() {
-            let segment_address = segment.address() as u64;
+            for segment in obj.segments() {
+                let segment_address = segment.address() as u64;
 
-            println!("Section {:?} : {:#016X}", segment.name(), segment_address);
+                println!("Section {:?} : {:#016X}", segment.name(), segment_address);
 
-            if let Ok(data) = segment.data() {
-                println!("  len : {}", data.len());
+                if let Ok(data) = segment.data() {
+                    println!("  len : {}", data.len());
 
-                // Allocate memory in the pagetable
-                memory::allocate_pages(user_page_table_ptr,
-                                       VirtAddr::new(segment_address), // Start address
-                                       data.len() as u64, // Size (bytes)
-                                       PageTableFlags::PRESENT |
-                                       PageTableFlags::WRITABLE |
-                                       PageTableFlags::USER_ACCESSIBLE);
+                    // Allocate memory in the pagetable
+                    //
+                    // NOTE (FIXME): Need to check that memory range is not overlapping
+                    // kernel memory.
+                    memory::allocate_pages(user_page_table_ptr,
+                                           VirtAddr::new(segment_address), // Start address
+                                           data.len() as u64, // Size (bytes)
+                                           PageTableFlags::PRESENT |
+                                           PageTableFlags::WRITABLE |
+                                           PageTableFlags::USER_ACCESSIBLE);
 
-                // Copy data
-                let dest_ptr = segment_address as *mut u8;
-                for (i, value) in data.iter().enumerate() {
-                    unsafe {
-                        let ptr = dest_ptr.add(i);
-                        core::ptr::write(ptr, *value);
+                    // Copy data
+                    let dest_ptr = segment_address as *mut u8;
+                    for (i, value) in data.iter().enumerate() {
+                        unsafe {
+                            let ptr = dest_ptr.add(i);
+                            core::ptr::write(ptr, *value);
+                        }
                     }
+                } else {
+                    return Err("Could not get segment data");
                 }
-            } else {
-                return Err("Could not get segment data");
             }
-        }
 
-        // Create the new Thread struct
-        let new_thread = {
-            let kernel_stack = Vec::with_capacity(KERNEL_STACK_SIZE);
-            let kernel_stack_start = VirtAddr::from_ptr(kernel_stack.as_ptr());
-            let kernel_stack_end = (kernel_stack_start + KERNEL_STACK_SIZE).as_u64();
+            // Create the new Thread struct
+            let new_thread = {
+                let kernel_stack = Vec::with_capacity(KERNEL_STACK_SIZE);
+                let kernel_stack_start = VirtAddr::from_ptr(kernel_stack.as_ptr());
+                let kernel_stack_end = (kernel_stack_start + KERNEL_STACK_SIZE).as_u64();
 
-            Box::new(Thread {
-                tid: 0,
-                page_table_physaddr: user_page_table_physaddr,
-                kernel_stack,
-                // Note that stacks move backwards, so SP points to the end
-                kernel_stack_end,
-                // Push a Context struct on the kernel stack
-                context: kernel_stack_end - INTERRUPT_CONTEXT_SIZE as u64,
-                // User stack needs new pages, not allocated on the kernel heap
-                user_stack: Vec::new()
-            })
-        };
+                Box::new(Thread {
+                    tid: 0,
+                    page_table_physaddr: user_page_table_physaddr,
+                    kernel_stack,
+                    // Note that stacks move backwards, so SP points to the end
+                    kernel_stack_end,
+                    // Push a Context struct on the kernel stack
+                    context: kernel_stack_end - INTERRUPT_CONTEXT_SIZE as u64,
+                    // User stack needs new pages, not allocated on the kernel heap
+                    user_stack: Vec::new()
+                })
+            };
 
-        // Cast context address to Context struct
-        let context = unsafe {&mut *(new_process.context as *mut Context)};
+            // Cast context address to Context struct
+            let context = unsafe {&mut *(new_thread.context as *mut Context)};
 
-        context.rip = entry_point as usize;
+            context.rip = entry_point as usize;
 
-        // Set flags
-        unsafe {
-            asm!{
-                "pushf",
-                "pop rax", // Get RFLAGS in RAX
-                lateout("rax") context.rflags,
-            }
-        }
+            // Set flags
+            context.rflags = 0x0200; // Interrupt enable
 
-        let (code_selector, data_selector) = gdt::get_user_segments();
-        context.cs = code_selector.0 as usize; // Code segment flags
-        context.ss = data_selector.0 as usize; // Without this we get a GPF
+            let (code_selector, data_selector) = gdt::get_user_segments();
+            context.cs = code_selector.0 as usize; // Code segment flags
+            context.ss = data_selector.0 as usize; // Without this we get a GPF
 
-        // Allocate pages for the user stack
-        const USER_STACK_START: u64 = 0x5200000;
+            // Allocate pages for the user stack
+            const USER_STACK_START: u64 = 0x5200000;
 
-        memory::allocate_pages(user_page_table_ptr,
-                               VirtAddr::new(USER_STACK_START), // Start address
-                               USER_STACK_SIZE as u64, // Size (bytes)
-                               PageTableFlags::PRESENT |
-                               PageTableFlags::WRITABLE |
-                               PageTableFlags::USER_ACCESSIBLE);
+            memory::allocate_pages(user_page_table_ptr,
+                                   VirtAddr::new(USER_STACK_START), // Start address
+                                   USER_STACK_SIZE as u64, // Size (bytes)
+                                   PageTableFlags::PRESENT |
+                                   PageTableFlags::WRITABLE |
+                                   PageTableFlags::USER_ACCESSIBLE);
 
-        // Note: Need to point to the end of the allocated region
-        //       because the stack moves down in memory
-        context.rsp = (USER_STACK_START as usize) + USER_STACK_SIZE;
+            // Note: Need to point to the end of the allocated region
+            //       because the stack moves down in memory
+            context.rsp = (USER_STACK_START as usize) + USER_STACK_SIZE;
 
-        let tid = new_thread.tid;
+            let tid = new_thread.tid;
 
-        println!("New Thread {}", new_thread);
+            println!("New Thread {}", new_thread);
 
-        // Turn off interrupts while modifying process table
-        interrupts::without_interrupts(|| {
             RUNNING_QUEUE.write().push_back(new_thread);
-        });
-    } else {
-        return Err("Could not parse ELF");
-    }
 
-    Ok(0)
+            return Ok(tid);
+        });
+    }
+    return Err("Could not parse ELF");
 }
 
 /// This is called by the timer interrupt handler

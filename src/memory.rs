@@ -17,7 +17,10 @@ struct MemoryInfo {
     physical_memory_offset: VirtAddr,
 
     /// Allocate empty frames
-    frame_allocator: BootInfoFrameAllocator
+    frame_allocator: BootInfoFrameAllocator,
+
+    /// Kernel page table physical address
+    kernel_l4_table: &'static mut PageTable
 }
 
 /// Store BootInfo struct and other useful things for later use
@@ -44,6 +47,8 @@ pub fn init(boot_info: &'static BootInfo) {
 
         let physical_memory_offset = VirtAddr::new(boot_info.physical_memory_offset);
 
+        println!("Physical memory offset: {:#016X}", physical_memory_offset.as_u64());
+
         let level_4_table = unsafe {active_level_4_table(physical_memory_offset)};
 
         // Initialise the memory mapper
@@ -59,7 +64,8 @@ pub fn init(boot_info: &'static BootInfo) {
         unsafe { MEMORY_INFO = Some(MemoryInfo {
             boot_info,
             physical_memory_offset,
-            frame_allocator
+            frame_allocator,
+            kernel_l4_table: level_4_table
         }) };
     });
 }
@@ -106,12 +112,51 @@ fn create_empty_pagetable() -> (*mut PageTable, u64) {
     (page_table_ptr, phys.as_u64())
 }
 
+/// Copy a set of pagetables
+fn copy_pagetables(level_4_table: &PageTable) -> (*mut PageTable, u64) {
+    // Create a new level 4 pagetable
+    let (table_ptr, table_physaddr) = create_empty_pagetable();
+    let table = unsafe {&mut *table_ptr};
+
+    fn copy_pages_rec(physical_memory_offset: VirtAddr,
+                      from_table: &PageTable, to_table: &mut PageTable,
+                      level: u16) {
+        for (i, entry) in from_table.iter().enumerate() {
+            if !entry.is_unused() {
+                if (level == 1) || entry.flags().contains(PageTableFlags::HUGE_PAGE) {
+                    // Maps a frame, not a page table
+                    to_table[i].set_addr(entry.addr(), entry.flags());
+                } else {
+                    // Create a new table at level - 1
+                    let (new_table_ptr, new_table_physaddr) = create_empty_pagetable();
+                    let to_table_m1 = unsafe {&mut *new_table_ptr};
+
+                    // Point the entry to the new table
+                    to_table[i].set_addr(PhysAddr::new(new_table_physaddr),
+                                         entry.flags());
+
+                    // Get reference to the input level-1 table
+                    let from_table_m1 = {
+                        let virt = physical_memory_offset + entry.addr().as_u64();
+                        unsafe {& *virt.as_ptr()}
+                    };
+
+                    // Copy level-1 entries
+                    copy_pages_rec(physical_memory_offset, from_table_m1, to_table_m1, level - 1);
+                }
+            }
+        }
+    }
+
+    let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+    copy_pages_rec(memory_info.physical_memory_offset, level_4_table, table, 4);
+
+    return (table_ptr, table_physaddr)
+}
+
 /// Creates a PageTable containing only kernel pages
 ///
-/// Using the currently active PageTable, copy level 4
-/// entries only if they are NOT user accessible.
-///
-/// This creates a blank PageTable for a user process
+/// Copies the kernel pagetables into a new set of tables
 ///
 /// Returns
 /// -------
@@ -122,26 +167,7 @@ fn create_empty_pagetable() -> (*mut PageTable, u64) {
 pub fn create_kernel_only_pagetable() -> (*mut PageTable, u64) {
     let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
 
-    // Get the current page table
-    let current_table = unsafe {active_level_4_table(memory_info.physical_memory_offset)};
-
-    // Create a new page table
-    let (table_ptr, table_physaddr) = create_empty_pagetable();
-    let table = unsafe {&mut *table_ptr};
-
-    // Copy top-level page table entries
-    for (i, entry) in current_table.iter().enumerate() {
-        if !entry.is_unused() {
-            // Copy entry if it's not user accessible i.e. kernel pages only
-            // (includes the mapped memory which enables the kernel to access all
-            // physical memory).
-            if !entry.flags().contains(PageTableFlags::USER_ACCESSIBLE) {
-                table[i].set_addr(entry.addr(), entry.flags());
-            }
-        }
-    }
-
-    (table_ptr, table_physaddr)
+    copy_pagetables(memory_info.kernel_l4_table)
 }
 
 /// Switch to the specified page table

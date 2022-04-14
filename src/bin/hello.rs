@@ -48,6 +48,13 @@ macro_rules! println {
 pub unsafe extern "sysv64" fn _start() -> ! {
     print!("Hello from user world! {}", 42);
 
+    for i in 1..10 {
+        println!("{}", i);
+        for i in 1..10000000 {
+            unsafe { asm!("nop");}
+        }
+    }
+
     loop {
         // Note: hlt is a privileged instruction
     }
