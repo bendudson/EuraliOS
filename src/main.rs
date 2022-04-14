@@ -12,50 +12,25 @@ use blog_os::memory;
 use blog_os::syscalls;
 use blog_os::process;
 
-entry_point!(kernel_main);
+entry_point!(kernel_entry);
 
-use core::arch::asm;
-
-#[inline(never)]
-fn test_fn() {
-    // Print the current stack pointer, to check we're in the right range
-    let rsp: usize;
-    unsafe {
-        asm!{
-            "mov rax, rsp",
-            lateout("rax") rsp
-        }
-    }
-    println!("Hello from test fn! (0x{:X})", rsp)
-}
 
 /// Entry point for the kernel thread.
 /// This is the first process added to the scheduler
 /// which is started once basic kernel functions have
-/// been initialised in kernel_main
+/// been initialised in kernel_entry
 fn kernel_thread_main() {
     println!("Kernel thread start");
 
-    // Call a function, to check call/return on stack
-    test_fn();
+    // Using MOROS approach of including ELF files
+    // https://github.com/vinc/moros/blob/trunk/src/usr/install.rs
+    process::new_user_thread(include_bytes!("../user/hello"));
 
-    // Launch another kernel thread
-    process::new_kernel_thread(test_kernel_fn2);
+    process::new_user_thread(include_bytes!("../user/hello"));
 
-    loop {
-        println!("<< 1 >>");
-        x86_64::instructions::hlt();
-    }
+    blog_os::hlt_loop();
 }
 
-fn test_kernel_fn2() {
-    println!("Hello from kernel function 2!");
-    test_fn();
-    loop {
-        println!("       << 2 >>");
-        x86_64::instructions::hlt();
-    }
-}
 
 /// Function called by the bootloader
 /// via _start entry point declared in entry_point! above
@@ -63,7 +38,7 @@ fn test_kernel_fn2() {
 /// Inputs
 ///  BootInfo    Bootloader memory mapping information
 ///
-fn kernel_main(boot_info: &'static BootInfo) -> ! {
+fn kernel_entry(boot_info: &'static BootInfo) -> ! {
     println!("Hello World{}", "!");
 
     blog_os::init();
@@ -79,11 +54,7 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     // Launch the main kernel thread
     // which will be scheduled and take over from here
-    //process::new_kernel_thread(kernel_thread_main);
-
-    // Using MOROS approach of including ELF files
-    // https://github.com/vinc/moros/blob/trunk/src/usr/install.rs
-    process::new_user_thread(include_bytes!("../user/hello"));
+    process::new_kernel_thread(kernel_thread_main);
 
     blog_os::hlt_loop();
 }
