@@ -56,6 +56,11 @@ struct Thread {
     tid: usize,
 
     /// Page table physical address
+    ///
+    /// Note: Functions which manipulate page tables may temporarily
+    /// modify their page table. To avoid having to disable
+    /// interrupts, each thread's page table is saved and restored
+    /// during context switches
     page_table_physaddr: u64,
 
     /// Kernel stack needed to handle system calls
@@ -187,99 +192,108 @@ pub fn new_user_thread(bin: &[u8]) -> Result<usize, &'static str> {
         let (user_page_table_ptr, user_page_table_physaddr) =
             memory::create_kernel_only_pagetable();
 
-        // No interrupts while using new page table
-        return interrupts::without_interrupts(|| {
-            // Switch to this page table
-            memory::switch_to_pagetable(user_page_table_physaddr);
+        // Store the page table and switch back before returning
+        let original_page_table = memory::active_pagetable_physaddr();
 
-            let entry_point = obj.entry();
-            println!("Entry point: {:#016X}", entry_point);
+        // Switch to the new user page table
+        // Note: This only works because schedule_next() saves the
+        //       page table for each thread. This thread temporarily has
+        //       a different page table to the other threads
+        memory::switch_to_pagetable(user_page_table_physaddr);
 
-            for segment in obj.segments() {
-                let segment_address = segment.address() as u64;
+        let entry_point = obj.entry();
+        println!("Entry point: {:#016X}", entry_point);
 
-                println!("Section {:?} : {:#016X}", segment.name(), segment_address);
+        for segment in obj.segments() {
+            let segment_address = segment.address() as u64;
 
-                if let Ok(data) = segment.data() {
-                    println!("  len : {}", data.len());
+            println!("Section {:?} : {:#016X}", segment.name(), segment_address);
 
-                    // Allocate memory in the pagetable
-                    //
-                    // NOTE (FIXME): Need to check that memory range is not overlapping
-                    // kernel memory.
-                    memory::allocate_pages(user_page_table_ptr,
-                                           VirtAddr::new(segment_address), // Start address
-                                           data.len() as u64, // Size (bytes)
-                                           PageTableFlags::PRESENT |
-                                           PageTableFlags::WRITABLE |
-                                           PageTableFlags::USER_ACCESSIBLE);
+            if let Ok(data) = segment.data() {
+                println!("  len : {}", data.len());
 
-                    // Copy data
-                    let dest_ptr = segment_address as *mut u8;
-                    for (i, value) in data.iter().enumerate() {
-                        unsafe {
-                            let ptr = dest_ptr.add(i);
-                            core::ptr::write(ptr, *value);
-                        }
+                // Allocate memory in the pagetable
+                //
+                // NOTE (FIXME): Need to check that memory range is not overlapping
+                // kernel memory before allocating.
+                memory::allocate_pages(user_page_table_ptr,
+                                       VirtAddr::new(segment_address), // Start address
+                                       data.len() as u64, // Size (bytes)
+                                       PageTableFlags::PRESENT |
+                                       PageTableFlags::WRITABLE |
+                                       PageTableFlags::USER_ACCESSIBLE);
+
+                // Copy data
+                let dest_ptr = segment_address as *mut u8;
+                for (i, value) in data.iter().enumerate() {
+                    unsafe {
+                        let ptr = dest_ptr.add(i);
+                        core::ptr::write(ptr, *value);
                     }
-                } else {
-                    return Err("Could not get segment data");
                 }
+            } else {
+                // Switch back
+                memory::switch_to_pagetable(original_page_table);
+                return Err("Could not get segment data");
             }
+        }
+        // At this point we can switch back to the original page table
+        memory::switch_to_pagetable(original_page_table);
 
-            // Create the new Thread struct
-            let new_thread = {
-                let kernel_stack = Vec::with_capacity(KERNEL_STACK_SIZE);
-                let kernel_stack_start = VirtAddr::from_ptr(kernel_stack.as_ptr());
-                let kernel_stack_end = (kernel_stack_start + KERNEL_STACK_SIZE).as_u64();
+        // Create the new Thread struct
+        let new_thread = {
+            let kernel_stack = Vec::with_capacity(KERNEL_STACK_SIZE);
+            let kernel_stack_start = VirtAddr::from_ptr(kernel_stack.as_ptr());
+            let kernel_stack_end = (kernel_stack_start + KERNEL_STACK_SIZE).as_u64();
 
-                Box::new(Thread {
-                    tid: 0,
-                    page_table_physaddr: user_page_table_physaddr,
-                    kernel_stack,
-                    // Note that stacks move backwards, so SP points to the end
-                    kernel_stack_end,
-                    // Push a Context struct on the kernel stack
-                    context: kernel_stack_end - INTERRUPT_CONTEXT_SIZE as u64,
-                    // User stack needs new pages, not allocated on the kernel heap
-                    user_stack: Vec::new()
-                })
-            };
+            Box::new(Thread {
+                tid: 0,
+                page_table_physaddr: user_page_table_physaddr,
+                kernel_stack,
+                // Note that stacks move backwards, so SP points to the end
+                kernel_stack_end,
+                // Push a Context struct on the kernel stack
+                context: kernel_stack_end - INTERRUPT_CONTEXT_SIZE as u64,
+                // User stack needs new pages, not allocated on the kernel heap
+                user_stack: Vec::new()
+            })
+        };
 
-            // Cast context address to Context struct
-            let context = unsafe {&mut *(new_thread.context as *mut Context)};
+        // Cast context address to Context struct
+        let context = unsafe {&mut *(new_thread.context as *mut Context)};
 
-            context.rip = entry_point as usize;
+        context.rip = entry_point as usize;
 
-            // Set flags
-            context.rflags = 0x0200; // Interrupt enable
+        // Set flags
+        context.rflags = 0x0200; // Interrupt enable
 
-            let (code_selector, data_selector) = gdt::get_user_segments();
-            context.cs = code_selector.0 as usize; // Code segment flags
-            context.ss = data_selector.0 as usize; // Without this we get a GPF
+        let (code_selector, data_selector) = gdt::get_user_segments();
+        context.cs = code_selector.0 as usize; // Code segment flags
+        context.ss = data_selector.0 as usize; // Without this we get a GPF
 
-            // Allocate pages for the user stack
-            const USER_STACK_START: u64 = 0x5200000;
+        // Allocate pages for the user stack
+        const USER_STACK_START: u64 = 0x5200000;
 
-            memory::allocate_pages(user_page_table_ptr,
-                                   VirtAddr::new(USER_STACK_START), // Start address
-                                   USER_STACK_SIZE as u64, // Size (bytes)
-                                   PageTableFlags::PRESENT |
-                                   PageTableFlags::WRITABLE |
-                                   PageTableFlags::USER_ACCESSIBLE);
+        memory::allocate_pages(user_page_table_ptr,
+                               VirtAddr::new(USER_STACK_START), // Start address
+                               USER_STACK_SIZE as u64, // Size (bytes)
+                               PageTableFlags::PRESENT |
+                               PageTableFlags::WRITABLE |
+                               PageTableFlags::USER_ACCESSIBLE);
 
-            // Note: Need to point to the end of the allocated region
-            //       because the stack moves down in memory
-            context.rsp = (USER_STACK_START as usize) + USER_STACK_SIZE;
+        // Note: Need to point to the end of the allocated region
+        //       because the stack moves down in memory
+        context.rsp = (USER_STACK_START as usize) + USER_STACK_SIZE;
 
-            let tid = new_thread.tid;
+        let tid = new_thread.tid;
 
-            println!("New Thread {}", new_thread);
-
+        println!("New Thread {}", new_thread);
+        // No interrupts while modifying queue
+        interrupts::without_interrupts(|| {
             RUNNING_QUEUE.write().push_back(new_thread);
-
-            return Ok(tid);
         });
+
+        return Ok(tid);
     }
     return Err("Could not parse ELF");
 }
@@ -304,6 +318,11 @@ pub fn schedule_next(context: &Context) -> usize {
         // first time a context switch occurs from the original kernel
         // stack to the first kernel thread stack.
         thread_mut.context = (context as *const Context) as u64;
+
+        // Save the page table. This is to enable context
+        // switching during functions which manipulate page tables
+        // for example new_user_thread
+        thread_mut.page_table_physaddr = memory::active_pagetable_physaddr();
 
         running_queue.push_back(thread_mut);
     }

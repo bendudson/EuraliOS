@@ -497,10 +497,98 @@ and the second (in RSI) is its length.  Both of these arguments should
 be thoroughly checked before use, as user code may be malfunctioning
 or malicious. All =len= bytes of the string must be in the
 user's memory range, for example, and not part of kernel memory.
+For now we'll just check that =len= is not zero, and then convert
+the pointer and length to a slice and then an =str= to be printed:
+#+begin_src rust
+extern "C" fn sys_write(ptr: *mut u8, len:usize) {
+    // Check all inputs: Does ptr -> ptr+len lie entirely in user address space?
+    if len == 0 {
+        return;
+    }
+    // Convert raw pointer to a slice
+    let u8_slice = unsafe {slice::from_raw_parts(ptr, len)};
 
+    if let Ok(s) = str::from_utf8(u8_slice) {
+        println!("Write '{}'", s);
+    } // else error
+}
+#+end_src
 
-Note: HLT is privileged instruction (needs ring 0)
-- Linux has sched_yield() syscall, to call if no work needs to be done
-  -> kernel calls hlt if every process is sleeping or waiting
+Let's try calling this with a string: In ==src/bin/hello.rs=
+the =_start= function becomes:
+#+begin_src rust
+  #[no_mangle]
+  pub unsafe extern "sysv64" fn _start() -> ! {
+      let s = "hello";
+      unsafe {
+          asm!("mov rax, 1", // syscall function
+               "syscall",
+               in("rdi") s.as_ptr(), // First argument
+               in("rsi") s.len()); // Second argument
+      }
 
+    loop {}
+  }
+#+end_src
+When run you should now see "Write: 'hello'" appear!
 
+Note: We can't use =hlt= inside the loop because this is a privileged
+instruction (needs to run in ring 0). Linux has a =sched_yield()=
+syscall, which a user thread can call if no work needs to be done. If
+every process is sleeping, waiting, or calls this function, then the
+kernel calls hlt to save power.
+
+Finally we can wrap this syscall up in a function and make the interface
+nicer for the user by implementing the =print= and =println= macros. First
+wrap up the syscall in a =write_str= function, implementing the =fmt:Write= trait
+on an empty type we define:
+#+begin_src rust
+  use core::format_args;
+  use core::fmt;
+
+  struct Writer {}
+
+  impl fmt::Write for Writer {
+      fn write_str(&mut self, s: &str) -> fmt::Result {
+          unsafe {
+              asm!("mov rax, 1", // syscall function
+                   "syscall",
+                   in("rdi") s.as_ptr(), // First argument
+                   in("rsi") s.len()); // Second argument
+          }
+          Ok(())
+      }
+  }
+#+end_src
+then a function which calls this with format arguments:
+#+begin_src rust
+pub fn _print(args: fmt::Arguments) {
+    use core::fmt::Write;
+    Writer{}.write_fmt(args).unwrap();
+}
+#+end_src
+and then the macros to call this function:
+#+begin_src rust
+macro_rules! print {
+    ($($arg:tt)*) => {
+        _print(format_args!($($arg)*));
+    };
+}
+
+macro_rules! println {
+    () => (print!("\n"));
+    ($fmt:expr) => (print!(concat!($fmt, "\n")));
+    ($fmt:expr, $($arg:tt)*) => (print!(
+        concat!($fmt, "\n"), $($arg)*));
+}
+#+end_src
+Eventually we will want to define these in a standard library which all
+user programs can use, but this will be enough for testing for now.
+Our =hello.rs= start function can now be simplified to:
+#+begin_src rust
+  #[no_mangle]
+  pub unsafe extern "sysv64" fn _start() -> ! {
+      print!("Hello from user world! {}", 42);
+      loop{}
+  }
+#+end_src

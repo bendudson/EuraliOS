@@ -182,6 +182,15 @@ pub fn switch_to_pagetable(physaddr: u64) {
     }
 }
 
+pub fn active_pagetable_physaddr() -> u64 {
+    let mut physaddr: u64;
+    unsafe {
+        asm!("mov {addr}, cr3",
+             addr = out(reg) physaddr);
+    }
+    physaddr
+}
+
 ///////////////////////////////////////////////////////////////////////
 // Routines to allocate memory in a single page table
 

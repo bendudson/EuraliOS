@@ -30,44 +30,46 @@ fn create_empty_pagetable() -> (*mut PageTable, u64) {
     (page_table_ptr, phys.as_u64())
 }
 #+END_SRC
-
-If we switch to this page table then none of the kernel code or data
-will be accessible. Before using this page table we therefore want to
-add all the kernel pages which are in the currently active page table.
-The following function in =memory.rs= does this:
-#+BEGIN_SRC rust
-  pub fn create_kernel_only_pagetable() -> (*mut PageTable, u64) {
-      let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
-
-      // Get the current page table
-      let current_table = unsafe {active_level_4_table(memory_info.physical_memory_offset)};
-
-      // Create a new page table
-      let (table_ptr, table_physaddr) = create_empty_pagetable();
-      let mut table = unsafe {&mut *table_ptr};
-
-      // Copy top-level page table entries
-      for (i, entry) in current_table.iter().enumerate() {
-          if !entry.is_unused() {
-              // Copy entry if it's not user accessible i.e. kernel pages only
-              // (includes the mapped memory which enables the kernel to access all
-              // physical memory).
-              if !entry.flags().contains(PageTableFlags::USER_ACCESSIBLE) {
-                  table[i].set_addr(entry.addr(), entry.flags());
-              }
-          }
-      }
-
-      (table_ptr, table_physaddr)
-  }
-#+END_SRC
 Note that it returns both a pointer (i.e. a virtual memory address) to
 the new page table, and also the physical address of the table. That
 physical address is what needs to be written to the CR3 register in
 order for this page table to be used.
 
-In the =new_user_thread= function in =process.rs= we can now get the page table pointer
-and physical address, and then switch to the new table:
+If we switch to this page table then none of the kernel code or data
+will be accessible. Before using this page table we therefore want to
+add all the kernel pages which are in the currently active page table.
+The simplest, brute force, way to do this is to create a new set of
+page tables for each process. That avoids any possibility of pages
+being made available to multiple processes, but duplicates the kernel
+page tables. In =memory.rs= the =MemoryInfo= struct can be extended to
+include a reference to the kernel page table:
+#+BEGIN_SRC rust
+  struct MemoryInfo {
+    boot_info: &'static BootInfo,
+    physical_memory_offset: VirtAddr,
+    frame_allocator: BootInfoFrameAllocator,
+    kernel_l4_table: &'static mut PageTable // new
+  }
+#+END_SRC
+which can be set in the =init= function:
+#+begin_src rust
+  pub fn init(boot_info: &'static BootInfo) {
+      // ...
+      // Store boot_info for later calls
+      unsafe { MEMORY_INFO = Some(MemoryInfo {
+          boot_info,
+          physical_memory_offset,
+          frame_allocator,
+          kernel_l4_table: level_4_table // new
+      }) };
+      // ...
+  }
+#+end_src
+
+
+In the =new_user_thread= function in =process.rs= we can now get the
+page table pointer and physical address, and then switch to the new
+table:
 #+BEGIN_SRC rust
   if let Ok(obj) = object::File::parse(bin) {
       let (user_page_table_ptr, user_page_table_physaddr) =
@@ -148,9 +150,16 @@ block:
 #+begin_src rust
   memory::switch_to_pagetable(user_page_table_physaddr);
 #+end_src
+At this point it's also very important to consider interrupts in our
+=new_user_thread= function: It is changing to a new page table and
+then modifying it.  If a context switch occurs while this is
+happening, the page table will be switched and changes will be made to
+the wrong tables. We can either disable interrupts while working with the
+new page table, or the context switch needs to save and restore each
+thread's page table.
 
-Finally in =process.rs= the function =schedule_next=, which is called by
-the timer interrupt to switch context, can be modified:
+Finally in =process.rs= the function =schedule_next=, which is called
+by the timer interrupt to switch context, can be modified:
 #+begin_src rust
   match current_thread.as_ref() {
       Some(thread) => {
@@ -167,4 +176,7 @@ An optimisation here would be to only switch pagetable if it's
 different from the already active pagetable e.g if there is only one
 running thread.
 
+*** Two user programs
+
+To try this out we need to run two userspace programs simultaneously.
 

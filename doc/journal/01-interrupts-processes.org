@@ -16,16 +16,24 @@ In =interrupts.rs= :
 #[repr(packed)]
 pub struct Context {
     // These are pushed in the handler function
-    fs: usize,
-    r11: usize,
-    r10: usize,
-    r9: usize,
-    r8: usize,
-    rsi: usize,
-    rdi: usize,
-    rdx: usize,
-    rcx: usize,
-    rax: usize,
+    pub r15: usize,
+    pub r14: usize,
+    pub r13: usize,
+
+    pub r12: usize,
+    pub r11: usize,
+    pub r10: usize,
+    pub r9: usize,
+
+    pub r8: usize,
+    pub rbp: usize,
+    pub rsi: usize,
+    pub rdi: usize,
+
+    pub rdx: usize,
+    pub rcx: usize,
+    pub rbx: usize,
+    pub rax: usize,
     // Below is the exception stack frame pushed by the CPU on interrupt
     // Note: For some interrupts (e.g. Page fault), an error code is pushed here
     rip: usize,     // Instruction pointer
@@ -77,16 +85,24 @@ and then create an =asm!= block inside the unsafe scope of
       // Disable interrupts
       "cli",
       // Push registers
-      "push rax
-       push rcx
-       push rdx
-       push rdi
-       push rsi
-       push r8
-       push r9
-       push r10
-       push r11
-       push fs",
+      "push rax",
+      "push rbx",
+      "push rcx",
+      "push rdx",
+
+      "push rdi",
+      "push rsi",
+      "push rbp",
+      "push r8",
+
+      "push r9",
+      "push r10",
+      "push r11",
+      "push r12",
+
+      "push r13",
+      "push r14",
+      "push r15",
 
       // First argument in rdi with C calling convention
       "mov rdi, rsp",
@@ -94,16 +110,24 @@ and then create an =asm!= block inside the unsafe scope of
       "call {handler}",
 
       // Pop scratch registers
-      "pop fs
-       pop r11
-       pop r10
-       pop r9
-       pop r8
-       pop rsi
-       pop rdi
-       pop rdx
-       pop rcx
-       pop rax",
+      "pop r15",
+      "pop r14",
+      "pop r13",
+
+      "pop r12",
+      "pop r11",
+      "pop r10",
+      "pop r9",
+
+      "pop r8",
+      "pop rbp",
+      "pop rsi",
+      "pop rdi",
+
+      "pop rdx",
+      "pop rcx",
+      "pop rbx",
+      "pop rax",
       // Enable interrupts
       "sti",
       // Interrupt return
