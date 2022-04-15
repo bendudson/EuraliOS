@@ -7,6 +7,10 @@ const MSR_STAR: usize = 0xc0000081;
 const MSR_LSTAR: usize = 0xc0000082;
 const MSR_FMASK: usize = 0xc0000084;
 
+/// Syscall handler jump table
+const SYSCALL_NUMBER: usize = 2;
+static mut SYSCALL_HANDLERS : [u64; SYSCALL_NUMBER] = [0; SYSCALL_NUMBER];
+
 /// Set up syscall handler
 ///
 /// Note: This depends on the order of the GDT table
@@ -23,9 +27,10 @@ pub fn init() {
              "or eax, 1",
              "wrmsr");
 
-        // clear Interrupt flag on syscall with AMD's MSR_FSTAR register
+        // clear Trap and Interrupt flag on syscall with AMD's
+        // MSR_FMASK register
         asm!("xor rdx, rdx",
-             "mov rax, 0x200",
+             "mov rax, 0x300",
              "wrmsr",
              in("rcx") MSR_FMASK);
 
@@ -42,6 +47,13 @@ pub fn init() {
             "mov rdx, 0x230008", // use seg selectors 8, 16 for syscall and 43, 51 for sysret
             "wrmsr",
             in("rcx") MSR_STAR);
+    }
+    // Insert function pointers into the handler table
+    unsafe {
+        SYSCALL_HANDLERS = [
+            sys_read as u64,
+            sys_write as u64
+        ];
     }
 }
 
@@ -60,6 +72,9 @@ extern "C" fn handle_syscall() {
     unsafe {
         asm!(
             // Here should switch stack to avoid messing with user stack
+            // swapgs seems to be a way to do this
+            // - https://github.com/redox-os/kernel/blob/master/src/arch/x86_64/interrupt/syscall.rs#L65
+            // - https://www.felixcloutier.com/x86/swapgs
             // backup registers for sysretq
             "push rcx",
             "push r11",
@@ -70,16 +85,13 @@ extern "C" fn handle_syscall() {
             "push r14",
             "push r15",
 
-            // Call the rust handler
-            // Note: Here we should use a jump table, but first need to figure out how to
-            //       do that in rust.
-            "cmp rax, 0",
-            "jne 1f",
-            "call {sys_read}",
-            "1: cmp rax, 1",
-            "jne 2f",
-            "call {sys_write}",
-            "2: ", // Invalid
+            // Call the rust handler function
+            "cmp rax, {syscall_max}",
+            "jge 1f",  // Out of range
+            "mov rax, [{syscall_handlers} + 8*rax]", // Lookup handler address
+            "call rax",
+            "1: ",
+
             "pop r15", // restore callee-saved registers
             "pop r14",
             "pop r13",
@@ -89,8 +101,8 @@ extern "C" fn handle_syscall() {
             "pop r11",
             "pop rcx",
             "sysretq", // back to userland
-            sys_read = sym sys_read,
-            sys_write = sym sys_write,
+            syscall_handlers = sym SYSCALL_HANDLERS,
+            syscall_max = const SYSCALL_NUMBER,
             options(noreturn));
     }
 }

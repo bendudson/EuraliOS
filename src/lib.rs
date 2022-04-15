@@ -7,6 +7,7 @@
 #![feature(alloc_error_handler)]
 #![feature(naked_functions)]
 #![feature(asm_sym)]
+#![feature(asm_const)]
 
 pub mod serial;
 pub mod vga_buffer;

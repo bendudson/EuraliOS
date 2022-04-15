@@ -41,7 +41,7 @@ pub fn init(boot_info: &'static BootInfo) {
             let start_addr = region.range.start_addr();
             let end_addr = region.range.end_addr();
             memory_size += end_addr - start_addr;
-            println!("MEM [{:#016X}-{:#016X}] {:?}\n", start_addr, end_addr, region.region_type);
+            println!("MEM [{:#016X}-{:#016X}] {:?}", start_addr, end_addr, region.region_type);
         }
         println!("Memory size: {} KB\n", memory_size >> 10);
 

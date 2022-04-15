@@ -14,8 +14,7 @@ use blog_os::process;
 
 entry_point!(kernel_entry);
 
-
-/// Entry point for the kernel thread.
+/// Main kernel thread entry point
 /// This is the first process added to the scheduler
 /// which is started once basic kernel functions have
 /// been initialised in kernel_entry
@@ -39,8 +38,6 @@ fn kernel_thread_main() {
 ///  BootInfo    Bootloader memory mapping information
 ///
 fn kernel_entry(boot_info: &'static BootInfo) -> ! {
-    println!("Hello World{}", "!");
-
     blog_os::init();
 
     // Set up memory and kernel heap with allocator

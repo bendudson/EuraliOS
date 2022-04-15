@@ -99,12 +99,6 @@ processes and threads.
 kernel that we end up with. The simplest solution for now is to assign each
 thread its own page table, so each program is single-threaded. To do this,
 in =processes.rs= add a field to the =Thread= struct:
-#+BEGIN_SRC rust
-struct Thread {
-    /// Thread ID
-    tid: usize,
-#+END_SRC
-
 #+begin_src rust
   struct Thread {
     /// Thread ID
@@ -179,4 +173,55 @@ running thread.
 *** Two user programs
 
 To try this out we need to run two userspace programs simultaneously.
+In =main.rs= we have the entry point:
+#+begin_src rust
+  entry_point!(kernel_entry);
+
+  fn kernel_entry(boot_info: &'static BootInfo) -> ! {
+      blog_os::init();
+      memory::init(boot_info);
+      syscalls::init();
+
+      #[cfg(test)]
+      test_main();
+
+      process::new_kernel_thread(kernel_thread_main);
+
+      blog_os::hlt_loop();
+  }
+#+end_src
+which sets up some basic kernel functions, then starts a kernel
+thread and waits for it to be scheduled. At this point we go
+to the =kernel_thread_main= function, and can launch two
+of the same programs:
+#+begin_src rust
+  fn kernel_thread_main() {
+      println!("Kernel thread start");
+
+      process::new_user_thread(include_bytes!("../user/hello"));
+      process::new_user_thread(include_bytes!("../user/hello"));
+
+      blog_os::hlt_loop();
+  }
+#+end_src
+
+To see if both threads are running side-by-side, we can add some delays
+between outputs in each thread. For now this will be just brute force =nop= loops
+in =hello.rs=:
+#+begin_src rust
+  #[no_mangle]
+  pub unsafe extern "sysv64" fn _start() -> ! {
+      print!("Hello from user world! {}", 42);
+
+      for i in 1..10 {
+          println!("{}", i);
+          for i in 1..10000000 { // wait
+              unsafe { asm!("nop");}
+          }
+      }
+
+      loop {}
+  }
+#+end_src
+
 

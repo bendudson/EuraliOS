@@ -1,0 +1,89 @@
+* Adding syscalls for thread control
+
+Now we're going to add system calls to enable user threads to create
+new threads, and exit cleanly.
+
+** Syscall jump table
+
+In C we can create a static array of function pointers (addresses), so
+that functions can be called when indexing into this array. In rust
+this seems to be difficult: function pointers aren't known at compile
+time, and so attempting to cast a function to a =u64= statically
+doesn't compile. The usual trick of using =lazy_static= also doesn't
+work because we need to know the address of the array at link time.
+
+The closest I've found so far is to define a static mutable array
+(highly discouraged!) in =syscalls.rs=:
+#+begin_src rust
+  const SYSCALL_NUMBER: usize = 2;
+  static mut SYSCALL_HANDLERS : [u64; SYSCALL_NUMBER]
+    = [0; SYSCALL_NUMBER];
+#+end_src
+
+In the =init()= function we can populate this array:
+#+begin_src rust
+  unsafe {
+      SYSCALL_HANDLERS = [
+          sys_read as u64,
+          sys_write as u64
+      ];
+  }
+#+end_src
+
+Now the syscall handler code can be simplified: It first
+checks that the syscall number (in =rax=) is in range, and if so
+looks up the handler address in the =SYSCALL_HANDLERS= table:
+#+begin_src rust
+  asm!(
+      ...,
+      "push r15",
+
+      "cmp rax, {syscall_max}",
+      "jge 1f",  // Out of range
+      "mov rax, [{syscall_handlers} + 8*rax]", // Lookup handler address
+      "call rax",
+      "1: ",
+
+      "pop r15",
+      ...,
+      syscall_handlers = sym SYSCALL_HANDLERS,
+      syscall_max = const SYSCALL_NUMBER,
+      options(noreturn) 
+  );
+#+end_src
+To be able to use the =const= argument to =asm= we need to add
+this feature to the top of =lib.rs= with =#![feature(asm_const)]=.
+
+
+
+
+Some of this can be done with lightweight ("green") threads
+in user space, but for communication between processes the only way
+for single-threaded programs to perform tasks while waiting for events
+is to keep checking whether an event has occurred ("polling"). This
+implies buffering of messages between processes somewhere, and delays
+between an event occurring and the handling process checking for it.
+This may be acceptable in a monolithic kernel, but if the aim is to
+have a microkernel with lots of separate processes and communication
+between them, then the delays and buffering adds up to noticeably
+worse performance.
+
+To make event handling (e.g keyboard press) fast, a message sent from
+one process should trigger a context switch to a handling thread in
+the receiving process. This implies that a receiving thread is blocked
+waiting for a message to arrive, and so to do other things the process
+must have multiple threads. This is essentially the Rendezvous system
+used in Plan 9: Threads waiting for a message block until a message is
+sent, and sending threads block until there is a receive. When both
+sender and receiver meet the message is passed and context switches to
+the receiver. No buffering of messages in the kernel is needed.
+
+To make programs multi-threaded, threads in the same program need to
+share data. For now that means the page table but later there will be
+other shared resources. Threads might be created and destroyed while
+the program is running, but as long as one thread is still running we
+want the process to stay around. To do that we'll use Rust's [[https://doc.rust-lang.org/beta/alloc/sync/struct.Arc.html][Arc]]
+thread-safe reference counting pointer to hold the Process, shared
+between Threads.  We can't use the faster [[https://doc.rust-lang.org/alloc/rc/struct.Rc.html][Rc]] reference counting
+pointer in this case because it can't safely be copied between
+threads.
