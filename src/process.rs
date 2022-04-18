@@ -10,7 +10,7 @@ use x86_64::structures::paging::PageTableFlags;
 use spin::RwLock;
 use lazy_static::lazy_static;
 extern crate alloc;
-use alloc::{boxed::Box, collections::vec_deque::VecDeque, vec::Vec};
+use alloc::{boxed::Box, collections::vec_deque::VecDeque, vec::Vec, sync::Arc};
 
 use core::arch::asm;
 
@@ -44,7 +44,26 @@ lazy_static! {
 
     /// The process which is currently running
     static ref CURRENT_THREAD: RwLock<Option<Box<Thread>>> = RwLock::new(None);
+
+    /// Unique ID counter
+    static ref UNIQUE_COUNTER: RwLock<u64> = RwLock::new(0);
 }
+
+/// Generate a unique number
+pub fn unique_id() -> u64 {
+    interrupts::without_interrupts(|| {
+        let mut counter = UNIQUE_COUNTER.write();
+        *counter += 1;
+        *counter
+    })
+}
+
+/// Per-process state
+struct Process {
+
+}
+
+
 
 /// Per-thread state
 ///
@@ -58,7 +77,10 @@ lazy_static! {
 ///    overflow the current stack.
 struct Thread {
     /// Thread ID
-    tid: usize,
+    tid: u64,
+
+    /// Process shared data
+    process: Arc<Process>,
 
     /// Page table physical address
     ///
@@ -127,7 +149,7 @@ TID: {}, rip: {:#016X}
 /// -------
 /// The TID of the new thread
 ///
-pub fn new_kernel_thread(function: fn()->()) -> usize {
+pub fn new_kernel_thread(function: fn()->()) -> u64 {
     // Create a new process table entry
     //
     // Note this is first created on the stack, then moved into a Box
@@ -138,7 +160,8 @@ pub fn new_kernel_thread(function: fn()->()) -> usize {
         let kernel_stack_end = (kernel_stack_start + KERNEL_STACK_SIZE).as_u64();
 
         Box::new(Thread {
-            tid: 0,
+            tid: unique_id(),
+            process: Arc::new(Process {}),
             page_table_physaddr: 0, // Don't need to switch PT
             kernel_stack,
             // Note that stacks move backwards, so SP points to the end
@@ -328,61 +351,28 @@ pub fn new_user_thread(bin: &[u8]) -> Result<u64, &'static str> {
     return Err("Could not parse ELF");
 }
 
+pub fn fork_current_thread() -> Result<u64, &'static str> {
+    if let Some(current_thread) = CURRENT_THREAD.read().as_ref() {
+
         let new_thread = {
+            // Create a new kernel stack
             let kernel_stack = Vec::with_capacity(KERNEL_STACK_SIZE);
             let kernel_stack_start = VirtAddr::from_ptr(kernel_stack.as_ptr());
             let kernel_stack_end = (kernel_stack_start + KERNEL_STACK_SIZE).as_u64();
 
             Box::new(Thread {
-                tid: 0,
-                page_table_physaddr: user_page_table_physaddr,
+                tid: unique_id(),
+                process: current_thread.process.clone(), // Shared state
+                page_table_physaddr: current_thread.page_table_physaddr, // Shared page table
                 kernel_stack,
-                // Note that stacks move backwards, so SP points to the end
                 kernel_stack_end,
-                // Push a Context struct on the kernel stack
                 context: kernel_stack_end - INTERRUPT_CONTEXT_SIZE as u64,
-                // User stack needs new pages, not allocated on the kernel heap
                 user_stack: Vec::new()
             })
         };
-
-        // Cast context address to Context struct
-        let context = unsafe {&mut *(new_thread.context as *mut Context)};
-
-        context.rip = entry_point as usize;
-
-        // Set flags
-        context.rflags = 0x0200; // Interrupt enable
-
-        let (code_selector, data_selector) = gdt::get_user_segments();
-        context.cs = code_selector.0 as usize; // Code segment flags
-        context.ss = data_selector.0 as usize; // Without this we get a GPF
-
-        // Allocate pages for the user stack
-        const USER_STACK_START: u64 = 0x5200000;
-
-        memory::allocate_pages(user_page_table_ptr,
-                               VirtAddr::new(USER_STACK_START), // Start address
-                               USER_STACK_SIZE as u64, // Size (bytes)
-                               PageTableFlags::PRESENT |
-                               PageTableFlags::WRITABLE |
-                               PageTableFlags::USER_ACCESSIBLE);
-
-        // Note: Need to point to the end of the allocated region
-        //       because the stack moves down in memory
-        context.rsp = (USER_STACK_START as usize) + USER_STACK_SIZE;
-
-        let tid = new_thread.tid;
-
-        println!("New Thread {}", new_thread);
-        // No interrupts while modifying queue
-        interrupts::without_interrupts(|| {
-            RUNNING_QUEUE.write().push_back(new_thread);
-        });
-
-        return Ok(tid);
+        return Ok(new_thread.tid)
     }
-    return Err("Could not parse ELF");
+    Err("No current thread")
 }
 
 /// This is called by the timer interrupt handler
