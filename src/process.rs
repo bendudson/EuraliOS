@@ -19,6 +19,7 @@ use crate::interrupts::{Context, INTERRUPT_CONTEXT_SIZE};
 
 use crate::gdt;
 use crate::memory;
+use crate::syscalls;
 
 use object::{Object, ObjectSegment};
 
@@ -63,8 +64,6 @@ struct Process {
 
 }
 
-
-
 /// Per-thread state
 ///
 ///
@@ -99,13 +98,12 @@ struct Thread {
     /// This value is put in the Interrupt Stack Table
     kernel_stack_end: u64,
 
+    /// Address of the end of the user stack
+    user_stack_end: u64,
+
     /// Address within the kernel_stack which stores
     /// the Context structure containing thread state.
     context: u64,
-
-    /// User stack. Note that kernel threads also
-    /// use this stack
-    user_stack: Vec<u8>
 }
 
 use core::fmt;
@@ -116,8 +114,8 @@ impl fmt::Display for Thread {
         // Cast context address to Context struct
         let context = unsafe {&mut *(self.context as *mut Context)};
 
-        let kernel_stack_start = VirtAddr::from_ptr(self.kernel_stack.as_ptr()).as_u64();
-        let user_stack_start = VirtAddr::from_ptr(self.user_stack.as_ptr()).as_u64();
+        let kernel_stack_start = self.kernel_stack_end - (KERNEL_STACK_SIZE as u64);
+        let user_stack_start = self.user_stack_end - (USER_STACK_SIZE as u64);
 
         write!(f, "\
 TID: {}, rip: {:#016X}
@@ -125,13 +123,9 @@ TID: {}, rip: {:#016X}
     Thread stack: {:#016X} - {:#016X} RSP: {:#016X}",
                self.tid, context.rip,
                // Second line
-               kernel_stack_start,
-               kernel_stack_start + (KERNEL_STACK_SIZE as u64),
-               self.context,
+               kernel_stack_start, self.kernel_stack_end, self.context,
                // Third line
-               user_stack_start,
-               user_stack_start + (USER_STACK_SIZE as u64),
-               context.rsp)
+               user_stack_start, self.user_stack_end, context.rsp)
     }
 }
 
@@ -155,9 +149,11 @@ pub fn new_kernel_thread(function: fn()->()) -> u64 {
     // Note this is first created on the stack, then moved into a Box
     // on the heap.
     let new_thread = {
-        let kernel_stack = Vec::with_capacity(KERNEL_STACK_SIZE);
+        // Allocate both "user" and kernel stacks in kernel memory
+        let kernel_stack = Vec::with_capacity(KERNEL_STACK_SIZE + USER_STACK_SIZE);
         let kernel_stack_start = VirtAddr::from_ptr(kernel_stack.as_ptr());
         let kernel_stack_end = (kernel_stack_start + KERNEL_STACK_SIZE).as_u64();
+        let user_stack_end = kernel_stack_end + (USER_STACK_SIZE as u64);
 
         Box::new(Thread {
             tid: unique_id(),
@@ -166,9 +162,9 @@ pub fn new_kernel_thread(function: fn()->()) -> u64 {
             kernel_stack,
             // Note that stacks move backwards, so SP points to the end
             kernel_stack_end,
+            user_stack_end,
             // Push a Context struct on the kernel stack
             context: kernel_stack_end - INTERRUPT_CONTEXT_SIZE as u64,
-            user_stack: Vec::with_capacity(USER_STACK_SIZE)
         })
     };
 
@@ -192,7 +188,7 @@ pub fn new_kernel_thread(function: fn()->()) -> u64 {
     // The kernel thread has its own stack
     // Note: Need to point to the end of the memory region
     //       because the stack moves down in memory
-    context.rsp = (VirtAddr::from_ptr(new_thread.user_stack.as_ptr()) + USER_STACK_SIZE).as_u64() as usize;
+    context.rsp = new_thread.user_stack_end as usize;
 
     let tid = new_thread.tid;
 
@@ -292,22 +288,27 @@ pub fn new_user_thread(bin: &[u8]) -> Result<u64, &'static str> {
 
             // Create the new Thread struct
             let new_thread = {
+                // Note: Kernel stack needs to be mapped in all pages
+                //       because the page table will be changed during
+                //       context switch
                 let kernel_stack = Vec::with_capacity(KERNEL_STACK_SIZE);
                 let kernel_stack_start = VirtAddr::from_ptr(kernel_stack.as_ptr());
                 let kernel_stack_end = (kernel_stack_start + KERNEL_STACK_SIZE).as_u64();
+
+                // Allocate user stack
+                let (user_stack_start, user_stack_end) = memory::allocate_user_stack(user_page_table_ptr)?;
 
                 Box::new(Thread {
                     tid: unique_id(),
                     // Create a new process
                     process: Arc::new(Process {}),
                     page_table_physaddr: user_page_table_physaddr,
-                    kernel_stack,
+                    kernel_stack: kernel_stack,
                     // Note that stacks move backwards, so SP points to the end
                     kernel_stack_end,
+                    user_stack_end,
                     // Push a Context struct on the kernel stack
-                    context: kernel_stack_end - INTERRUPT_CONTEXT_SIZE as u64,
-                    // User stack needs new pages, not allocated on the kernel heap
-                    user_stack: Vec::new()
+                    context: kernel_stack_end - INTERRUPT_CONTEXT_SIZE as u64
                 })
             };
 
@@ -323,19 +324,9 @@ pub fn new_user_thread(bin: &[u8]) -> Result<u64, &'static str> {
             context.cs = code_selector.0 as usize; // Code segment flags
             context.ss = data_selector.0 as usize; // Without this we get a GPF
 
-            // Allocate pages for the user stack
-            const USER_STACK_START: u64 = 0x5200000;
-
-            memory::allocate_pages(user_page_table_ptr,
-                                   VirtAddr::new(USER_STACK_START), // Start address
-                                   USER_STACK_SIZE as u64, // Size (bytes)
-                                   PageTableFlags::PRESENT |
-                                   PageTableFlags::WRITABLE |
-                                   PageTableFlags::USER_ACCESSIBLE);
-
             // Note: Need to point to the end of the allocated region
             //       because the stack moves down in memory
-            context.rsp = (USER_STACK_START as usize) + USER_STACK_SIZE;
+            context.rsp = new_thread.user_stack_end as usize;
 
             let tid = new_thread.tid;
 
@@ -351,28 +342,79 @@ pub fn new_user_thread(bin: &[u8]) -> Result<u64, &'static str> {
     return Err("Could not parse ELF");
 }
 
-pub fn fork_current_thread() -> Result<u64, &'static str> {
+/// Fork the current user thread
+///
+///
+pub fn fork_current_thread(current_context: &mut Context) {
+
     if let Some(current_thread) = CURRENT_THREAD.read().as_ref() {
 
-        let new_thread = {
-            // Create a new kernel stack
-            let kernel_stack = Vec::with_capacity(KERNEL_STACK_SIZE);
-            let kernel_stack_start = VirtAddr::from_ptr(kernel_stack.as_ptr());
-            let kernel_stack_end = (kernel_stack_start + KERNEL_STACK_SIZE).as_u64();
+        // Allocate user stack
+        let page_table_ptr = memory::active_pagetable_ptr();
+        if let Ok((user_stack_start, user_stack_end)) = memory::allocate_user_stack(page_table_ptr) {
+            let new_thread = {
+                // Create a new kernel stack
+                let kernel_stack = Vec::with_capacity(KERNEL_STACK_SIZE);
+                let kernel_stack_start = VirtAddr::from_ptr(kernel_stack.as_ptr());
+                let kernel_stack_end = (kernel_stack_start + KERNEL_STACK_SIZE).as_u64();
 
-            Box::new(Thread {
-                tid: unique_id(),
-                process: current_thread.process.clone(), // Shared state
-                page_table_physaddr: current_thread.page_table_physaddr, // Shared page table
-                kernel_stack,
-                kernel_stack_end,
-                context: kernel_stack_end - INTERRUPT_CONTEXT_SIZE as u64,
-                user_stack: Vec::new()
-            })
-        };
-        return Ok(new_thread.tid)
+                Box::new(Thread {
+                    tid: unique_id(),
+                    process: current_thread.process.clone(), // Shared state
+                    page_table_physaddr: current_thread.page_table_physaddr, // Shared page table
+                    kernel_stack,
+                    kernel_stack_end,
+                    user_stack_end,
+                    context: kernel_stack_end - INTERRUPT_CONTEXT_SIZE as u64,
+                })
+            };
+
+            let new_context = unsafe {&mut *(new_thread.context as *mut Context)};
+            *new_context = current_context.clone();
+
+            // Set new stack pointer
+            new_context.rsp = new_thread.user_stack_end as usize;
+
+            // Set return values in rax
+            new_context.rax = 0; // No error
+            new_context.rdi = 0; // Indicates that this is the new thread
+            current_context.rax = 0; // No error
+            current_context.rdi = new_thread.tid as usize;
+
+            let tid = new_thread.tid;
+            RUNNING_QUEUE.write().push_back(new_thread);
+        } else {
+            // Failed to allocate user stack
+            current_context.rax = syscalls::SYSCALL_ERROR_MEMALLOC; // Error code
+        }
+    } else {
+        // Somehow no current thread
+        current_context.rax = 2; // Error code
     }
-    Err("No current thread")
+}
+
+pub fn exit_current_thread(current_context: &mut Context) {
+    // Remove current thread
+    {
+        let mut current_thread = CURRENT_THREAD.write();
+
+        if let Some(thread) = current_thread.take() {
+            // Free user stack pages
+
+            // If this is the last thread in this process, free shared
+            // memory and page tables
+
+            // Drop thread, free kernel stack
+        }
+    }
+    // Can't return from this syscall, so this thread now waits for a
+    // timer interrupt to switch context.
+    unsafe {
+        asm!("sti",
+             "2:",
+             "hlt",
+             "jmp 2b");
+    }
 }
 
 /// This is called by the timer interrupt handler
@@ -380,7 +422,6 @@ pub fn fork_current_thread() -> Result<u64, &'static str> {
 /// Returns the stack containing the process state
 /// (interrupts::Context struct)
 pub fn schedule_next(context: &Context) -> usize {
-
     let mut running_queue = RUNNING_QUEUE.write();
     let mut current_thread = CURRENT_THREAD.write();
 

@@ -25,8 +25,6 @@ fn kernel_thread_main() {
     // https://github.com/vinc/moros/blob/trunk/src/usr/install.rs
     process::new_user_thread(include_bytes!("../user/hello"));
 
-    process::new_user_thread(include_bytes!("../user/hello"));
-
     blog_os::hlt_loop();
 }
 

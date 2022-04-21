@@ -7,8 +7,18 @@ use lazy_static::lazy_static;
 pub const DOUBLE_FAULT_IST_INDEX: u16 = 0;
 pub const PAGE_FAULT_IST_INDEX: u16 = 0;
 pub const GENERAL_PROTECTION_FAULT_IST_INDEX: u16 = 0;
-pub const TIMER_INTERRUPT_INDEX: u16 = 1;
 pub const KEYBOARD_INTERRUPT_INDEX: u16 = 0;
+
+/// Used by timer interrupt and syscall to set kernel stack
+///
+/// Note: Syscalls must offset the stack location because
+///       otherwise syscalls could not be interrupted.
+pub const TIMER_INTERRUPT_INDEX: u16 = 1;
+
+/// Use an interrupt stack table entry as temporary storage
+/// for the user stack during a syscall.
+pub const SYSCALL_TEMP_INDEX: u16 = 2;
+
 
 lazy_static! {
     /// The Task State Segment (TSS)
@@ -57,6 +67,11 @@ lazy_static! {
 unsafe fn tss_reference() -> &'static TaskStateSegment {
     let tss_ptr = &*TSS.lock() as *const TaskStateSegment;
     & *tss_ptr
+}
+
+pub fn tss_address() -> u64 {
+    let tss_ptr = &*TSS.lock() as *const TaskStateSegment;
+    tss_ptr as u64
 }
 
 /// Set the interrupt stack table entry to a given virtual address

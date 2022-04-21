@@ -87,3 +87,7 @@ thread-safe reference counting pointer to hold the Process, shared
 between Threads.  We can't use the faster [[https://doc.rust-lang.org/alloc/rc/struct.Rc.html][Rc]] reference counting
 pointer in this case because it can't safely be copied between
 threads.
+
+
+Security issues: https://fuchsia.dev/fuchsia-src/concepts/kernel/sysret_problem
+

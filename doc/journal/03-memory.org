@@ -223,5 +223,144 @@ in =hello.rs=:
       loop {}
   }
 #+end_src
+When run you should see two counters interleaved, each counting up to 9.
+
+** Multi-threaded programs
+
+Having only one thread per program is straightforward but restrictive.
+Multi-threaded programs can perform tasks while waiting for events, or
+service many requests efficiently while sharing memory between
+threads.
+
+A common way to make a program multi-threaded is something like =fork=
+(or =clone= syscall for threads in Linux): One thread performs the syscall,
+and two threads return. Typically the only difference between the threads is
+the return value of the =fork= call: One thread gets a return value of 0, and
+the other gets a non-zero value (e.g. a thread ID, or stack location).
+
+There are three things needed:
+1. Give each thread a unique ID
+2. Create a separate stack for each thread. This will require finding
+   space in virtual memory for new stacks, rather than the fixed
+   address used currently.
+3. We need to have a user thread enter the kernel, copy its context, and
+   have that context restored by a context switch during a timer interrupt.
+   The simplest way to do that is to make the kernel stack during a syscall
+   look the same as it does during a timer interrupt.
+
+*** Unique thread ID
+
+This doesn't necessarily need to be done now, but it'll be useful to label
+threads somehow. First we need a way to generate unique IDs. In
+=process.rs= we can add a counter:
+#+begin_src rust
+  lazy_static! {
+      // ...
+      static ref UNIQUE_COUNTER: RwLock<u64> = RwLock::new(0);
+  }
+#+end_src
+and then a function which returns a different number each time
+it is called:
+#+begin_src rust
+pub fn unique_id() -> u64 {
+    interrupts::without_interrupts(|| {
+        let mut counter = UNIQUE_COUNTER.write();
+        *counter += 1;
+        *counter
+    })
+}
+#+end_src
+
+Everywhere we create a new =Thread= object we can now write:
+#+begin_src rust
+  Box::new(Thread {
+      tid: unique_id(), // new
+#+end_src
+
+*** Thread stack allocation
+
+Whle forked (created) threads will share a page table, it's important
+that they have separate stacks. Currently we use a fixed (virtual)
+address for the user stack (=const USER_STACK_START: u64 =
+0x5200000;=) which we hope doesn't overlap with data loaded from
+the ELF file.
+
+To do this we'll need to understand a bit better how the virtual
+memory is being used. These python routines are useful, as they convert
+between virtual addresses and page table indices.
+#+begin_src python
+def page_table_indices(vaddr):
+    return ((vaddr >> 39) & 511, (vaddr >> 30) & 511, (vaddr >> 21) & 511, (vaddr >> 12) & 511, vaddr & 4095)
+
+def page_table_address(indices):
+    return (indices[0] << 39) + (indices[1] << 30) + (indices[2] << 21) + (indices[3] << 12) + indices[4]
+#+end_src
+
+We're currently loading our user programs starting at 0x5000000,
+corresponding to indices =(0, 0, 40, 0, 0)= so level 4 and level 3
+table index 0, level 2 index 40, level 1 index 0 and frame offset 0.
+
+A common choice is to use the lower half of 32-bit address space for
+user code, and reserve the upper half between 0x80000000 (page table
+indices =(0, 2, 0, 0, 0)=) and 0x100000000 (indices =(0, 4, 0, 0,
+0)=)for kernel code. To add a little security to our ELF user code
+loader we can define a range of allowed addresses in =process.rs=
+#+begin_src rust
+  const USER_CODE_START: u64 = 0x5000000;
+  const USER_CODE_END: u64 = 0x80000000;
+#+end_src
+then before allocating memory in =new_user_thread= we can check that
+the memory is in the allowed range, returning an error if it is
+not. Remember to change page table back before returning. We should
+also free the new page tables, but haven't added functions to do that
+yet.
+#+begin_src rust
+  if (start_address < VirtAddr::new(USER_CODE_START))
+      || (end_address >= VirtAddr::new(USER_CODE_END)) {
+          memory::switch_to_pagetable(original_page_table);
+          return Err("ELF segment outside allowed range");
+      }
+#+end_src
+
+
+Above 0x100000000 we can use any address range we
+like for things like stack and heap allocations. A small part of this
+huge address space is already used:
+
+- The bootloader maps all memory starting at address =0x18000000000=,
+  corresponding to page table indices =(3, 0, 0, 0, 0)=.
+- The kernel
+  heap (in =allocator.rs=) starts at =0x_4444_4444_0000= which is page
+  index =(136, 273, 34, 64, 0)=.
+
+For now we can reserve a level 1 page table, which has 512 pages. If
+we allocate 8 to each thread then we'll be able to have up to 64
+threads per page table. We can divide this up into (from low to high):
+- One unused page table as a guard; accessing this (user stack
+  overflow) will trigger a fault.
+- Seven user stack pages.
+
+A user stack underflow accesses the unused guard page in the next set
+of thread pages.
+
+We can choose an arbitrary page table, for example =(5,0,0,*,*)= which
+maps virtual memory addresses 0x28000000000 to 0x28000200000.
+
+
+
+*** Create Context struct in syscall
+
+When a thread fork syscall is made, a new thread context must
+be made, which is the same as the original thread. The easiest
+way to do this is to capture a Context in syscall in the same
+way that we do in a timer interrupt. In the process we're going
+to stop using the user stack to store the state.
+
+[[https://github.com/redox-os/kernel/blob/master/src/arch/x86_64/interrupt/syscall.rs#L65][Redox OS]] syscall handler
+
+
+[[https://wiki.osdev.org/Task_State_Segment][Task State Segment]] layout
+
+[[https://www.felixcloutier.com/x86/wrmsr][wrmsr]] and [[https://www.felixcloutier.com/x86/swapgs][swapgs]] instructions
 
 

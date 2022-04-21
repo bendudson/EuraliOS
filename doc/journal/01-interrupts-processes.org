@@ -271,6 +271,11 @@ index into this table which should be used is specified in the
 Interrupt Descriptor Table (IDT).
 
 
+
+** Scheduling
+
+   https://www.cs.uic.edu/~jbell/CourseNotes/OperatingSystems/6_CPU_Scheduling.html
+
 Now that the kernel can switch between multiple threads,
 we're ready to start isolating them from each other. We'll
 also want to be able to load programs from memory and (eventually)
