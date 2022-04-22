@@ -173,10 +173,31 @@ in the page table.
   }
 #+END_SRC
 
+To add a little security to our ELF user code loader we can define a
+range of allowed addresses in =process.rs=
+#+begin_src rust
+  const USER_CODE_START: u64 = 0x5000000;
+  const USER_CODE_END: u64 = 0x80000000;
+#+end_src
+then before allocating memory in =new_user_thread= we can check that
+the memory is in the allowed range, returning an error if it is
+not. Remember to change page table back before returning. We should
+also free the new page tables, but haven't added functions to do that
+yet.
+#+begin_src rust
+  let start_address = VirtAddr::new(segment_address);
+  let end_address = start_address + data.len() as u64;
+  if (start_address < VirtAddr::new(USER_CODE_START))
+      || (end_address >= VirtAddr::new(USER_CODE_END)) {
+          return Err("ELF segment outside allowed range");
+      }
+  if memory::allocate_pages(...)
+#+end_src
+
 ** Switching to userspace
 
-Following [[https://nfil.dev/kernel/rust/coding/rust-kernel-to-userspace-and-back/][this blog by Nikos Filippakis]], we are now going to switch programs
-to user mode.
+Following [[https://nfil.dev/kernel/rust/coding/rust-kernel-to-userspace-and-back/][this blog by Nikos Filippakis]], we are now going to switch
+programs to user mode.
 
 Note: TSS contains the Privilege Stack Table, which contains stack
 pointers to switch to when the privilege level changes.
@@ -337,9 +358,9 @@ is therefore to use =FMASK= MSR to appliy a mask to the RFLAGS
 when a syscall occurs:
 #+BEGIN_SRC rust
   asm!("xor rdx, rdx",
-             "mov rax, 0x200",
-             "wrmsr",
-             in("rcx") MSR_FMASK);
+       "mov rax, 0x200",
+       "wrmsr",
+       in("rcx") MSR_FMASK);
 #+END_SRC
 
 Step (3) is to set the =LSTAR= MSR to the address of the handler

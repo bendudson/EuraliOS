@@ -343,12 +343,14 @@ pub fn allocate_user_stack(
             }
 
             // Return the virtual addresses of the top of the kernel and user stacks
-            let slot_address: u64 = ((THREAD_STACK_PAGE_INDEX[0] as u64) << 39) +
+            let slot_address: u64 =
+                ((THREAD_STACK_PAGE_INDEX[0] as u64) << 39) +
                 ((THREAD_STACK_PAGE_INDEX[1] as u64) << 30) +
                 ((THREAD_STACK_PAGE_INDEX[2] as u64) << 21) +
                 (((n * 8) as u64) << 12);
 
-            return Ok((slot_address + 3 * 4096, slot_address + 8 * 4096)); // User stack
+            return Ok((slot_address + 4096,
+                       slot_address + 8 * 4096)); // User stack
         }
     }
 

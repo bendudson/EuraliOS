@@ -4,9 +4,19 @@
 but couldn't protect programs from each other or run more than one
 without having to manually choose memory ranges for each program.
 
-To isolate programs from each other we need to set up separate
-page tables for each process. We will want to keep the kernel
-pages mapped, and add the user pages.
+In this section we will
+
+1. Isolate programs from each other by creating separate
+   page tables for each process. We will want to keep the kernel pages
+   mapped, and add the user pages.
+
+2. Prepare for multi-threaded processes by creating an allocator
+   for user thread stacks.
+
+In the process we'll learn about memory layout, page tables, and how
+to switch between them.
+
+** Getting started with page tables
 
 First add a new function to =memory.rs= which creates a new empty
 level 4 pagetable for the user process:
@@ -36,7 +46,7 @@ physical address is what needs to be written to the CR3 register in
 order for this page table to be used.
 
 If we switch to this page table then none of the kernel code or data
-will be accessible. Before using this page table we therefore want to
+will be accessible. Before using this page table we therefore have to
 add all the kernel pages which are in the currently active page table.
 The simplest, brute force, way to do this is to create a new set of
 page tables for each process. That avoids any possibility of pages
@@ -67,6 +77,8 @@ which can be set in the =init= function:
 #+end_src
 
 
+** Page table for user processes
+
 In the =new_user_thread= function in =process.rs= we can now get the
 page table pointer and physical address, and then switch to the new
 table:
@@ -90,15 +102,13 @@ The user program should now run with the new page table, producing the
 same output as before!  Unfortunately this pagetable is now used for
 all threads, and creating a new user process will change the page
 table for all threads. To really separate processes we need to change
-page tables during context switches, which brings us to discussing
-processes and threads.
+page tables during context switches.
 
-** Single-threaded programs
+** Switching the page table
 
-   At this point we need to make some choices which will affect the kind of
-kernel that we end up with. The simplest solution for now is to assign each
-thread its own page table, so each program is single-threaded. To do this,
-in =processes.rs= add a field to the =Thread= struct:
+To isolate threads from each other, we're now going to give each
+thread its own page table. In =processes.rs= add a field to the
+=Thread= struct:
 #+begin_src rust
   struct Thread {
     /// Thread ID
@@ -170,7 +180,7 @@ An optimisation here would be to only switch pagetable if it's
 different from the already active pagetable e.g if there is only one
 running thread.
 
-*** Two user programs
+** Trying it out: Two user programs
 
 To try this out we need to run two userspace programs simultaneously.
 In =main.rs= we have the entry point:
@@ -225,34 +235,12 @@ in =hello.rs=:
 #+end_src
 When run you should see two counters interleaved, each counting up to 9.
 
-** Multi-threaded programs
+** Unique thread ID
 
-Having only one thread per program is straightforward but restrictive.
-Multi-threaded programs can perform tasks while waiting for events, or
-service many requests efficiently while sharing memory between
-threads.
-
-A common way to make a program multi-threaded is something like =fork=
-(or =clone= syscall for threads in Linux): One thread performs the syscall,
-and two threads return. Typically the only difference between the threads is
-the return value of the =fork= call: One thread gets a return value of 0, and
-the other gets a non-zero value (e.g. a thread ID, or stack location).
-
-There are three things needed:
-1. Give each thread a unique ID
-2. Create a separate stack for each thread. This will require finding
-   space in virtual memory for new stacks, rather than the fixed
-   address used currently.
-3. We need to have a user thread enter the kernel, copy its context, and
-   have that context restored by a context switch during a timer interrupt.
-   The simplest way to do that is to make the kernel stack during a syscall
-   look the same as it does during a timer interrupt.
-
-*** Unique thread ID
-
-This doesn't necessarily need to be done now, but it'll be useful to label
-threads somehow. First we need a way to generate unique IDs. In
-=process.rs= we can add a counter:
+This doesn't necessarily need to be done now, but it'll be useful to
+label threads somehow, and having unique numbers comes in handy
+occasionally.  The easiest way to make a unique number is with a
+counter: In =process.rs= we can add:
 #+begin_src rust
   lazy_static! {
       // ...
@@ -277,15 +265,18 @@ Everywhere we create a new =Thread= object we can now write:
       tid: unique_id(), // new
 #+end_src
 
-*** Thread stack allocation
+** Thread stack allocation
 
-Whle forked (created) threads will share a page table, it's important
-that they have separate stacks. Currently we use a fixed (virtual)
-address for the user stack (=const USER_STACK_START: u64 =
-0x5200000;=) which we hope doesn't overlap with data loaded from
-the ELF file.
+We're working up to enabling multi-threaded programs in the [[file:04-more-sysclals.org][next
+section]]. Those will share a page table and other resources, but it's
+important that they have separate stacks. Currently we use a fixed
+(virtual) address for the user stack (=const USER_STACK_START: u64 =
+0x5200000;=) which we hope doesn't overlap with data loaded from the
+ELF file. This approach won't work for two or more threads sharing the
+same virtual memory space.
 
-To do this we'll need to understand a bit better how the virtual
+To give each thread a different region of (virtual) memory to use as
+a stack, we'll need to understand a bit better how the virtual
 memory is being used. These python routines are useful, as they convert
 between virtual addresses and page table indices.
 #+begin_src python
@@ -303,29 +294,11 @@ table index 0, level 2 index 40, level 1 index 0 and frame offset 0.
 A common choice is to use the lower half of 32-bit address space for
 user code, and reserve the upper half between 0x80000000 (page table
 indices =(0, 2, 0, 0, 0)=) and 0x100000000 (indices =(0, 4, 0, 0,
-0)=)for kernel code. To add a little security to our ELF user code
-loader we can define a range of allowed addresses in =process.rs=
-#+begin_src rust
-  const USER_CODE_START: u64 = 0x5000000;
-  const USER_CODE_END: u64 = 0x80000000;
-#+end_src
-then before allocating memory in =new_user_thread= we can check that
-the memory is in the allowed range, returning an error if it is
-not. Remember to change page table back before returning. We should
-also free the new page tables, but haven't added functions to do that
-yet.
-#+begin_src rust
-  if (start_address < VirtAddr::new(USER_CODE_START))
-      || (end_address >= VirtAddr::new(USER_CODE_END)) {
-          memory::switch_to_pagetable(original_page_table);
-          return Err("ELF segment outside allowed range");
-      }
-#+end_src
+0)=)for kernel code. 
 
-
-Above 0x100000000 we can use any address range we
-like for things like stack and heap allocations. A small part of this
-huge address space is already used:
+Above 0x100000000 (beyond 32-bit addresses) we can use any address
+range we like for things like stack and heap allocations. A small part
+of this huge address space is already used:
 
 - The bootloader maps all memory starting at address =0x18000000000=,
   corresponding to page table indices =(3, 0, 0, 0, 0)=.
@@ -336,31 +309,193 @@ huge address space is already used:
 For now we can reserve a level 1 page table, which has 512 pages. If
 we allocate 8 to each thread then we'll be able to have up to 64
 threads per page table. We can divide this up into (from low to high):
+
 - One unused page table as a guard; accessing this (user stack
   overflow) will trigger a fault.
-- Seven user stack pages.
+- Seven user stack pages (28k).
 
 A user stack underflow accesses the unused guard page in the next set
-of thread pages.
+of thread pages, so this should hopefully prevent some hard-to-find bugs
+which would occur if threads started writing over each other's stacks.
 
 We can choose an arbitrary page table, for example =(5,0,0,*,*)= which
-maps virtual memory addresses 0x28000000000 to 0x28000200000.
+maps virtual memory addresses 0x28000000000 to 0x28000200000. We can store
+this choice in a set of indices in =memory.rs=:
+#+begin_src rust
+const THREAD_STACK_PAGE_INDEX: [u8; 3] = [5, 0, 0];
+#+end_src
+so that we can quickly find the page table by following entries.
+Defining a new function =allocate_user_stack=:
+#+begin_src rust
+  pub fn allocate_user_stack(
+      level_4_table: *mut PageTable
+  ) -> Result<(u64, u64), &'static str> {
+    ...
+  }
+#+end_src
+which will take the level 4 (top-level) page table for the process,
+and return either a pair of =u64= integers with the start and end
+address of the user stack, or an error string.
 
+First we need to find the level 1 table by following entries.
+Since page table entries store physical addresses, we need to
+use the physical memory offset to convert these to virtual addresses:
+#+begin_src rust
+  let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+  let mut table = unsafe {&mut *level_4_table};
+  for index in THREAD_STACK_PAGE_INDEX {
+      let entry = &mut table[index as usize];
+      if entry.is_unused() {
+          ...
+      }
+      table = unsafe {&mut *(memory_info.physical_memory_offset
+                              + entry.addr().as_u64())
+                             .as_mut_ptr()};
+  }
+#+end_src
+This walks through the page tables, using indices in the
+=THREAD_STACK_PAGE_INDEX= array. As written, it relies on
+the tables already being allocated. If an entry is unused,
+we will allocate a new page table with:
+#+begin_src rust
+  let (new_table_ptr, new_table_physaddr) = create_empty_pagetable();
+  entry.set_addr(PhysAddr::new(new_table_physaddr),
+                 PageTableFlags::PRESENT |
+                 PageTableFlags::WRITABLE |
+                 PageTableFlags::USER_ACCESSIBLE);
+#+end_src
 
+Note: We could do something more clever by allocating just one page
+table and mapping one of its entries to itself. Then we would only
+need one new page table per process, rather than three, and memory
+translation might be faster. For now we'll just do the simple thing,
+and revisit this once we decide how to allocate heap memory for user
+processes.
 
-*** Create Context struct in syscall
+Having got a reference to the level 1 page table, we now need to find
+a group of 8 pages which are available. We divide the 512 entries into
+64 slots. Since most processes will probably have far fewer than 64
+threads, the chances are quite good that a random slot will be
+unused. If the slot is used, then we'll go through the slots
+sequentially.
 
-When a thread fork syscall is made, a new thread context must
-be made, which is the same as the original thread. The easiest
-way to do this is to capture a Context in syscall in the same
-way that we do in a timer interrupt. In the process we're going
-to stop using the user stack to store the state.
+Getting a random number is harder than it seems, and isn't really needed here,
+so we'll just use =unique_id= which should be good enough:
+#+begin_src rust
+use crate::process;
+let n_start = process::unique_id();
+#+end_src
+then iterate through each slot =n=, cycling around the 64 slots in the
+page table, and check if it is used. The first page in each 8-page
+slot is always left empty as a guard page, so we check the =n * 8 + 1=
+page table entry:
+#+begin_src rust
+  for i in 0..64 {
+      let n = ((n_start + i) % 64) as usize;
+      if table[n * 8 + 1].is_unused() {
+          // Found an empty slot
+      }
+  }
+  Err("All thread stack slots full")
+#+end_src
+At the end if all the slots are full we leave the for loop and return
+an error message.
 
-[[https://github.com/redox-os/kernel/blob/master/src/arch/x86_64/interrupt/syscall.rs#L65][Redox OS]] syscall handler
+Slot =n= consists of page tables =[n * 8]= to =[n * 8 + 7]=,
+of which the first is empty and the remaining 7 need to be allocated:
+#+begin_src rust
+  for j in 1..8 {
+      let entry = &mut table[n * 8 + j];
 
+      let frame = memory_info.frame_allocator.allocate_frame()
+          .ok_or("Failed to allocate frame")?;
 
-[[https://wiki.osdev.org/Task_State_Segment][Task State Segment]] layout
+      entry.set_addr(frame.start_address(),
+                     PageTableFlags::PRESENT |
+                     PageTableFlags::WRITABLE |
+                     PageTableFlags::USER_ACCESSIBLE);
+  }
+#+end_src
 
-[[https://www.felixcloutier.com/x86/wrmsr][wrmsr]] and [[https://www.felixcloutier.com/x86/swapgs][swapgs]] instructions
+All that remains is to calculate and return the virtual address range
+of the stack we've just allocated:
+#+begin_src rust
+  let slot_address: u64 =
+      ((THREAD_STACK_PAGE_INDEX[0] as u64) << 39) +
+      ((THREAD_STACK_PAGE_INDEX[1] as u64) << 30) +
+      ((THREAD_STACK_PAGE_INDEX[2] as u64) << 21) +
+      (((n * 8) as u64) << 12);
 
+  return Ok((slot_address + 4096,
+             slot_address + 8 * 4096));
+#+end_src
 
+To test this out we will modify the =Thread= struct, and the kernel
+and user thread creation functions in =process.rs=.
+
+The =Thread= struct can now be modified to store the end addresses of
+both kernel and user stacks, and use only one =Vec= to allocate stack
+space on the kernel heap. Keeping the kernel stack on the kernel heap
+makes switching pagetables easier because the kernel stack is then
+mapped in all page tables.
+#+begin_src rust
+  struct Thread {
+      tid: u64,
+      page_table_physaddr: u64,
+      kernel_stack: Vec<u8>,
+      kernel_stack_end: u64,
+      user_stack_end: u64, // new
+      context: u64,
+  }
+#+end_src
+The =fmt= implementation for =Thread= also needs to be modified to print the stack locations.
+
+In the =new_kernel_thread= function, we can now allocate
+both kernel and "user" stacks in the same =Vec=:
+#+begin_src rust
+  let new_thread = {
+      let kernel_stack = Vec::with_capacity(KERNEL_STACK_SIZE + USER_STACK_SIZE); // new
+      let kernel_stack_start = VirtAddr::from_ptr(kernel_stack.as_ptr());
+      let kernel_stack_end = (kernel_stack_start + KERNEL_STACK_SIZE).as_u64(); // new
+      let user_stack_end = kernel_stack_end + (USER_STACK_SIZE as u64); // new
+
+      Box::new(Thread {
+          tid: unique_id(),
+          page_table_physaddr: 0,
+          kernel_stack,
+          kernel_stack_end,
+          user_stack_end, // new
+          context: kernel_stack_end - INTERRUPT_CONTEXT_SIZE as u64,
+      })
+  };
+#+end_src
+The stack pointer in the new context is set to the user stack end:
+#+begin_src rust
+context.rsp = new_thread.user_stack_end as usize;
+#+end_src
+
+In =new_user_thread= we can use the new =allocate_user_stack= function
+#+begin_src rust
+  let new_thread = {
+      let kernel_stack = Vec::with_capacity(KERNEL_STACK_SIZE);
+      let kernel_stack_start = VirtAddr::from_ptr(kernel_stack.as_ptr());
+      let kernel_stack_end = (kernel_stack_start + KERNEL_STACK_SIZE).as_u64();
+
+      let (user_stack_start, user_stack_end) =
+          memory::allocate_user_stack(user_page_table_ptr)?; // new
+
+      Box::new(Thread {
+          tid: unique_id(),
+          page_table_physaddr: user_page_table_physaddr,
+          kernel_stack: kernel_stack,
+          kernel_stack_end,
+          user_stack_end, // new
+          context: kernel_stack_end - INTERRUPT_CONTEXT_SIZE as u64
+      })
+  };
+#+end_src
+and then set =context.rsp= in the same way as for kernel threads.
+
+Hopefully the code still runs as before, context switching between two
+user processes. In the [[file:04-more-syscalls.org][next section]] we'll use the stack allocator and add
+syscalls to let user threads spawn new threads.

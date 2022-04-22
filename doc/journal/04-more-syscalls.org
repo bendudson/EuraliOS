@@ -1,16 +1,232 @@
 * Adding syscalls for thread control
 
 Now we're going to add system calls to enable user threads to create
-new threads, and exit cleanly.
+new threads, and exit cleanly. We'll learn about the [[https://www.felixcloutier.com/x86/swapgs][swapgs]] and [[https://www.felixcloutier.com/x86/wrmsr][wrmsr]]
+instructions.
 
-** Syscall jump table
+** Switching stack on Syscall
+
+   Syscall handlers have a problem because they need to preserve all
+registers, while switching to a kernel stack and saving the user stack
+pointer somewhere. Reasons to avoid using the user stack include:
+1. Avoiding a stack overflow while in ring 0, which could overwrite
+   anything or just lead to a page fault while in kernel space.
+   Instead we switch to a known good stack location.
+2. Not leaving kernel data on the user stack, potentially leaking
+   information which a malicious program could use.
+
+A common solution is to use the GS segment register. In 64-bit mode this
+register contains a 64-bit address, and memory can be accessed as an offset
+from this address. For example
+#+begin_src nasm
+mov gs:0x24, rsp
+#+end_src
+copies the stack pointer (RSP) to a virtual memory address calculated
+by taking the value in GS and adding =0x24=. If we can set the value
+of GS, then we can use it to save the user stack pointer to a memory
+address and retrieve a kernel stack pointer.
+
+There are two ways to access the GS and FS 64-bit registers directly:
+1. The [[https://www.felixcloutier.com/x86/wrmsr][wrmsr]] instruction writes to Model Specific Registers, and was
+   used in [[file:02-userspace.org][an earlier section]] to set up syscalls. It can only be
+   executed in ring 0. According to the [[https://www.amd.com/system/files/TechDocs/24593.pdf][AMD documentation]] the FS base
+   address is MSR =0xC000_0100= and the GS base address is
+   =0xC000_0101=.
+
+2. The wrfsbase and wrgsbase instructions write to the FS and GS base
+   registers, and can be executed in any privilege level. These need
+   to be enabled by setting a bit in the CR4 control register. There
+   is an [[https://lwn.net/Articles/821723/][LWN article on enabling FSGSBASE in Linux]].
+
+Note that push, pop and mov only access the lower 32 bits of the GS
+and FS registers.
+
+There is a third way to set the GS register indirectly, which allows the kernel
+to store an address in a location that is hidden from user programs. This
+Kernel GS base address is MSR =0xC0000102=. The =swapgs= instruction swaps
+the values in the user and kernel GS base registers. What we can do is:
+
+1. Store a memory address in the kernel GS base register
+2. Allow users to modify the GS register
+3. On entering the syscall handler, execute =swapgs= to swap the user and kernel
+   GS values
+4. Use GS to access memory, saving the user stack pointer and loading
+   a kernel stack pointer.
+5. Before going back to user code swap the GS registers back
+
+As discussed in [[https://wiki.osdev.org/SWAPGS][this OSdev page]] a common strategy is to swap the GS
+registers on every transition between user and kernel code, at the
+start and end of syscalls and interrupt handlers.  That page notes
+that there are some problems with this approach: If an interrupt is
+allowed to occur during a syscall, while the GS registers are swapped,
+then they will be swapped again! To handle this there are ways to
+detect whether the interrupt occurred while in kernel code.
+
+The approach we'll use here is to only use =swapgs= in the syscall handler,
+keeping the user GS register loaded in the rest of the kernel code. This
+avoids the problem of nesting syscalls and interrupts.
+
+*** Setting kernel GS base
+
+A good choice for the kernel GS base register is to point to the [[https://wiki.osdev.org/Task_State_Segment][Task
+State Segment]] (TSS) table. This table is different for each CPU core,
+so will still work if (when?) we support multiple cores, and we
+already store kernel stack pointers in the TSS for use in the timer
+interrupt context switch. The [[https://github.com/redox-os/kernel/blob/master/src/arch/x86_64/interrupt/syscall.rs#L65][Redox OS]] syscall handler does something
+like this.
+
+We need a function to get the address of the TSS. In =gdt.rs= add
+a function
+#+begin_src rust
+  pub fn tss_address() -> u64 {
+      let tss_ptr = &*TSS.lock() as *const TaskStateSegment;
+      tss_ptr as u64
+  }
+#+end_src
+then in =syscalls.rs= we define the MSR number:
+#+begin_src rust
+const MSR_KERNEL_GS_BASE: usize = 0xC0000102;
+#+end_src
+and then the =init= function can put the TSS address in
+the kernel GS base register:
+#+begin_src rust
+  asm!(
+      // Want to move RDX into MSR but wrmsr takes EDX:EAX i.e. EDX
+      // goes to high 32 bits of MSR, and EAX goes to low order bits
+      // https://www.felixcloutier.com/x86/wrmsr
+      "mov eax, edx",
+      "shr rdx, 32", // Shift high bits into EDX
+      "wrmsr",
+      in("rcx") MSR_KERNEL_GS_BASE,
+      in("rdx") gdt::tss_address()
+  );
+#+end_src
+This puts the TSS address in RDX and writes it to the MSR. It looks
+more complicated than it is because [[https://www.felixcloutier.com/x86/wrmsr][wrmsr]] uses two 32-bit registers to
+set the 64-bit address: The low 32 bits of the address are moved to EAX,
+and then the high 32 bits in RDX are shifted down to the 32 bits in EDX.
+=wrmsr= takes these two pieces and puts them back together in the MSR.
+
+** Using SWAPGS in syscall handler
+
+When the syscall handler starts, we want to save the user RSP, and
+load a kernel stack pointer. The kernel stack pointer for the current
+process is stored in the TSS, entry number =gdt::TIMER_INTERRUPT_INDEX=
+which is currently set to 1. There are 7 available interrupt stack entries,
+so we can use one of them to temporarily store the user stack pointer.
+In =gdt.rs= we'll define a constant:
+#+begin_src rust
+pub const SYSCALL_TEMP_INDEX: u16 = 2;
+#+end_src
+which we can use in =syscalls.rs= at the start of the =handle_syscall=
+function:
+#+begin_src rust
+  asm!("swapgs",
+       "mov gs:{tss_temp}, rsp", // save user RSP
+       "mov rsp, gs:{tss_timer}" // load kernel RSP
+       ...
+       tss_timer = const(0x24 + gdt::TIMER_INTERRUPT_INDEX * 8),
+       tss_temp = const(0x24 + gdt::SYSCALL_TEMP_INDEX * 8),
+#+end_src
+The offset of the interrupt stack index (0x24) is determined from the
+[[https://wiki.osdev.org/Task_State_Segment][Task State Segment]] layout.
+
+This kernel stack is also used by the timer interrupt for context switches.
+If we want to allow context switches while handling a syscall, then
+we need to make sure that syscalls use a different part of the kernel stack.
+The kernel stack is two pages (8k) so we can move the pointer by an offset
+and have enough space:
+#+begin_src rust
+  const SYSCALL_KERNEL_STACK_OFFSET: u64 = 1024;
+#+end_src
+which is applied to rsp:
+#+begin_src rust
+  asm!(...
+       "sub rsp, {ks_offset}",
+       ...
+       ks_offset = const(SYSCALL_KERNEL_STACK_OFFSET));
+#+end_src
+
+We can now save the user stack pointer onto the kernel stack,
+and swap the GS registers back:
+#+begin_src rust
+  asm!(...
+       "push gs:{tss_temp}", // user RSP
+       "swapgs"
+       ...
+       ks_offset = const(SYSCALL_KERNEL_STACK_OFFSET));
+#+end_src
+
+
+
+** Create Context struct in syscall
+
+When a thread fork syscall is made, a new thread context must be made
+that is the same as the original thread, and can be put in the
+scheduler. The easiest way to do this is to capture a Context in
+syscall in the same way that we do in a timer interrupt.
+
+
+
+
+** Kernel code to fork threads
+
+
+** User code to spawn new threads
+
+
+** Exiting threads
+
+
+Some of this can be done with lightweight ("green") threads
+in user space, but for communication between processes the only way
+for single-threaded programs to perform tasks while waiting for events
+is to keep checking whether an event has occurred ("polling"). This
+implies buffering of messages between processes somewhere, and delays
+between an event occurring and the handling process checking for it.
+This may be acceptable in a monolithic kernel, but if the aim is to
+have a microkernel with lots of separate processes and communication
+between them, then the delays and buffering adds up to noticeably
+worse performance.
+
+To make event handling (e.g keyboard press) fast, a message sent from
+one process should trigger a context switch to a handling thread in
+the receiving process. This implies that a receiving thread is blocked
+waiting for a message to arrive, and so to do other things the process
+must have multiple threads. This is essentially the Rendezvous system
+used in Plan 9: Threads waiting for a message block until a message is
+sent, and sending threads block until there is a receive. When both
+sender and receiver meet the message is passed and context switches to
+the receiver. No buffering of messages in the kernel is needed.
+
+To make programs multi-threaded, threads in the same program need to
+share data. For now that means the page table but later there will be
+other shared resources. Threads might be created and destroyed while
+the program is running, but as long as one thread is still running we
+want the process to stay around. To do that we'll use Rust's [[https://doc.rust-lang.org/beta/alloc/sync/struct.Arc.html][Arc]]
+thread-safe reference counting pointer to hold the Process, shared
+between Threads.  We can't use the faster [[https://doc.rust-lang.org/alloc/rc/struct.Rc.html][Rc]] reference counting
+pointer in this case because it can't safely be copied between
+threads.
+
+
+Security issues: https://fuchsia.dev/fuchsia-src/concepts/kernel/sysret_problem
+
+** Appendix: Syscall jump table
+
+This is an alternative approach which I don't think is optimal, but is
+here in case it's helpful.
 
 In C we can create a static array of function pointers (addresses), so
-that functions can be called when indexing into this array. In rust
-this seems to be difficult: function pointers aren't known at compile
-time, and so attempting to cast a function to a =u64= statically
-doesn't compile. The usual trick of using =lazy_static= also doesn't
-work because we need to know the address of the array at link time.
+that functions can be called when indexing into this array. This is used
+in Linux (for example) to enable fast lookup of a function pointer from
+a syscall number.
+
+In rust this seems to be difficult: Function pointers aren't known at
+compile time (only link time), and so attempting to cast a function to
+a =u64= statically doesn't compile. The usual trick of using
+=lazy_static= also doesn't work because we need to know the address of
+the array at link time.
 
 The closest I've found so far is to define a static mutable array
 (highly discouraged!) in =syscalls.rs=:
@@ -48,46 +264,8 @@ looks up the handler address in the =SYSCALL_HANDLERS= table:
       ...,
       syscall_handlers = sym SYSCALL_HANDLERS,
       syscall_max = const SYSCALL_NUMBER,
-      options(noreturn) 
+      options(noreturn)
   );
 #+end_src
 To be able to use the =const= argument to =asm= we need to add
 this feature to the top of =lib.rs= with =#![feature(asm_const)]=.
-
-
-
-
-Some of this can be done with lightweight ("green") threads
-in user space, but for communication between processes the only way
-for single-threaded programs to perform tasks while waiting for events
-is to keep checking whether an event has occurred ("polling"). This
-implies buffering of messages between processes somewhere, and delays
-between an event occurring and the handling process checking for it.
-This may be acceptable in a monolithic kernel, but if the aim is to
-have a microkernel with lots of separate processes and communication
-between them, then the delays and buffering adds up to noticeably
-worse performance.
-
-To make event handling (e.g keyboard press) fast, a message sent from
-one process should trigger a context switch to a handling thread in
-the receiving process. This implies that a receiving thread is blocked
-waiting for a message to arrive, and so to do other things the process
-must have multiple threads. This is essentially the Rendezvous system
-used in Plan 9: Threads waiting for a message block until a message is
-sent, and sending threads block until there is a receive. When both
-sender and receiver meet the message is passed and context switches to
-the receiver. No buffering of messages in the kernel is needed.
-
-To make programs multi-threaded, threads in the same program need to
-share data. For now that means the page table but later there will be
-other shared resources. Threads might be created and destroyed while
-the program is running, but as long as one thread is still running we
-want the process to stay around. To do that we'll use Rust's [[https://doc.rust-lang.org/beta/alloc/sync/struct.Arc.html][Arc]]
-thread-safe reference counting pointer to hold the Process, shared
-between Threads.  We can't use the faster [[https://doc.rust-lang.org/alloc/rc/struct.Rc.html][Rc]] reference counting
-pointer in this case because it can't safely be copied between
-threads.
-
-
-Security issues: https://fuchsia.dev/fuchsia-src/concepts/kernel/sysret_problem
-
