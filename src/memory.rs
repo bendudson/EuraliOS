@@ -21,7 +21,7 @@ struct MemoryInfo {
     physical_memory_offset: VirtAddr,
 
     /// Allocate empty frames
-    frame_allocator: BootInfoFrameAllocator,
+    frame_allocator: MultilevelBitmapFrameAllocator,
 
     /// Kernel page table physical address
     kernel_l4_table: &'static mut PageTable
@@ -58,7 +58,8 @@ pub fn init(boot_info: &'static BootInfo) {
         // Initialise the memory mapper
         let mut mapper = unsafe {OffsetPageTable::new(level_4_table, physical_memory_offset)};
         let mut frame_allocator = unsafe {
-            BootInfoFrameAllocator::init(&boot_info.memory_map)
+            MultilevelBitmapFrameAllocator::init(&boot_info.memory_map,
+                                                 physical_memory_offset)
         };
 
         allocator::init_heap(&mut mapper, &mut frame_allocator)
@@ -299,7 +300,7 @@ pub fn allocate_user_stack(
         let entry = &mut table[index as usize];
         if entry.is_unused() {
             // Page not allocated -> Create page table
-            let (new_table_ptr, new_table_physaddr) = create_empty_pagetable();
+            let (_new_table_ptr, new_table_physaddr) = create_empty_pagetable();
             entry.set_addr(PhysAddr::new(new_table_physaddr),
                            PageTableFlags::PRESENT |
                            PageTableFlags::WRITABLE |
@@ -362,45 +363,215 @@ pub fn allocate_user_stack(
 use bootloader::bootinfo::MemoryMap;
 use bootloader::bootinfo::MemoryRegionType;
 
-/// A FrameAllocator that returns usable frames from the bootloader's memory map.
-pub struct BootInfoFrameAllocator {
-    memory_map: &'static MemoryMap,
-    next: usize,
+/// Return the index of a non-zero bit
+///
+/// Uses the BSF instruction: https://www.felixcloutier.com/x86/bsf
+///
+/// Assumes that at least one bit is not zero
+fn nonzero_bit_index(bitmap: u32) -> u32 {
+    let index: u32;
+    unsafe {
+        asm!("bsf eax, ecx",
+             in("ecx") bitmap,
+             lateout("eax") index,
+             options(pure, nomem, nostack));
+    }
+    index
 }
 
-impl BootInfoFrameAllocator {
-    /// Create a FrameAllocator from the passed memory map.
+#[test_case]
+fn test_nonzero_bit_index() {
+    assert_eq!(nonzero_bit_index(1), 0);
+    assert_eq!(nonzero_bit_index(32), 5);
+}
+
+/// An allocator which uses bitmaps to keep track of available frames
+///
+/// 32 level-1 bitmaps, with one bit per frame
+/// 1  level-2 bitmap, one bit per level-1 bitmap
+///
+pub struct MultilevelBitmapFrameAllocator {
+    physical_memory_offset: VirtAddr,
+    /// Virtual address of the first level 2 entry
+    /// Each entry is 32 bits long, one bit per level 1 entry
+    level_2_virt_addr: VirtAddr,
+
+    /// Virtual address of the first level 1 entry
+    /// Each entry is 32 bits long, one bit per frame
+    level_1_virt_addr: VirtAddr,
+
+    /// Physical start address of the frames
+    frame_phys_addr: PhysAddr,
+
+    /// Cached level 1 bitmap.
+    cache: u32,
+
+    /// The index of the cached level 1 bitmap
+    cache_index: u64,
+}
+
+impl MultilevelBitmapFrameAllocator {
+
+    /// Initialise a bitmap allocator
     ///
-    /// This function is unsafe because the caller must guarantee that the passed
-    /// memory map is valid. The main requirement is that all frames that are marked
-    /// as `USABLE` in it are really unused.
-    pub unsafe fn init(memory_map: &'static MemoryMap) -> Self {
-        BootInfoFrameAllocator {
-            memory_map,
-            next: 0,
+    /// This function is unsafe because the caller must guarantee
+    /// that the memory map and physical memory offset is correct.
+    pub unsafe fn init(memory_map: &'static MemoryMap,
+                       physical_memory_offset: VirtAddr) -> Self {
+        // get usable regions from memory map
+        let mut usable_regions = memory_map
+            .iter()
+            .filter(|r| r.region_type == MemoryRegionType::Usable);
+
+        _ = usable_regions.next(); // Discard the first region
+        let region = usable_regions.next().unwrap();
+
+        let start_addr = region.range.start_addr();
+        let end_addr = region.range.end_addr();
+        let nframes = region.range.end_frame_number - region.range.start_frame_number;
+
+        println!("Region: {:#016X} - {:#016X}", start_addr, end_addr);
+        println!("Number of frames: {}", nframes);
+
+        // Use the first frame for bitmaps
+        let level_2_virt_addr = physical_memory_offset + start_addr;
+        let level_1_virt_addr = level_2_virt_addr + 4u64;
+
+        // Set level 2 page table values
+        let level_2_ptr = level_2_virt_addr.as_mut_ptr() as *mut u32;
+        *level_2_ptr = 0xFFFF_FFFF; // All have some frames
+
+        // Set level 1 page table values
+        let level_1_ptr = level_1_virt_addr.as_mut_ptr() as *mut u32;
+        *level_1_ptr = 0xFFFF_FFFE; // Clear first bit
+        for i in 1..32 {
+            *(level_1_ptr.offset(i)) = 0xFFFF_FFFF;
+        }
+
+        MultilevelBitmapFrameAllocator {
+            physical_memory_offset,
+            level_2_virt_addr,
+            level_1_virt_addr,
+            frame_phys_addr: PhysAddr::new(start_addr),
+            cache: 0,
+            cache_index: 0
         }
     }
 
-    /// Returns an iterator over the usable frames specified in the memory map.
-    fn usable_frames(&self) -> impl Iterator<Item = PhysFrame> {
-        // get usable regions from memory map
-        let regions = self.memory_map.iter();
-        let usable_regions = regions
-            .filter(|r| r.region_type == MemoryRegionType::Usable);
-        // map each region to its address range
-        let addr_ranges = usable_regions
-            .map(|r| r.range.start_addr()..r.range.end_addr());
-        // transform to an iterator of frame start addresses
-        let frame_addresses = addr_ranges.flat_map(|r| r.step_by(4096));
-        // create `PhysFrame` types from the start addresses
-        frame_addresses.map(|addr| PhysFrame::containing_address(PhysAddr::new(addr)))
+    /// Allocate a frane, returning the frame number in this
+    /// allocation region.
+    fn fetch_frame(&mut self) -> u64 {
+        // Check if there are frames in the cached bitmap
+        if self.cache == 0 {
+            // No frames left -> Find a new level 1 bitmap
+
+            let l2_ptr = self.level_2_virt_addr.as_mut_ptr() as *mut u32;
+            let mut l2_bitmap = unsafe{*l2_ptr};
+            let l2_index = nonzero_bit_index(l2_bitmap);
+
+            let l1_ptr = unsafe{(self.level_1_virt_addr.as_mut_ptr() as *mut u32)
+                                .offset(l2_index as isize)};
+
+            // Put this bitmap in the cache for quicker lookup next time
+            self.cache = unsafe{*l1_ptr};
+            self.cache_index = l2_index as u64;
+        }
+
+        // Cache now has non-zero entries. Find one
+        let l1_index = nonzero_bit_index(self.cache);
+
+        let frame_number =
+            (self.cache_index as u64) * 32u64
+            + (l1_index as u64);
+
+        // Mark frame as used
+        self.cache ^= 1 << l1_index;
+        if self.cache == 0 {
+            // None left in this level 1 bitmap -> Set to zero
+            let l1_ptr = unsafe{(self.level_1_virt_addr.as_mut_ptr() as *mut u32)
+                                .offset(self.cache_index as isize)};
+            unsafe{*l1_ptr = 0;}
+
+            // clear level 2 bit
+            let l2_ptr = self.level_2_virt_addr.as_mut_ptr() as *mut u32;
+            unsafe{*l2_ptr ^= 1 << self.cache_index};
+        }
+
+        frame_number
+    }
+
+    /// Put a frame back into the bitmap
+    ///
+    /// Input is the frame number returned by fetch_frame, not
+    /// a physical address
+    fn return_frame(&mut self, frame_number: u64) {
+        // Calculate indices
+        let l1_index = frame_number % 32;
+        let l2_index = frame_number / 32;
+
+        // Check if the frame should go in the cache
+        if l2_index == self.cache_index {
+            self.cache |= 1 << l1_index;
+        } else {
+            let l1_ptr = unsafe{(self.level_1_virt_addr.as_mut_ptr() as *mut u32)
+                                .offset(l2_index as isize)};
+            unsafe{*l1_ptr |= 1 << l1_index;}
+
+            // set level 2 bit
+            let l2_ptr = self.level_2_virt_addr.as_mut_ptr() as *mut u32;
+            unsafe{*l2_ptr |= 1 << l2_index};
+        }
+    }
+
+    fn deallocate_frame(&mut self, frame: PhysFrame) {
+        let frame_number = (frame.start_address() - self.frame_phys_addr) / 4096;
+        self.return_frame(frame_number);
     }
 }
 
-unsafe impl FrameAllocator<Size4KiB> for BootInfoFrameAllocator {
+unsafe impl FrameAllocator<Size4KiB> for MultilevelBitmapFrameAllocator {
     fn allocate_frame(&mut self) -> Option<PhysFrame> {
-        let frame = self.usable_frames().nth(self.next);
-        self.next += 1;
-        frame
+        let frame_number = self.fetch_frame();
+
+        // Convert from frame number to physical address
+        PhysFrame::from_start_address(
+            self.frame_phys_addr + frame_number * 4096).ok()
     }
+}
+
+#[test_case]
+fn test_two_frames() {
+    let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+    let mut alloc = &mut memory_info.frame_allocator;
+
+    let frame1 = alloc.fetch_frame();
+    let frame2 = alloc.fetch_frame();
+
+    assert!(frame1 != frame2);
+}
+
+#[test_case]
+fn test_level2_cleared() {
+    let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+    let mut alloc = &mut memory_info.frame_allocator;
+
+    let frame1 = alloc.fetch_frame();
+    // Move to next level-1 frame
+    for i in 0..32 {
+        alloc.allocate_frame();
+    }
+    let frame2 = alloc.fetch_frame();
+    assert!(frame1 != frame2);
+}
+
+#[test_case]
+fn test_quick_return() {
+    let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+    let mut alloc = &mut memory_info.frame_allocator;
+
+    let frame1 = alloc.fetch_frame();
+    alloc.return_frame(frame1);
+    let frame2 = alloc.fetch_frame();
+
+    assert!(frame1 == frame2);
 }
