@@ -391,7 +391,6 @@ fn test_nonzero_bit_index() {
 /// 1  level-2 bitmap, one bit per level-1 bitmap
 ///
 pub struct MultilevelBitmapFrameAllocator {
-    physical_memory_offset: VirtAddr,
     /// Virtual address of the first level 2 entry
     /// Each entry is 32 bits long, one bit per level 1 entry
     level_2_virt_addr: VirtAddr,
@@ -449,7 +448,6 @@ impl MultilevelBitmapFrameAllocator {
         }
 
         MultilevelBitmapFrameAllocator {
-            physical_memory_offset,
             level_2_virt_addr,
             level_1_virt_addr,
             frame_phys_addr: PhysAddr::new(start_addr),
