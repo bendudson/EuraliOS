@@ -421,12 +421,6 @@ pub struct MultilevelBitmapFrameAllocator {
 
     /// Physical start address of the frames
     frame_phys_addr: PhysAddr,
-
-    /// Cached level 1 bitmap.
-    cache: u32,
-
-    /// The index of the cached level 1 bitmap
-    cache_index: u64,
 }
 
 impl MultilevelBitmapFrameAllocator {
@@ -471,57 +465,40 @@ impl MultilevelBitmapFrameAllocator {
             level_2_virt_addr,
             level_1_virt_addr,
             frame_phys_addr: PhysAddr::new(start_addr),
-            cache: 0,
-            cache_index: 0
         }
     }
 
     /// Allocate a frane, returning the frame number in this
     /// allocation region.
     fn fetch_frame(&mut self) -> u64 {
-        // Check if there are frames in the cached bitmap
-        if self.cache == 0 {
-            // No frames left -> Find a new level 1 bitmap
+        let l2_ptr = self.level_2_virt_addr.as_mut_ptr() as *mut u32;
+        let l2_bitmap = unsafe{*l2_ptr};
 
-            let l2_ptr = self.level_2_virt_addr.as_mut_ptr() as *mut u32;
-            let mut l2_bitmap = unsafe{*l2_ptr};
-
-            if l2_bitmap == 0 {
-                panic!("Out of memory!")
-            }
-
-            let l2_index = nonzero_bit_index(l2_bitmap);
-
-            let l1_ptr = unsafe{(self.level_1_virt_addr.as_mut_ptr() as *mut u32)
-                                .offset(l2_index as isize)};
-
-            // Put this bitmap in the cache for quicker lookup next time
-            self.cache = unsafe{*l1_ptr};
-            self.cache_index = l2_index as u64;
+        if l2_bitmap == 0 {
+            panic!("Out of memory!")
         }
 
-        if self.cache == 0 {
+        let l2_index = nonzero_bit_index(l2_bitmap);
+
+        let l1_ptr = unsafe{(self.level_1_virt_addr.as_mut_ptr() as *mut u32)
+                            .offset(l2_index as isize)};
+        let mut l1_bitmap = unsafe{*l1_ptr};
+
+        if l1_bitmap == 0 {
             panic!("Misleading L2 bit!")
         }
-
-        // Cache now has non-zero entries. Find one
-        let l1_index = nonzero_bit_index(self.cache);
+        let l1_index = nonzero_bit_index(l1_bitmap);
 
         let frame_number =
-            (self.cache_index as u64) * 32u64
+            (l2_index as u64) * 32u64
             + (l1_index as u64);
 
         // Mark frame as used
-        self.cache &= !(1 << l1_index);
-        if self.cache == 0 {
-            // None left in this level 1 bitmap -> Set to zero
-            let l1_ptr = unsafe{(self.level_1_virt_addr.as_mut_ptr() as *mut u32)
-                                .offset(self.cache_index as isize)};
-            unsafe{*l1_ptr = 0;}
-
-            // clear level 2 bit
-            let l2_ptr = self.level_2_virt_addr.as_mut_ptr() as *mut u32;
-            unsafe{*l2_ptr &= !(1 << self.cache_index)};
+        l1_bitmap &= !(1 << l1_index);
+        unsafe{*l1_ptr = l1_bitmap}
+        if l1_bitmap == 0 {
+            // None left in this level 1 bitmap -> clear level 2 bit
+            unsafe{*l2_ptr &= !(1 << l2_index)};
         }
 
         frame_number
@@ -536,18 +513,13 @@ impl MultilevelBitmapFrameAllocator {
         let l1_index = frame_number % 32;
         let l2_index = frame_number >> 5;
 
-        // Check if the frame should go in the cache
-        if l2_index == self.cache_index {
-            self.cache |= 1 << l1_index;
-        } else {
-            let l1_ptr = unsafe{(self.level_1_virt_addr.as_mut_ptr() as *mut u32)
-                                .offset(l2_index as isize)};
-            unsafe{*l1_ptr |= 1 << l1_index;}
+        let l1_ptr = unsafe{(self.level_1_virt_addr.as_mut_ptr() as *mut u32)
+                            .offset(l2_index as isize)};
+        unsafe{*l1_ptr |= 1 << l1_index;}
 
-            // set level 2 bit
-            let l2_ptr = self.level_2_virt_addr.as_mut_ptr() as *mut u32;
-            unsafe{*l2_ptr |= 1 << l2_index};
-        }
+        // set level 2 bit
+        let l2_ptr = self.level_2_virt_addr.as_mut_ptr() as *mut u32;
+        unsafe{*l2_ptr |= 1 << l2_index};
     }
 
     fn deallocate_frame(&mut self, frame: PhysFrame) {
@@ -619,5 +591,5 @@ pub fn tryout() {
         }
     }
     let count2 = time_stamp_counter();
-    println!("Count: {}", (count2 - count1) / 1000000);
+    println!("Clock ticks: {} M", (count2 - count1) / 1000000);
 }
