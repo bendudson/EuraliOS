@@ -421,6 +421,10 @@ pub struct MultilevelBitmapFrameAllocator {
 
     /// Physical start address of the frames
     frame_phys_addr: PhysAddr,
+
+    /// Stack of up to 32 frames
+    frame_stack: [u64; 32],
+    frame_stack_number: usize,
 }
 
 impl MultilevelBitmapFrameAllocator {
@@ -465,12 +469,19 @@ impl MultilevelBitmapFrameAllocator {
             level_2_virt_addr,
             level_1_virt_addr,
             frame_phys_addr: PhysAddr::new(start_addr),
+            frame_stack: [0; 32],
+            frame_stack_number: 0
         }
     }
 
     /// Allocate a frane, returning the frame number in this
     /// allocation region.
     fn fetch_frame(&mut self) -> u64 {
+        if self.frame_stack_number > 0 {
+            self.frame_stack_number -= 1;
+            return self.frame_stack[self.frame_stack_number];
+        }
+
         let l2_ptr = self.level_2_virt_addr.as_mut_ptr() as *mut u32;
         let l2_bitmap = unsafe{*l2_ptr};
 
@@ -488,18 +499,27 @@ impl MultilevelBitmapFrameAllocator {
             panic!("Misleading L2 bit!")
         }
         let l1_index = nonzero_bit_index(l1_bitmap);
+        // Mark frame as used
+        l1_bitmap &= !(1 << l1_index);
+
+        // Take any other frames and put them on the stack
+        while l1_bitmap != 0 {
+            let indx = nonzero_bit_index(l1_bitmap);
+            let frame_number =
+                (l2_index as u64) * 32u64
+                + (indx as u64);
+            l1_bitmap ^= 1 << indx;
+            self.frame_stack[self.frame_stack_number] = frame_number;
+            self.frame_stack_number += 1;
+        }
 
         let frame_number =
             (l2_index as u64) * 32u64
             + (l1_index as u64);
 
-        // Mark frame as used
-        l1_bitmap &= !(1 << l1_index);
-        unsafe{*l1_ptr = l1_bitmap}
-        if l1_bitmap == 0 {
-            // None left in this level 1 bitmap -> clear level 2 bit
-            unsafe{*l2_ptr &= !(1 << l2_index)};
-        }
+        unsafe{*l1_ptr = 0}
+        // None left in this level 1 bitmap -> clear level 2 bit
+        unsafe{*l2_ptr &= !(1 << l2_index)};
 
         frame_number
     }
@@ -509,6 +529,11 @@ impl MultilevelBitmapFrameAllocator {
     /// Input is the frame number returned by fetch_frame, not
     /// a physical address
     fn return_frame(&mut self, frame_number: u64) {
+        if self.frame_stack_number < 32 {
+            self.frame_stack[self.frame_stack_number] = frame_number;
+            self.frame_stack_number += 1;
+            return;
+        }
         // Calculate indices
         let l1_index = frame_number % 32;
         let l2_index = frame_number >> 5;
