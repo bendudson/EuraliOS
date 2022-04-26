@@ -360,6 +360,26 @@ pub fn allocate_user_stack(
 
 ///////////////////////////////////////////////////////////////////////
 
+
+/// Read the processor's Time Stamp Counter
+/// uses RDTSC
+/// https://www.felixcloutier.com/x86/rdtsc
+fn time_stamp_counter() -> u64 {
+    let counter: u64;
+    unsafe{
+        asm!("rdtsc",
+             "shl rdx, 32", // High bits in EDX
+             "mov edx, eax", // Low bits in EAX
+             out("rdx") counter,
+             out("rax") _, // Clobbers RAX
+             options(pure, nomem, nostack)
+        );
+    }
+    counter
+}
+
+///////////////////////////////////////////////////////////////////////
+
 use bootloader::bootinfo::MemoryMap;
 use bootloader::bootinfo::MemoryRegionType;
 
@@ -465,6 +485,11 @@ impl MultilevelBitmapFrameAllocator {
 
             let l2_ptr = self.level_2_virt_addr.as_mut_ptr() as *mut u32;
             let mut l2_bitmap = unsafe{*l2_ptr};
+
+            if l2_bitmap == 0 {
+                panic!("Out of memory!")
+            }
+
             let l2_index = nonzero_bit_index(l2_bitmap);
 
             let l1_ptr = unsafe{(self.level_1_virt_addr.as_mut_ptr() as *mut u32)
@@ -475,6 +500,10 @@ impl MultilevelBitmapFrameAllocator {
             self.cache_index = l2_index as u64;
         }
 
+        if self.cache == 0 {
+            panic!("Misleading L2 bit!")
+        }
+
         // Cache now has non-zero entries. Find one
         let l1_index = nonzero_bit_index(self.cache);
 
@@ -483,7 +512,7 @@ impl MultilevelBitmapFrameAllocator {
             + (l1_index as u64);
 
         // Mark frame as used
-        self.cache ^= 1 << l1_index;
+        self.cache &= !(1 << l1_index);
         if self.cache == 0 {
             // None left in this level 1 bitmap -> Set to zero
             let l1_ptr = unsafe{(self.level_1_virt_addr.as_mut_ptr() as *mut u32)
@@ -492,7 +521,7 @@ impl MultilevelBitmapFrameAllocator {
 
             // clear level 2 bit
             let l2_ptr = self.level_2_virt_addr.as_mut_ptr() as *mut u32;
-            unsafe{*l2_ptr ^= 1 << self.cache_index};
+            unsafe{*l2_ptr &= !(1 << self.cache_index)};
         }
 
         frame_number
@@ -505,7 +534,7 @@ impl MultilevelBitmapFrameAllocator {
     fn return_frame(&mut self, frame_number: u64) {
         // Calculate indices
         let l1_index = frame_number % 32;
-        let l2_index = frame_number / 32;
+        let l2_index = frame_number >> 5;
 
         // Check if the frame should go in the cache
         if l2_index == self.cache_index {
@@ -572,4 +601,23 @@ fn test_quick_return() {
     let frame2 = alloc.fetch_frame();
 
     assert!(frame1 == frame2);
+}
+
+pub fn tryout() {
+    let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+    let mut alloc = &mut memory_info.frame_allocator;
+
+    const N: usize = 800;
+    let count1 = time_stamp_counter();
+
+    for i in 0..10 {
+        // Allocate frames
+        let frames = [0; N].map(|_| alloc.fetch_frame());
+        // Free them all again
+        for f in frames {
+            alloc.return_frame(f);
+        }
+    }
+    let count2 = time_stamp_counter();
+    println!("Count: {}", (count2 - count1) / 1000000);
 }
