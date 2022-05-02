@@ -477,51 +477,45 @@ impl MultilevelBitmapFrameAllocator {
     /// Allocate a frane, returning the frame number in this
     /// allocation region.
     fn fetch_frame(&mut self) -> u64 {
-        if self.frame_stack_number > 0 {
-            self.frame_stack_number -= 1;
-            return self.frame_stack[self.frame_stack_number];
+        if self.frame_stack_number == 0 {
+            // Empty stack => Find more frames
+
+            let l2_ptr = self.level_2_virt_addr.as_mut_ptr() as *mut u32;
+            let l2_bitmap = unsafe{*l2_ptr};
+
+            if l2_bitmap == 0 {
+                panic!("Out of memory!")
+            }
+
+            let l2_index = nonzero_bit_index(l2_bitmap);
+
+            let l1_ptr = unsafe{(self.level_1_virt_addr.as_mut_ptr() as *mut u32)
+                                .offset(l2_index as isize)};
+            let mut l1_bitmap = unsafe{*l1_ptr};
+
+            // Take all frames and put them on the stack
+            while l1_bitmap != 0 {
+                let l1_index = nonzero_bit_index(l1_bitmap);
+                let frame_number =
+                    (l2_index as u64) * 32u64 +
+                    (l1_index as u64);
+                l1_bitmap ^= 1 << l1_index;
+                self.frame_stack[self.frame_stack_number] = frame_number;
+                self.frame_stack_number += 1;
+            }
+
+            unsafe{*l1_ptr = 0}
+            // None left in this level 1 bitmap -> clear level 2 bit
+            unsafe{*l2_ptr &= !(1 << l2_index)};
+
         }
 
-        let l2_ptr = self.level_2_virt_addr.as_mut_ptr() as *mut u32;
-        let l2_bitmap = unsafe{*l2_ptr};
-
-        if l2_bitmap == 0 {
-            panic!("Out of memory!")
+        if self.frame_stack_number == 0 {
+            panic!("Stack still empty!")
         }
-
-        let l2_index = nonzero_bit_index(l2_bitmap);
-
-        let l1_ptr = unsafe{(self.level_1_virt_addr.as_mut_ptr() as *mut u32)
-                            .offset(l2_index as isize)};
-        let mut l1_bitmap = unsafe{*l1_ptr};
-
-        if l1_bitmap == 0 {
-            panic!("Misleading L2 bit!")
-        }
-        let l1_index = nonzero_bit_index(l1_bitmap);
-        // Mark frame as used
-        l1_bitmap &= !(1 << l1_index);
-
-        // Take any other frames and put them on the stack
-        while l1_bitmap != 0 {
-            let indx = nonzero_bit_index(l1_bitmap);
-            let frame_number =
-                (l2_index as u64) * 32u64
-                + (indx as u64);
-            l1_bitmap ^= 1 << indx;
-            self.frame_stack[self.frame_stack_number] = frame_number;
-            self.frame_stack_number += 1;
-        }
-
-        let frame_number =
-            (l2_index as u64) * 32u64
-            + (l1_index as u64);
-
-        unsafe{*l1_ptr = 0}
-        // None left in this level 1 bitmap -> clear level 2 bit
-        unsafe{*l2_ptr &= !(1 << l2_index)};
-
-        frame_number
+        // Stack now contains frames
+        self.frame_stack_number -= 1;
+        self.frame_stack[self.frame_stack_number]
     }
 
     /// Put a frame back into the bitmap
