@@ -405,25 +405,59 @@ fn test_nonzero_bit_index() {
     assert_eq!(nonzero_bit_index(32), 5);
 }
 
+/// Calculate the number of bitmap levels needed
+///
+/// Bitmaps are in chunks of 32, so each level multiplies the maximum
+/// number of frames by 32.
+fn num_levels_needed(num_frames: u64) -> usize {
+    let mut max_frames = 32;
+    let mut levels = 1;
+
+    while num_frames > max_frames {
+        levels += 1;
+        max_frames *= 32;
+    }
+    levels
+}
+
+#[test_case]
+fn test_num_levels_needed() {
+    assert_eq!(num_levels_needed(1), 1);
+    assert_eq!(num_levels_needed(32), 1);
+    assert_eq!(num_levels_needed(33), 2);
+    assert_eq!(num_levels_needed(1024), 2);
+    assert_eq!(num_levels_needed(1025), 3);
+    assert_eq!(num_levels_needed(33554432), 5);
+}
+
+/// Maximum number of levels supported. The maximum number of frames
+/// is 32^levels, so 6 levels can keep track of 4Tb of 4k frames.
+const FRAME_ALLOCATOR_MAX_LEVELS: usize = 6;
+
+/// Size of the stack of available frames
+/// Note: Must be >= bitmap chunk size (32)
+const FRAME_ALLOCATOR_STACK_SIZE: usize = 32;
+
 /// An allocator which uses bitmaps to keep track of available frames
 ///
-/// 32 level-1 bitmaps, with one bit per frame
-/// 1  level-2 bitmap, one bit per level-1 bitmap
+/// At the lowest level one bit represents one frame (1 = available)
+/// Higher levels indicate whether chunks of 32 bits at level-1 have ANY
+/// non-zero bits. Multiple levels are used, until the top level has
+/// only a single chunk of up to 32 bits.
 ///
 pub struct MultilevelBitmapFrameAllocator {
     /// Virtual address of the first level 2 entry
-    /// Each entry is 32 bits long, one bit per level 1 entry
-    level_2_virt_addr: VirtAddr,
+    /// Each entry is 32 bits long, one bit per level-1 entry
+    bitmap_virt_addr: [VirtAddr; FRAME_ALLOCATOR_MAX_LEVELS],
 
-    /// Virtual address of the first level 1 entry
-    /// Each entry is 32 bits long, one bit per frame
-    level_1_virt_addr: VirtAddr,
+    /// Number of levels
+    nlevels: usize,
 
     /// Physical start address of the frames
     frame_phys_addr: PhysAddr,
 
-    /// Stack of up to 32 frames
-    frame_stack: [u64; 32],
+    /// Stack of up to FRAME_ALLOCATOR_STACK_SIZE frames
+    frame_stack: [u64; FRAME_ALLOCATOR_STACK_SIZE],
     frame_stack_number: usize,
 }
 
@@ -446,76 +480,137 @@ impl MultilevelBitmapFrameAllocator {
         let start_addr = region.range.start_addr();
         let end_addr = region.range.end_addr();
         let nframes = region.range.end_frame_number - region.range.start_frame_number;
+        let nlevels = num_levels_needed(nframes);
+
+        let mut bitmap_virt_addr = [VirtAddr::new(0); FRAME_ALLOCATOR_MAX_LEVELS];
+        let mut level_start_addr = start_addr;
+        let mut nbits = nframes; // Number of bits needed at each level
+        for level in 0..nlevels {
+            bitmap_virt_addr[level] = physical_memory_offset + level_start_addr;
+            let level_ptr = bitmap_virt_addr[level].as_mut_ptr() as *mut u32;
+
+            let num_full_chunks = nbits >> 5;
+            for i in 0..num_full_chunks {
+                *(level_ptr.offset(i as isize)) = 0xFFFF_FFFF;
+            }
+
+            // May need final part-filled chunk
+            let num_extra_bits = nbits & 31;
+            if num_extra_bits > 0 {
+                // Fill with ones, then shift to zero missing frames
+                // note: Missing frames correspond to high bits so shift right
+                *(level_ptr.offset(num_full_chunks as isize)) =
+                    0xFFFF_FFFF >> (32 - num_extra_bits);
+            }
+
+            // Total number of chunks i.e. bits at next level
+            nbits = num_full_chunks + if num_extra_bits > 0 {1} else {0};
+
+            // Start address of the next level
+            level_start_addr += nbits * 4u64;
+        }
+        // Number of bytes needed to store all bitmaps
+        let bitmap_size_bytes = level_start_addr - start_addr;
+        // Round up number of frames needed by adding 4095 and dividing by 4096
+        let bitmap_size_frames = (bitmap_size_bytes + 4095) >> 12;
 
         println!("Region: {:#016X} - {:#016X}", start_addr, end_addr);
-        println!("Number of frames: {}", nframes);
+        println!("Frames: {} Levels: {} Reserved frames: {}",
+                 nframes, nlevels, bitmap_size_frames);
 
-        // Use the first frame for bitmaps
-        let level_2_virt_addr = physical_memory_offset + start_addr;
-        let level_1_virt_addr = level_2_virt_addr + 4u64;
+        // Mark frames where bitmaps are stored as used
+        // - Clear low bits in bitmaps corresponding to the used frames
+        // - May need to clear multiple chunks and levels if the
+        //   bitmap fills more than one chunk (32 frames).
+        let mut nbits = bitmap_size_frames; // Number of bits to clear
+        for level in 0..nlevels {
+            let ptr = bitmap_virt_addr[level].as_mut_ptr() as *mut u32;
 
-        // Set level 2 page table values
-        let level_2_ptr = level_2_virt_addr.as_mut_ptr() as *mut u32;
-        *level_2_ptr = 0xFFFF_FFFF; // All have some frames
+            let num_full_chunks = nbits >> 5;
+            for i in 0..num_full_chunks {
+                *(ptr.offset(i as isize)) = 0; // Clear
+            }
 
-        // Set level 1 page table values
-        let level_1_ptr = level_1_virt_addr.as_mut_ptr() as *mut u32;
-        *level_1_ptr = 0xFFFF_FFFE; // Clear first bit
-        for i in 1..32 {
-            *(level_1_ptr.offset(i)) = 0xFFFF_FFFF;
+            // May need to clear part of a chunk
+            // Note: Clearing low bits so shift left
+            let num_extra_bits = nbits & 31;
+            if num_extra_bits > 0 {
+                *(ptr.offset(num_full_chunks as isize)) =
+                    (0xFFFF_FFFF << num_extra_bits) & 0xFFFF_FFFF;
+            }
+
+            if num_full_chunks == 0 {
+                break; // Don't need to clear higher bitmaps
+            }
+            nbits = num_full_chunks; // Clear these bits at higher level
         }
 
         MultilevelBitmapFrameAllocator {
-            level_2_virt_addr,
-            level_1_virt_addr,
+            bitmap_virt_addr,
+            nlevels,
             frame_phys_addr: PhysAddr::new(start_addr),
-            frame_stack: [0; 32],
+            frame_stack: [0; FRAME_ALLOCATOR_STACK_SIZE],
             frame_stack_number: 0
         }
     }
 
-    /// Allocate a frane, returning the frame number in this
+    /// Allocate a frame, returning the frame number in this
     /// allocation region.
-    fn fetch_frame(&mut self) -> u64 {
+    fn fetch_frame(&mut self) -> Option<u64> {
         if self.frame_stack_number == 0 {
             // Empty stack => Find more frames
 
-            let l2_ptr = self.level_2_virt_addr.as_mut_ptr() as *mut u32;
-            let l2_bitmap = unsafe{*l2_ptr};
-
-            if l2_bitmap == 0 {
-                panic!("Out of memory!")
+            let mut chunk_number: u64 = 0;
+            for level in (1..self.nlevels).rev() {
+                let ptr = self.bitmap_virt_addr[level].as_ptr() as *const u32;
+                let bitmap = unsafe{*(ptr.offset(chunk_number as isize))};
+                if bitmap == 0 {
+                    return None; // Out of memory
+                }
+                chunk_number = chunk_number * 32
+                    + nonzero_bit_index(bitmap) as u64;
             }
 
-            let l2_index = nonzero_bit_index(l2_bitmap);
-
-            let l1_ptr = unsafe{(self.level_1_virt_addr.as_mut_ptr() as *mut u32)
-                                .offset(l2_index as isize)};
-            let mut l1_bitmap = unsafe{*l1_ptr};
+            // Get bitmap containing frame indices
+            let ptr = self.bitmap_virt_addr[0].as_mut_ptr() as *mut u32;
+            let mut bitmap = unsafe{*(ptr.offset(chunk_number as isize))};
 
             // Take all frames and put them on the stack
-            while l1_bitmap != 0 {
-                let l1_index = nonzero_bit_index(l1_bitmap);
-                let frame_number =
-                    (l2_index as u64) * 32u64 +
-                    (l1_index as u64);
-                l1_bitmap ^= 1 << l1_index;
+            while bitmap != 0 {
+                let index = nonzero_bit_index(bitmap);
+                let frame_number = chunk_number * 32 + index as u64;
+                bitmap ^= 1 << index;
                 self.frame_stack[self.frame_stack_number] = frame_number;
                 self.frame_stack_number += 1;
             }
+            unsafe{*ptr = 0} // Chunk now empty
 
-            unsafe{*l1_ptr = 0}
-            // None left in this level 1 bitmap -> clear level 2 bit
-            unsafe{*l2_ptr &= !(1 << l2_index)};
+            // Clear higher bitmaps if the chunk is empty
+            for level in 1..self.nlevels {
+                let ptr = unsafe{(self.bitmap_virt_addr[level].as_mut_ptr() as *mut u32)
+                                 .offset(chunk_number as isize)};
+                let mut bitmap = unsafe{*ptr};
+                let index = chunk_number & 31; // Low bits are the index
 
+                bitmap &= !(1 << index); // clear bit
+                unsafe{*ptr = bitmap};
+
+                if bitmap != 0 {
+                    // This chunk still has frames => stop clearing
+                    break;
+                }
+
+                // Divide by 32 to get chunk number of higher level
+                chunk_number = chunk_number >> 5;
+            }
         }
 
         if self.frame_stack_number == 0 {
-            panic!("Stack still empty!")
+            panic!("Stack still empty!") // bug!
         }
         // Stack now contains frames
         self.frame_stack_number -= 1;
-        self.frame_stack[self.frame_stack_number]
+        Some(self.frame_stack[self.frame_stack_number])
     }
 
     /// Put a frame back into the bitmap
@@ -523,22 +618,30 @@ impl MultilevelBitmapFrameAllocator {
     /// Input is the frame number returned by fetch_frame, not
     /// a physical address
     fn return_frame(&mut self, frame_number: u64) {
-        if self.frame_stack_number < 32 {
+        if self.frame_stack_number < FRAME_ALLOCATOR_STACK_SIZE {
             self.frame_stack[self.frame_stack_number] = frame_number;
             self.frame_stack_number += 1;
             return;
         }
+
         // Calculate indices
-        let l1_index = frame_number % 32;
-        let l2_index = frame_number >> 5;
+        let mut chunk_number = frame_number;
+        for level in 0..self.nlevels {
+            let ptr = unsafe{(self.bitmap_virt_addr[level].as_mut_ptr() as *mut u32)
+                             .offset(chunk_number as isize)};
+            let bitmap_was_empty = unsafe{*ptr} == 0;
+            let index = chunk_number & 31; // Low 5 bits are the index
 
-        let l1_ptr = unsafe{(self.level_1_virt_addr.as_mut_ptr() as *mut u32)
-                            .offset(l2_index as isize)};
-        unsafe{*l1_ptr |= 1 << l1_index;}
+            // Set bit
+            unsafe{*ptr |= 1 << index;}
 
-        // set level 2 bit
-        let l2_ptr = self.level_2_virt_addr.as_mut_ptr() as *mut u32;
-        unsafe{*l2_ptr |= 1 << l2_index};
+            if !bitmap_was_empty {
+                // No need to change higher bitmaps
+                break;
+            }
+            // Divide by 32 to get chunk number of higher level
+            chunk_number = chunk_number >> 5;
+        }
     }
 
     fn deallocate_frame(&mut self, frame: PhysFrame) {
@@ -549,11 +652,12 @@ impl MultilevelBitmapFrameAllocator {
 
 unsafe impl FrameAllocator<Size4KiB> for MultilevelBitmapFrameAllocator {
     fn allocate_frame(&mut self) -> Option<PhysFrame> {
-        let frame_number = self.fetch_frame();
-
-        // Convert from frame number to physical address
-        PhysFrame::from_start_address(
-            self.frame_phys_addr + frame_number * 4096).ok()
+        if let Some(frame_number) = self.fetch_frame() {
+            // Convert from frame number to physical address
+            return PhysFrame::from_start_address(
+                self.frame_phys_addr + frame_number * 4096).ok();
+        }
+        None
     }
 }
 
@@ -603,7 +707,7 @@ pub fn tryout() {
 
     for i in 0..10 {
         // Allocate frames
-        let frames = [0; N].map(|_| alloc.fetch_frame());
+        let frames = [0; N].map(|_| alloc.fetch_frame().unwrap());
         // Free them all again
         for f in frames {
             alloc.return_frame(f);
