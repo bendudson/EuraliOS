@@ -61,7 +61,18 @@ pub fn unique_id() -> u64 {
 
 /// Per-process state
 struct Process {
+    /// Page table physical address
+    page_table_physaddr: u64
+}
 
+impl Drop for Process {
+    fn drop(&mut self) {
+        // Check if the page table is currently active
+        if self.page_table_physaddr == memory::active_pagetable_physaddr() {
+            memory::switch_to_kernel_pagetable();
+        }
+        memory::free_user_pagetables(self.page_table_physaddr);
+    }
 }
 
 /// Per-thread state
@@ -129,6 +140,13 @@ TID: {}, rip: {:#016X}
     }
 }
 
+impl Drop for Thread {
+    fn drop(&mut self) {
+        memory::free_user_stack(
+            VirtAddr::new(self.user_stack_end));
+    }
+}
+
 /// Start a new kernel thread, by adding it to the process table.
 /// This won't run immediately, but will run when the scheduler
 /// next switches to it.
@@ -157,7 +175,9 @@ pub fn new_kernel_thread(function: fn()->()) -> u64 {
 
         Box::new(Thread {
             tid: unique_id(),
-            process: Arc::new(Process {}),
+            process: Arc::new(Process {
+                page_table_physaddr: 0
+            }),
             page_table_physaddr: 0, // Don't need to switch PT
             kernel_stack,
             // Note that stacks move backwards, so SP points to the end
@@ -301,7 +321,9 @@ pub fn new_user_thread(bin: &[u8]) -> Result<u64, &'static str> {
                 Box::new(Thread {
                     tid: unique_id(),
                     // Create a new process
-                    process: Arc::new(Process {}),
+                    process: Arc::new(Process {
+                        page_table_physaddr: user_page_table_physaddr
+                    }),
                     page_table_physaddr: user_page_table_physaddr,
                     kernel_stack: kernel_stack,
                     // Note that stacks move backwards, so SP points to the end
@@ -393,18 +415,16 @@ pub fn fork_current_thread(current_context: &mut Context) {
     }
 }
 
+/// This function is called via syscall (and maybe other mechanism)
+/// to remove the current thread.
 pub fn exit_current_thread(current_context: &mut Context) {
-    // Remove current thread
     {
         let mut current_thread = CURRENT_THREAD.write();
 
         if let Some(thread) = current_thread.take() {
-            // Free user stack pages
-
-            // If this is the last thread in this process, free shared
-            // memory and page tables
-
-            // Drop thread, free kernel stack
+            // Drop thread, freeing stacks. If this is the last thread
+            // in this process, memory and page tables will be freed
+            // in the Process drop() function
         }
     }
     // Can't return from this syscall, so this thread now waits for a

@@ -121,7 +121,8 @@ pub unsafe extern "sysv64" fn _start() -> ! {
         }
     }
     println!("{}", arr[10]);
-    loop {
-        // Note: hlt is a privileged instruction
-    }
+
+    asm!("mov rax, 1", // exit_current_thread syscall
+         "syscall");
+    loop{}
 }

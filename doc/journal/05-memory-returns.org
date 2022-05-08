@@ -502,37 +502,50 @@ which shows that an error occurred due to user mode code trying
 to write to address 0x28000016ff8 which is in the thread stack
 range but below the one page which has write permissions.
 
-To fix this we can define a function in =memory.rs= to add the missing
-frame:
+To fix this we can define a function in =memory.rs= to find the
+level 1 page table from an address:
 #+begin_src rust
-pub fn allocate_missing_stack_frame(
+fn active_level_1_table_containing(
     addr: VirtAddr
-) -> Result<(), &'static str> {
+) -> &'static mut PageTable {
     let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
-    
     let mut table = unsafe{&mut (*active_pagetable_ptr())};
+
     for index in [addr.p4_index(),
                   addr.p3_index(),
-                  addr.p2_index()] {        
+                  addr.p2_index()] {
+
         let entry = &mut table[index];
         table = unsafe {&mut *(memory_info.physical_memory_offset
                                + entry.addr().as_u64()).as_mut_ptr()};
     }
-    let entry = &mut table[addr.p1_index()];
-    if entry.flags() != (PageTableFlags::PRESENT |
-                         PageTableFlags::USER_ACCESSIBLE) {
-        return Err("Error: Unexpected table flags");
-    }
-
-    let frame = memory_info.frame_allocator.allocate_frame()
-        .ok_or("Could not allocate frame")?;
-
-    entry.set_addr(frame.start_address(),
-                   PageTableFlags::PRESENT |
-                   PageTableFlags::WRITABLE | 
-                   PageTableFlags::USER_ACCESSIBLE);
-    Ok(())
+    table
 }
+#+end_src
+
+and use it to add the missing frame:
+#+begin_src rust
+  pub fn allocate_missing_stack_frame(
+      addr: VirtAddr
+  ) -> Result<(), &'static str> {
+      let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+
+      let table = active_level_1_table_containing(addr);
+      let entry = &mut table[addr.p1_index()];
+      if entry.flags() != (PageTableFlags::PRESENT |
+                           PageTableFlags::USER_ACCESSIBLE) {
+          return Err("Error: Unexpected table flags");
+      }
+
+      let frame = memory_info.frame_allocator.allocate_frame()
+          .ok_or("Could not allocate frame")?;
+
+      entry.set_addr(frame.start_address(),
+                     PageTableFlags::PRESENT |
+                     PageTableFlags::WRITABLE |
+                     PageTableFlags::USER_ACCESSIBLE);
+      Ok(())
+  }
 #+end_src
 and then in =interrupt.rs= the page fault handler can call this
 function:
@@ -569,14 +582,126 @@ instruction that caused the page fault. The instruction tries again,
 this time succeeding because the page table entry now points to a
 writable frame.
 
-** Freeing user memory
+** Freeing thread stacks
 
-When a thread exits we need to be able to free its stack, and when all
-threads in a process are finished we need to free all frames used by
-that process.
+When a thread exits we need to be able to free its stack. In
+=memory.rs= define a new function, reusing the
+=active_level_1_table_containing= function:
+#+begin_src rust
+  pub fn free_user_stack(
+      stack_end: VirtAddr
+  ) -> Result<(), &'static str> {
+      let addr = stack_end - 1u64; // Address in last page
+      let table = active_level_1_table_containing(addr);
 
-** User process memory management
+      let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
 
-** Thread closures
+      let iend = usize::from(addr.p1_index());
+      for index in ((iend - 6)..=iend).rev() {
+          let entry = &mut table[index];
 
-   
+          // Only writable pages have unique frames
+          if entry.flags().contains(PageTableFlags::WRITABLE) {
+              // Free this frame
+              memory_info.frame_allocator.deallocate_frame(
+                  entry.frame().unwrap());
+          }
+          entry.set_flags(PageTableFlags::empty());
+      }
+
+      Ok(())
+  }
+#+end_src
+
+Then in =process.rs= we can implement a =drop= function for Thread,
+to free the user stack frames:
+#+begin_src rust
+  impl Drop for Thread {
+      fn drop(&mut self) {
+          memory::free_user_stack(
+              VirtAddr::new(self.user_stack_end));
+      }
+  }
+#+end_src
+
+** Freeing user pages
+
+When all threads in a process are finished we need to free all frames
+used by that process. To do that we need to keep track of the shared
+state.  For now that means the page table but later threads will share
+other resources like file handles or environment variables. Threads
+might be created and destroyed while the program is running, but as
+long as one thread is still running we want the process to stay
+around. To do that we'll use Rust's [[https://doc.rust-lang.org/beta/alloc/sync/struct.Arc.html][Arc]] thread-safe reference counting
+pointer to hold the Process, shared between Threads.  We can't use the
+faster [[https://doc.rust-lang.org/alloc/rc/struct.Rc.html][Rc]] reference counting pointer in this case because it can't
+safely be copied between threads.
+
+In =process.rs= define a =Process= struct, for now storing only the
+physical address of the level 4 page table:
+#+begin_src rust
+struct Process {
+    /// Page table physical address
+    page_table_physaddr: u64
+}
+#+end_src
+
+then add a reference counted pointer to the =Thread= struct:
+#+begin_src rust
+  use alloc::sync::Arc;
+
+  struct Thread {
+    tid: u64,
+    process: Arc<Process>, // new
+    ...
+  }
+#+end_src
+
+In =new_user_thread= we initialise this:
+#+begin_src rust
+  Box::new(Thread {
+      tid: unique_id(),
+      process: Arc::new(Process {
+          page_table_physaddr: user_page_table_physaddr
+      }), // new
+    ...
+  }
+#+end_src
+and in =new_kernel_thread=:
+#+begin_src rust
+  Box::new(Thread {
+      tid: unique_id(),
+      process: Arc::new(Process {
+          page_table_physaddr: 0
+      }),
+      ...
+  }
+#+end_src
+
+We can now implement a =drop= method for =Process=, to free user
+frames. First test this by just printing a message:
+#+begin_src rust
+impl Drop for Process {
+    fn drop(&mut self) {
+        println!("Dropping Process");
+    }
+}
+#+end_src
+and modify the =hello.rs= user program so that all threads exit.
+At the end of =_start()=, replace the infinite loop with an
+exit syscall:
+#+begin_src rust
+  #[no_mangle]
+  pub unsafe extern "sysv64" fn _start() -> ! {
+      ...
+      asm!("mov rax, 1", // exit_current_thread syscall
+           "syscall");
+      loop{} // Still needed for ! return
+  }
+#+end_src
+Note that the compiler doesn't know that the syscall will never
+return, so we still need a loop at the end of the function.
+
+Running this you should now see the "Dropping Process" message.
+
+

@@ -187,6 +187,13 @@ pub fn switch_to_pagetable(physaddr: u64) {
     }
 }
 
+pub fn switch_to_kernel_pagetable() {
+    let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+    let phys_addr = (memory_info.kernel_l4_table as *mut PageTable as u64)
+        - memory_info.physical_memory_offset.as_u64();
+    switch_to_pagetable(phys_addr);
+}
+
 pub fn active_pagetable_physaddr() -> u64 {
     let mut physaddr: u64;
     unsafe {
@@ -281,6 +288,53 @@ pub fn allocate_active_pages(
 
 ///////////////////////////////////////////////////////////////////////
 
+/// Free all user-accessible pages and the page table frames
+///
+/// Note: Must not be called to free the current page tables
+///       Switch to kernel pagetable before calling
+pub fn free_user_pagetables(level_4_physaddr: u64) {
+    println!("Freeing pagetable");
+
+    let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+
+    fn free_pages_rec(physical_memory_offset: VirtAddr,
+                      frame_allocator: &mut MultilevelBitmapFrameAllocator,
+                      table_physaddr: PhysAddr,
+                      level: u16) {
+        let table = unsafe{&mut *(physical_memory_offset
+                                  + table_physaddr.as_u64())
+                           .as_mut_ptr() as &mut PageTable};
+        for entry in table.iter() {
+            if !entry.is_unused() {
+                if (level == 1) || entry.flags().contains(PageTableFlags::HUGE_PAGE) {
+                    // Maps a frame, not a page table
+                    if entry.flags().contains(PageTableFlags::USER_ACCESSIBLE) {
+                        // A user frame => deallocate
+                        frame_allocator.deallocate_frame(
+                            entry.frame().unwrap());
+                    }
+                } else {
+                    // A page table
+                    free_pages_rec(physical_memory_offset,
+                                   frame_allocator,
+                                   entry.addr(),
+                                   level - 1);
+                }
+            }
+        }
+        // Free page table
+        frame_allocator.deallocate_frame(
+            PhysFrame::from_start_address(table_physaddr).unwrap());
+    }
+
+    free_pages_rec(memory_info.physical_memory_offset,
+                   &mut memory_info.frame_allocator,
+                   PhysAddr::new(level_4_physaddr),
+                   4);
+}
+
+///////////////////////////////////////////////////////////////////////
+
 /// Allocate memory for a thread's user stack
 ///
 /// Uses 8 pages per thread: 7 for user stack, one guard page
@@ -365,12 +419,12 @@ pub fn allocate_user_stack(
     Err("All thread stack slots full")
 }
 
-pub fn allocate_missing_stack_frame(
+fn active_level_1_table_containing(
     addr: VirtAddr
-) -> Result<(), &'static str> {
+) -> &'static mut PageTable {
     let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
-
     let mut table = unsafe{&mut (*active_pagetable_ptr())};
+
     for index in [addr.p4_index(),
                   addr.p3_index(),
                   addr.p2_index()] {
@@ -379,7 +433,14 @@ pub fn allocate_missing_stack_frame(
         table = unsafe {&mut *(memory_info.physical_memory_offset
                                + entry.addr().as_u64()).as_mut_ptr()};
     }
-    // `table` is now the level 1 pagetable
+    table
+}
+
+pub fn allocate_missing_stack_frame(
+    addr: VirtAddr
+) -> Result<(), &'static str> {
+
+    let table = active_level_1_table_containing(addr);
     let entry = &mut table[addr.p1_index()];
 
     if entry.flags() != (PageTableFlags::PRESENT |
@@ -388,6 +449,7 @@ pub fn allocate_missing_stack_frame(
     }
 
     // Get a new frame and update page table
+    let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
     let frame = memory_info.frame_allocator.allocate_frame()
         .ok_or("Could not allocate frame")?;
 
@@ -395,6 +457,30 @@ pub fn allocate_missing_stack_frame(
                    PageTableFlags::PRESENT |
                    PageTableFlags::WRITABLE |
                    PageTableFlags::USER_ACCESSIBLE);
+    Ok(())
+}
+
+/// Free frames used for a thread stack
+/// given virtual address
+pub fn free_user_stack(
+    stack_end: VirtAddr
+) -> Result<(), &'static str> {
+    let addr = stack_end - 1u64; // Address in last page
+    let table = active_level_1_table_containing(addr);
+
+    let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+
+    let iend = usize::from(addr.p1_index());
+    for index in ((iend - 6)..=iend).rev() {
+        let entry = &mut table[index];
+        if entry.flags().contains(PageTableFlags::WRITABLE) {
+            // Free this frame
+            memory_info.frame_allocator.deallocate_frame(
+                entry.frame().unwrap());
+        }
+        entry.set_flags(PageTableFlags::empty());
+    }
+
     Ok(())
 }
 
