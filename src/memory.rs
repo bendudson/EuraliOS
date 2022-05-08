@@ -326,22 +326,29 @@ pub fn allocate_user_stack(
         if table[n * 8 + 1].is_unused() {
             // Found an empty slot:
             //  [n * 8] -> Empty (guard)
-            //  [n * 8 + 1] -> User stack
+            //  [n * 8 + 1] -> User stack (read-only)
             //      ...
-            //  [n * 8 + 7] -> User stack
+            //  [n * 8 + 7] -> User stack (writable)
 
-            for j in 1..8 {
-                // Allocate user stack frames
-                let entry = &mut table[n * 8 + j];
-
-                let frame = memory_info.frame_allocator.allocate_frame()
+            // Note: Only one frame is going to be allocated, and the rest
+            //       are going to be read-only references to the same frame.
+            //       When a thread tries to write to them a page fault will
+            //       be triggered and the frame allocated.
+            let frame = memory_info.frame_allocator.allocate_frame()
                     .ok_or("Failed to allocate frame")?;
 
+            for j in 1..7 {
+                // These pages are read-only
+                let entry = &mut table[n * 8 + j];
                 entry.set_addr(frame.start_address(),
                                PageTableFlags::PRESENT |
-                               PageTableFlags::WRITABLE |
                                PageTableFlags::USER_ACCESSIBLE);
             }
+            let entry = &mut table[n * 8 + 7];
+            entry.set_addr(frame.start_address(),
+                           PageTableFlags::PRESENT |
+                           PageTableFlags::WRITABLE | // Note!
+                           PageTableFlags::USER_ACCESSIBLE);
 
             // Return the virtual addresses of the top of the kernel and user stacks
             let slot_address: u64 =
@@ -356,6 +363,39 @@ pub fn allocate_user_stack(
     }
 
     Err("All thread stack slots full")
+}
+
+pub fn allocate_missing_stack_frame(
+    addr: VirtAddr
+) -> Result<(), &'static str> {
+    let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+
+    let mut table = unsafe{&mut (*active_pagetable_ptr())};
+    for index in [addr.p4_index(),
+                  addr.p3_index(),
+                  addr.p2_index()] {
+
+        let entry = &mut table[index];
+        table = unsafe {&mut *(memory_info.physical_memory_offset
+                               + entry.addr().as_u64()).as_mut_ptr()};
+    }
+    // `table` is now the level 1 pagetable
+    let entry = &mut table[addr.p1_index()];
+
+    if entry.flags() != (PageTableFlags::PRESENT |
+                         PageTableFlags::USER_ACCESSIBLE) {
+        return Err("Error: Unexpected table flags");
+    }
+
+    // Get a new frame and update page table
+    let frame = memory_info.frame_allocator.allocate_frame()
+        .ok_or("Could not allocate frame")?;
+
+    entry.set_addr(frame.start_address(),
+                   PageTableFlags::PRESENT |
+                   PageTableFlags::WRITABLE |
+                   PageTableFlags::USER_ACCESSIBLE);
+    Ok(())
 }
 
 ///////////////////////////////////////////////////////////////////////

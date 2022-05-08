@@ -110,6 +110,8 @@ extern "C" fn test() {
 pub unsafe extern "sysv64" fn _start() -> ! {
     println!("Hello from user world! {}", 42);
 
+    let arr = [0; 1000];
+
     let tid = thread_spawn(test).unwrap();
 
     for i in 1..10 {
@@ -118,7 +120,7 @@ pub unsafe extern "sysv64" fn _start() -> ! {
             unsafe { asm!("nop");}
         }
     }
-
+    println!("{}", arr[10]);
     loop {
         // Note: hlt is a privileged instruction
     }

@@ -318,6 +318,15 @@ A user stack underflow accesses the unused guard page in the next set
 of thread pages, so this should hopefully prevent some hard-to-find bugs
 which would occur if threads started writing over each other's stacks.
 
+Note that these stacks are quite small: 7 pages is 28k. Linux allocates
+two pages per thread for [[https://www.kernel.org/doc/html/latest/x86/kernel-stacks.html][kernel stacks]], but 8Mb for user stacks. The user
+stack size can be found by running
+#+begin_src sh
+       $ ulimit -s
+#+end_src
+which gives the user stack size in kb. We'll have to find a different
+solution later if larger user stacks are needed.
+
 We can choose an arbitrary page table, for example =(5,0,0,*,*)= which
 maps virtual memory addresses 0x28000000000 to 0x28000200000. We can store
 this choice in a set of indices in =memory.rs=:

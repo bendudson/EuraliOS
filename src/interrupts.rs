@@ -8,6 +8,7 @@ use crate::println;
 use crate::gdt;
 use crate::print;
 use crate::process;
+use crate::memory;
 
 lazy_static! {
     static ref IDT: InterruptDescriptorTable = {
@@ -214,12 +215,26 @@ extern "x86-interrupt" fn page_fault_handler(
     error_code: PageFaultErrorCode,
 ) {
     use x86_64::registers::control::Cr2;
+    let accessed_virtaddr = Cr2::read();
 
-    println!("EXCEPTION: PAGE FAULT");
-    println!("Accessed Address: {:?}", Cr2::read());
-    println!("Error Code: {:?}", error_code);
-    println!("{:#?}", stack_frame);
-    hlt_loop();
+    if error_code == (PageFaultErrorCode::PROTECTION_VIOLATION |
+                      PageFaultErrorCode::CAUSED_BY_WRITE |
+                      PageFaultErrorCode::USER_MODE) {
+        // User code tried to access a read-only page
+        // Probably a missing stack frame
+
+        if let Err(msg) = memory::allocate_missing_stack_frame(accessed_virtaddr) {
+            println!("Page fault error: {}", msg);
+            hlt_loop();
+        }
+    } else {
+        println!("EXCEPTION: PAGE FAULT");
+        println!("Accessed Address: {:?}", accessed_virtaddr);
+        println!("Error Code: {:?}", error_code);
+        println!("{:#?}", stack_frame);
+
+        hlt_loop();
+    }
 }
 
 extern "x86-interrupt" fn general_protection_fault_handler(

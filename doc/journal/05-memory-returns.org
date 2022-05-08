@@ -1,0 +1,582 @@
+* Memory returns
+
+In this section we're going to go back and improve memory
+management. The current frame allocator has no way to return frames,
+so eventually all the frames will be used. We need to be able to free
+frames when programs exit, to make them available to other programs.
+We'll look at some optimisation strategies, and how to use the [[https://www.felixcloutier.com/x86/rdtsc][RDTSC]]
+instruction to perform timing.
+
+** Frame allocation
+
+The current frame allocator is a "watermark allocator" (described
+[[https://wiki.osdev.org/Memory_Allocation][here]]) that just allocates frames but never frees them. Now we're going
+to implement an allocator which can free frames too.
+
+There are many variations on [[https://wiki.osdev.org/Page_Frame_Allocation][page frame allocation]], with trade-offs in
+performance so that the best solution depends on the workload. Some desirable
+features of an allocator appear to be:
+- Fast allocation of single frames, as programs' memory use gradually grows.
+- Fast deallocation of lots of frames, mostly not contiguous, e.g when
+  programs exit.
+- There are ISA / DMA applications which need memory in contiguous
+  blocks, and may have other constraints like not crossing 64k
+  boundaries.
+- A nice to have is the ability to allocate huge pages (e.g 2Mb pages), though
+  fragmentation makes this increasingly difficult as a system runs.
+
+For now we will try a multi-level bitmap approach, keeping track of
+frame availability in a tree structure.
+
+- A level-1 bitmap with one bit per frame, in 32-bit chunks
+- A level 2 bitmap with one bit per 32 bits of level-1 bitmap.
+  A '1' bit means one or more frames are available in the corresponding
+  level-1 chunk.
+
+If we use 32 bits for the level-2 bitmap, then we can keep track of 32
+x 32 = 1024 frames, or 4Mb. Later we'll generalise this to more than
+two levels, and the number of levels needed will increase as the log
+(base 32) of the total number of frames.
+
+Finding an available frame means quickly finding a '1' bit somewhere
+in this bitmap.  To scan bitmaps efficiently we can use the [[https://www.felixcloutier.com/x86/bsf][Bit Scan
+Forward]] instruction, which on modern hardware finds the first non-zero
+bit in a 16, 32 or 64-bit register in a constant (small) number of
+clock cycles. Let's wrap this into a function:
+#+begin_src rust
+fn nonzero_bit_index(bitmap: u32) -> u32 {
+    let index: u32;
+    unsafe {
+        asm!("bsf eax, ecx",
+             in("ecx") bitmap,
+             lateout("eax") index,
+             options(pure, nomem, nostack));
+    }
+    index
+}
+#+end_src
+
+To find available frames we need the virtual addresses of the level-2
+and level-1 bitmaps; To translate the frame number into an address we
+need the physical address of the first frame:
+#+begin_src rust
+  pub struct MultilevelBitmapFrameAllocator {
+      level_2_virt_addr: VirtAddr,
+      level_1_virt_addr: VirtAddr,
+      frame_phys_addr: PhysAddr,
+  }
+#+end_src
+
+To initialise the new allocator we can adapt the code from the current
+frame allocator, which first finds a usable region, its start and end
+address:
+#+begin_src rust
+  impl MultilevelBitmapFrameAllocator {
+      pub unsafe fn init(memory_map: &'static MemoryMap,
+                         physical_memory_offset: VirtAddr) -> Self {
+        let mut usable_regions = memory_map
+            .iter()
+            .filter(|r| r.region_type == MemoryRegionType::Usable);
+
+        _ = usable_regions.next(); // Skip first region
+        let region = usable_regions.next().unwrap(); // Second region
+        let start_addr = region.range.start_addr();
+        let end_addr = region.range.end_addr();
+        ...
+#+end_src
+
+Note that the way that the memory is laid out in my tests means that
+the majority of the available memory is in a second region.
+
+Next we can create some pointers to bitmaps that we're going to store
+in the first frame:
+#+begin_src rust
+  let level_2_virt_addr = physical_memory_offset + start_addr;
+  let level_1_virt_addr = level_2_virt_addr + 4u64;
+
+  let level_2_ptr = level_2_virt_addr.as_mut_ptr() as *mut u32;
+  let level_1_ptr = level_1_virt_addr.as_mut_ptr() as *mut u32;
+#+end_src
+Now we set the bitmap values. All frames are available except
+the first one, which we're using to store the bitmaps. The 32 bits
+of level 2 should therefore all be 1:
+#+begin_src rust
+  *level_2_ptr = 0xFFFF_FFFF;
+#+end_src
+and the first level-1 bitmap chunk should have just the first bit
+cleared:
+#+begin_src rust
+  *level_1_ptr = 0xFFFF_FFFE;
+#+end_src
+All the other level-1 bitmaps should be marked available:
+#+begin_src rust
+  for i in 1..32 {
+      *(level_1_ptr.offset(i)) = 0xFFFF_FFFF;
+  }
+#+end_src
+Finally we store values in the struct:
+#+begin_src rust
+  MultilevelBitmapFrameAllocator {
+      level_2_virt_addr,
+      level_1_virt_addr,
+      frame_phys_addr: PhysAddr::new(start_addr),
+  }
+#+end_src
+
+To find a frame we can define a method =fetch_frame=:
+#+begin_src rust
+  impl MultilevelBitmapFrameAllocator {
+      fn fetch_frame(&mut self) -> u64 {
+        ...
+      }
+  }
+#+end_src
+In this function we first get the level 2 bitmap, and find a non-zero
+bit:
+#+begin_src rust
+  let l2_ptr = self.level_2_virt_addr.as_mut_ptr() as *mut u32;
+  let mut l2_bitmap = unsafe{*l2_ptr};
+  let l2_index = nonzero_bit_index(l2_bitmap);
+#+end_src
+and then use this index to get the level 1 bitmap and find a non-zero
+bit:
+#+begin_src rust
+  let l1_ptr = unsafe{(self.level_1_virt_addr.as_mut_ptr() as *mut u32)
+                      .offset(l2_index as isize)};
+  let mut l1_bitmap = unsafe{*l1_ptr};
+  let l1_index = nonzero_bit_index(self.cache);
+#+end_src
+The frame number is a combination of these indices, giving the index
+of the non-zero bit:
+#+begin_src rust
+  let frame_number =
+      (l2_index as u64) * 32u64
+      + (l1_index as u64);
+#+end_src
+
+We then need to mark this frame as used, by modifying the level 1 bitmap:
+#+begin_src rust
+  l1_bitmap ^= 1 << l1_index;
+  unsafe{*l1_ptr = l1_bitmap;}
+#+end_src
+If this level 1 chunk is now empty, clear the bit in the level 2 bitmap:
+#+begin_src rust
+if l1_bitmap
+#+end_src
+
+** Optimisation: Timing
+
+Allocating and freeing memory is going to happen quite frequently, so
+its one of the areas that are probably worth optimising.  The problem
+is that the result is probably very dependent on the pattern of memory
+use. We can however try some things to see what happens, and learn how
+to time parts of the kernel.
+
+An easy way to get a high resolution counter is to use the [[https://www.felixcloutier.com/x86/rdtsc][RDTSC]]
+instruction (ReaD Time Stamp Counter). This reads a Model Specific
+Register containing a count of the number of clock ticks since the CPU
+was reset. It's a 64-bit counter, but the 32 high bits are put into
+EDX, and the low 32 bits into EAX registers. We can define a function
+to put these two pieces back together:
+#+begin_src rust
+  fn time_stamp_counter() -> u64 {
+      let counter: u64;
+      unsafe{
+          asm!("rdtsc",
+               "shl rdx, 32", // High bits in EDX
+               "mov edx, eax", // Low bits in EAX
+               out("rdx") counter,
+               out("rax") _, // Clobbers RAX
+               options(pure, nomem, nostack)
+          );
+      }
+      counter
+  }
+#+end_src
+
+With this we can try timing allocating frames and then freeing them again:
+#+begin_src rust
+  let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+  let mut alloc = &mut memory_info.frame_allocator;
+
+  const N: usize = 800;
+  let count1 = time_stamp_counter();
+
+  for i in 0..10 {
+      // Allocate frames
+      let frames = [0; N].map(|_| alloc.fetch_frame());
+      // Free them all again
+      for f in frames {
+          alloc.return_frame(f);
+      }
+  }
+  let count2 = time_stamp_counter();
+  println!("Clock ticks: {} M", (count2 - count1) / 1000000);
+#+end_src
+
+Allocating and freeing 800 frames 10 times over took between 56 and 62
+million clock cycles, or around 7500 cycles for each frame allocation
+and free.
+
+** Optimisation: Bitmap caches and stacks
+
+   Once we find a level-1 bitmap chunk (32 bits) with some non-zero
+bits (available frames), it's possible that there are more than one.
+Rather than have to look for it again, we can cache the chunk and start
+looking there next time.
+
+Adding the cache and the index of the level-1 bitmap to the
+=MultilevelBitmapFrameAllocator= struct:
+#+begin_src rust
+  cache: u32,
+  cache_index: u64,
+#+end_src
+and initialising to zero in =init=:
+#+begin_src rust
+  cache: 0,
+  cache_index: 0
+#+end_src
+
+Allocating and freeing 800 frames 10 times over took between 50 and 58
+million clock cycles, or about 7000 cycles for each frame allocation
+and free.
+
+** Optimisation 2: Frame stack
+
+   An alternative optimisation, which I think is probably better on balance, is to
+add a stack of frames as a cache. I think this is better than caching parts of the bitmap
+because the size of the stack can be changed independently of the bitmap layout, and it
+doesn't store the same piece of information (bitmap chunk) in two places.
+
+The idea is that when frames are free'd they can be put on a stack, so
+when a frame is requested it can just be taken directly from the
+stack. Hopefully this saves time looking for available frames, though
+it does add a little extra complexity.  The only time we'll now need
+to look for available frames in the bitmap is if the stack is
+empty. It therefore makes sense to make the stack at least as big as
+the number of bits in a bitmap chunk (32 frames): We can find a chunk
+with available frames, and move them all into the stack.
+
+Our MultilevelBitmapFrameAllocator struct becomes:
+#+begin_src rust
+pub struct MultilevelBitmapFrameAllocator {
+    level_2_virt_addr: VirtAddr,
+    level_1_virt_addr: VirtAddr,
+    frame_phys_addr: PhysAddr,
+    frame_stack: [u64; 32], // new
+    frame_stack_number: usize, // new
+}
+#+end_src
+which we initialise (at the end of =init()=) as
+#+begin_src rust
+  MultilevelBitmapFrameAllocator {
+      level_2_virt_addr,
+      level_1_virt_addr,
+      frame_phys_addr: PhysAddr::new(start_addr),
+      frame_stack: [0; 32],
+      frame_stack_number: 0
+  }
+#+end_src
+
+When we fetch a frame we now check if the stack is empty, in which
+case we find a bitmap chunk with some non-zero entries and fill the
+stack with them. Since the stack is definitely not empty (unless we're
+out of memory), take a frame from the stack and return it. Our
+=fetch_frame= function becomes:
+
+#+begin_src rust
+  fn fetch_frame(&mut self) -> Option<u64> {
+      if self.frame_stack_number == 0 {
+        // Find more frames
+        // Put frames onto stack
+      }
+      self.frame_stack_number -= 1; // Take a frame
+      Some(self.frame_stack[self.frame_stack_number])
+  }
+#+end_src
+Finding frames is the same as before: We get the level 2 bitmap,
+check that there are still available frames, and find the index
+of one of the non-empty level 1 chunks:
+#+begin_src rust
+  let l2_ptr = self.level_2_virt_addr.as_mut_ptr() as *mut u32;
+  let l2_bitmap = unsafe{*l2_ptr};
+  if l2_bitmap == 0 {
+      return None; // Out of memory
+  }
+  let l2_index = nonzero_bit_index(l2_bitmap);
+#+end_src
+Then get the level 1 chunk:
+#+begin_src rust
+  let l1_ptr = unsafe{(self.level_1_virt_addr.as_mut_ptr() as *mut u32)
+                      .offset(l2_index as isize)};
+  let mut l1_bitmap = unsafe{*l1_ptr};
+#+end_src
+
+Now rather than taking one frame, or putting this bitmap in cache, we
+find the available frames and put them all on the frame stack:
+#+begin_src rust
+  while l1_bitmap != 0 {
+      let l1_index = nonzero_bit_index(l1_bitmap);
+      let frame_number =
+          (l2_index as u64) * 32u64 +
+          (l1_index as u64);
+      l1_bitmap ^= 1 << l1_index;
+      self.frame_stack[self.frame_stack_number] = frame_number;
+      self.frame_stack_number += 1;
+  }
+#+end_src
+
+Returning a frame now also has two possibilities: If the stack isn't full
+then put the frame on the stack, otherwise put into the bitmap as before.
+#+begin_src rust
+  fn return_frame(&mut self, frame_number: u64) {
+      if self.frame_stack_number < FRAME_ALLOCATOR_STACK_SIZE {
+          self.frame_stack[self.frame_stack_number] = frame_number;
+          self.frame_stack_number += 1;
+          return;
+      }
+      // Put into bitmap
+  }
+#+end_src
+Allocating and freeing 800 frames 10 times over now took between 54
+and 59 million clock cycles, or between 7000 and 7500 cycles for each
+frame allocation and free.
+
+As a baseline for comparison, we can compare the time needed when
+all frames are on the stack and looking up bitmaps isn't needed.
+Changing =FRAME_ALLOCATOR_STACK_SIZE= to the same number of frames
+that are being allocated and freed (800) gives a timing of about
+6000-6500 cycles for each allocation and free.
+
+** Managing more memory
+
+To manage more than 4Mb of memory we can keep adding more levels, so
+we end up with a tree-like structure. We can work out how many levels
+we need: If we have 32 (or fewer) pages then one level is enough;
+32x32 (1024) pages fit in two levels, 32x32x32 (32768) fit in three,
+and so on. We can wrap this into a =num_levels_needed= function:
+#+begin_src rust
+fn num_levels_needed(num_frames: u64) -> usize {
+    let mut max_frames = 32;
+    let mut levels = 1;
+
+    while num_frames > max_frames {
+        levels += 1;
+        max_frames *= 32;
+    }
+    levels
+}
+#+end_src
+
+The =MultilevelBitmapFrameAllocator= now contains an array of bitmap
+addresses and stores the number of levels used:
+#+begin_src rust
+pub struct MultilevelBitmapFrameAllocator {
+    bitmap_virt_addr: [VirtAddr; FRAME_ALLOCATOR_MAX_LEVELS], // new
+    nlevels: usize, // new
+    frame_phys_addr: PhysAddr,
+    frame_stack: [u64; FRAME_ALLOCATOR_STACK_SIZE],
+    frame_stack_number: usize,
+}
+#+end_src
+The maximum number of frames is =32^levels=, so 6 levels can keep
+track of 4Tb of memory in 4k frames:
+#+begin_src rust
+const FRAME_ALLOCATOR_MAX_LEVELS: usize = 6;
+#+end_src
+
+*** Initialising
+
+
+
+*** Fetching a frame
+
+To get a frame from the allocator now looks like:
+#+begin_src rust
+  fn fetch_frame(&mut self) -> Option<u64> {
+      if self.frame_stack_number == 0 {
+          // Loop from highest to lowest level, following '1' bits
+
+          // Remove all frames from chunk and put on stack
+
+          // Loop from lowest to highest level, marking chunks as empty
+      }
+      // Take and return a frame from the stack
+  }
+#+end_src
+
+*** Returning a frame
+
+Putting a frame back into the allocator looks like:
+#+begin_src rust
+  fn return_frame(&mut self, frame_number: u64) {
+      if self.frame_stack_number < FRAME_ALLOCATOR_STACK_SIZE {
+        // Put frame onto stack and return
+      }
+
+      let mut chunk_number = frame_number;
+      for level in 0..self.nlevels {
+          // Set the bit `chunk_number` to 1
+
+          // If the chunk was not empty then we're done
+          // If it was empty then we need to set a bit at the next level
+
+          // Calculate chunk_number at next level
+      }
+  }
+#+end_src
+
+*** Timing results
+
+With 31589 frames (123 Mb) this frame allocator needs 3 levels, and
+takes about 8000-8500 cycles per allocation and free, compared to
+6000-6500 when frames are on the stack.
+
+** Optimisation: Allocate-on-Write tables
+
+The fastest frame allocation is one we don't do, so one way to
+optimise memory allocation (and so thread startup etc) is to only
+allocate frames when they are actually needed.
+
+Map multiple pages to one frame, and mark the unallocated entries read
+only. When a thread tries to write to one of those pages it will
+trigger a page fault.  At that point a frame can be allocated and the
+thread resumed.  This is used by Linux to implement copy-on-write
+e.g. during a fork(), to avoid copying pages it doesn't need to.
+
+When we create the stack for a new thread, we currently allocate 7
+frames (28kb memory). We can reduce this to just 4kb without affecting
+the user process, by only allocating one frame and then allocating more
+when they're needed. In =memory.rs= the =allocate_user_stack= function
+looks for an empty stack slot of 8 pages, leaves one of them empty as
+a guard page to catch stack overflows, and allocates frames for the
+other 7. 
+
+
+To test our stack allocation we can modify our user program,
+=hello.rs=, changing =_start= so that it tries to write a large array
+to the stack:
+#+begin_src rust
+#[no_mangle]
+pub unsafe extern "sysv64" fn _start() -> ! {
+    let arr = [0; 1000];
+    println!("{}", arr[10]);
+    loop {}
+}
+#+end_src
+(note that we have to use the array or the compiler removes it).
+
+In =memory.rs= the =allocate_user_stack= function can now be changed to allocate
+only one frame:
+#+begin_src rust
+  if table[n * 8 + 1].is_unused() {
+      let frame = memory_info.frame_allocator.allocate_frame()
+          .ok_or("Failed to allocate frame")?;
+
+      for j in 1..7 {
+          // These pages are read-only
+          let entry = &mut table[n * 8 + j];
+          entry.set_addr(frame.start_address(),
+                         PageTableFlags::PRESENT |
+                               PageTableFlags::USER_ACCESSIBLE);
+      }
+      let entry = &mut table[n * 8 + 7];
+      entry.set_addr(frame.start_address(),
+                     PageTableFlags::PRESENT |
+                     PageTableFlags::WRITABLE | // Note!
+                     PageTableFlags::USER_ACCESSIBLE);
+      ...
+  }
+#+end_src
+(Note that the highest memory page which is writable, because stacks
+start at the top and move downwards).
+
+Now we get an output like:
+#+begin_quote
+    Thread stack: 0x00028000013000 - 0x00028000018000
+EXCEPTION: PAGE FAULT
+Accessed Address: VirtAddr(0x28000016ff8)
+Error Code: PROTECTION_VIOLATION | CAUSED_BY_WRITE | USER_MODE
+#+end_quote
+which shows that an error occurred due to user mode code trying
+to write to address 0x28000016ff8 which is in the thread stack
+range but below the one page which has write permissions.
+
+To fix this we can define a function in =memory.rs= to add the missing
+frame:
+#+begin_src rust
+pub fn allocate_missing_stack_frame(
+    addr: VirtAddr
+) -> Result<(), &'static str> {
+    let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+    
+    let mut table = unsafe{&mut (*active_pagetable_ptr())};
+    for index in [addr.p4_index(),
+                  addr.p3_index(),
+                  addr.p2_index()] {        
+        let entry = &mut table[index];
+        table = unsafe {&mut *(memory_info.physical_memory_offset
+                               + entry.addr().as_u64()).as_mut_ptr()};
+    }
+    let entry = &mut table[addr.p1_index()];
+    if entry.flags() != (PageTableFlags::PRESENT |
+                         PageTableFlags::USER_ACCESSIBLE) {
+        return Err("Error: Unexpected table flags");
+    }
+
+    let frame = memory_info.frame_allocator.allocate_frame()
+        .ok_or("Could not allocate frame")?;
+
+    entry.set_addr(frame.start_address(),
+                   PageTableFlags::PRESENT |
+                   PageTableFlags::WRITABLE | 
+                   PageTableFlags::USER_ACCESSIBLE);
+    Ok(())
+}
+#+end_src
+and then in =interrupt.rs= the page fault handler can call this
+function:
+#+begin_src rust
+  use crate::memory;
+
+  extern "x86-interrupt" fn page_fault_handler(
+      stack_frame: InterruptStackFrame,
+      error_code: PageFaultErrorCode,
+  ) {
+      use x86_64::registers::control::Cr2;
+      let accessed_virtaddr = Cr2::read();
+
+      if error_code == (PageFaultErrorCode::PROTECTION_VIOLATION |
+                        PageFaultErrorCode::CAUSED_BY_WRITE |
+                        PageFaultErrorCode::USER_MODE) {
+          if let Err(msg) = memory::allocate_missing_stack_frame(accessed_virtaddr) {
+              println!("Page fault error: {}", msg);
+              hlt_loop();
+          }
+      } else {
+          println!("EXCEPTION: PAGE FAULT");
+          println!("Accessed Address: {:?}", accessed_virtaddr);
+          println!("Error Code: {:?}", error_code);
+          println!("{:#?}", stack_frame);
+
+          hlt_loop();
+      }
+  }
+#+end_src
+If all goes well then when the page fault is triggered a new frame is
+allocated. When the page fault handler returns it jumps back to the
+instruction that caused the page fault. The instruction tries again,
+this time succeeding because the page table entry now points to a
+writable frame.
+
+** Freeing user memory
+
+When a thread exits we need to be able to free its stack, and when all
+threads in a process are finished we need to free all frames used by
+that process.
+
+** User process memory management
+
+** Thread closures
+
+   
