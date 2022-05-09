@@ -293,8 +293,6 @@ pub fn allocate_active_pages(
 /// Note: Must not be called to free the current page tables
 ///       Switch to kernel pagetable before calling
 pub fn free_user_pagetables(level_4_physaddr: u64) {
-    println!("Freeing pagetable");
-
     let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
 
     fn free_pages_rec(physical_memory_offset: VirtAddr,

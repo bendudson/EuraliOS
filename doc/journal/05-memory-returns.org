@@ -704,4 +704,75 @@ return, so we still need a loop at the end of the function.
 
 Running this you should now see the "Dropping Process" message.
 
+Now we just need a function to recursively free all user-accessible
+pages and page tables, because we made copies of all of these when
+creating a new user program:
+#+begin_src rust
+pub fn free_user_pagetables(level_4_physaddr: u64) {
+    let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
 
+    fn free_pages_rec(physical_memory_offset: VirtAddr,
+                      frame_allocator: &mut MultilevelBitmapFrameAllocator,
+                      table_physaddr: PhysAddr,
+                      level: u16) {
+        let table = unsafe{&mut *(physical_memory_offset
+                                  + table_physaddr.as_u64())
+                           .as_mut_ptr() as &mut PageTable};
+        for entry in table.iter() {
+            if !entry.is_unused() {
+                if (level == 1) || entry.flags().contains(PageTableFlags::HUGE_PAGE) {
+                    // Maps a frame, not a page table
+                    if entry.flags().contains(PageTableFlags::USER_ACCESSIBLE) {
+                        // A user frame => deallocate
+                        frame_allocator.deallocate_frame(
+                            entry.frame().unwrap());
+                    }
+                } else {
+                    // A page table
+                    free_pages_rec(physical_memory_offset,
+                                   frame_allocator,
+                                   entry.addr(),
+                                   level - 1);
+                }
+            }
+        }
+        // Free page table
+        frame_allocator.deallocate_frame(
+            PhysFrame::from_start_address(table_physaddr).unwrap());
+    }
+
+    free_pages_rec(memory_info.physical_memory_offset,
+                   &mut memory_info.frame_allocator,
+                   PhysAddr::new(level_4_physaddr),
+                   4);
+}
+#+end_src
+
+We have to be a bit careful with freeing page tables: When a program
+exits its page table will be active. Before freeing page tables we should
+switch to the kernel page table, even though the function above doesn't
+actually modify any page tables.
+
+#+begin_src rust
+pub fn switch_to_kernel_pagetable() {
+    let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+    let phys_addr = (memory_info.kernel_l4_table as *mut PageTable as u64)
+        - memory_info.physical_memory_offset.as_u64();
+    switch_to_pagetable(phys_addr);
+}
+#+end_src
+
+Drop is now quite straightforward for Process:
+#+begin_src rust
+impl Drop for Process {
+    fn drop(&mut self) {
+        if self.page_table_physaddr == memory::active_pagetable_physaddr() {
+            memory::switch_to_kernel_pagetable();
+        }
+        memory::free_user_pagetables(self.page_table_physaddr);
+    }
+}
+#+end_src
+
+Now finally threads and processes return frames to the allocator when
+they exit!
