@@ -34,6 +34,9 @@ const USER_CODE_START: u64 = 0x5000000;
 /// Exclusive upper limit for user code
 const USER_CODE_END: u64 = 0x80000000;
 
+const USER_HEAP_START: u64 = 0x280_0060_0000;
+const USER_HEAP_SIZE: u64 = 4 * 1024 * 1024; //0x28002e00000 - 0x28000600000;
+
 lazy_static! {
     /// Queue of processes which can run
     ///
@@ -261,6 +264,12 @@ pub fn new_user_thread(bin: &[u8]) -> Result<u64, &'static str> {
         let (user_page_table_ptr, user_page_table_physaddr) =
             memory::create_kernel_only_pagetable();
 
+        // Allocate user heap
+        memory::create_user_ondemand_pages(
+            user_page_table_ptr,
+            VirtAddr::new(USER_HEAP_START),
+            USER_HEAP_SIZE);
+
         return with_pagetable(user_page_table_physaddr, || {
 
             let entry_point = obj.entry();
@@ -350,6 +359,10 @@ pub fn new_user_thread(bin: &[u8]) -> Result<u64, &'static str> {
             //       because the stack moves down in memory
             context.rsp = new_thread.user_stack_end as usize;
 
+            // Modify the context to pass information to the new thread
+            context.rax = USER_HEAP_START as usize;
+            context.rcx = USER_HEAP_SIZE as usize;
+
             let tid = new_thread.tid;
 
             println!("New Thread {}", new_thread);
@@ -403,7 +416,6 @@ pub fn fork_current_thread(current_context: &mut Context) {
             current_context.rax = 0; // No error
             current_context.rdi = new_thread.tid as usize;
 
-            let tid = new_thread.tid;
             RUNNING_QUEUE.write().push_back(new_thread);
         } else {
             // Failed to allocate user stack

@@ -286,6 +286,65 @@ pub fn allocate_active_pages(
     allocate_pages(&mut *level_4_table, start_addr, size, flags)
 }
 
+/// Create user-accessible pages, which are allocated on demand
+/// ie when written to.
+///
+/// One frame is allocated, and made writable through the first page in the range.
+/// The other pages point to the same frame but are read-only. Writes to those
+/// frames trigger a page fault, and the handler allocates a frame.
+///
+/// This allows large user heaps to be created without using a lot of memory.
+pub fn create_user_ondemand_pages(
+    level_4_table: *mut PageTable,
+    start_addr: VirtAddr,
+    size: u64)
+    -> Result<(), MapToError<Size4KiB>> {
+
+    let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+    let frame_allocator = &mut memory_info.frame_allocator;
+    let mut mapper = unsafe {
+        OffsetPageTable::new(&mut *level_4_table,
+                             memory_info.physical_memory_offset)};
+
+    let page_range = {
+        let end_addr = start_addr + size - 1u64;
+        let start_page = Page::containing_address(start_addr);
+        let end_page = Page::containing_address(end_addr);
+        Page::range_inclusive(start_page, end_page)
+    };
+
+    // Only allocating one frame
+    let frame = frame_allocator
+        .allocate_frame()
+        .ok_or(MapToError::FrameAllocationFailed)?;
+
+    for page in page_range {
+        //println!("Mapping {:?} (going to {:?})", page.start_address(), page_range.end.start_address());
+        unsafe {
+            mapper.map_to_with_table_flags(page,
+                                           frame,
+                                           // Page not writable
+                                           PageTableFlags::PRESENT |
+                                           PageTableFlags::USER_ACCESSIBLE,
+                                           // Parent table flags include writable
+                                           PageTableFlags::PRESENT |
+                                           PageTableFlags::WRITABLE |
+                                           PageTableFlags::USER_ACCESSIBLE,
+                                           frame_allocator)?.flush()
+        };
+    }
+
+    // Make one page writable, so this 'owns' the frame
+    unsafe {
+        mapper.update_flags(page_range.start,
+                            PageTableFlags::PRESENT |
+                            PageTableFlags::WRITABLE |
+                            PageTableFlags::USER_ACCESSIBLE);
+    }
+
+    Ok(())
+}
+
 ///////////////////////////////////////////////////////////////////////
 
 /// Free all user-accessible pages and the page table frames
@@ -304,9 +363,11 @@ pub fn free_user_pagetables(level_4_physaddr: u64) {
                            .as_mut_ptr() as &mut PageTable};
         for entry in table.iter() {
             if !entry.is_unused() {
-                if (level == 1) || entry.flags().contains(PageTableFlags::HUGE_PAGE) {
+                if level == 1 || entry.flags().contains(PageTableFlags::HUGE_PAGE) {
                     // Maps a frame, not a page table
-                    if entry.flags().contains(PageTableFlags::USER_ACCESSIBLE) {
+                    if entry.flags().contains(PageTableFlags::PRESENT |
+                                              PageTableFlags::WRITABLE |
+                                              PageTableFlags::USER_ACCESSIBLE)  {
                         // A user frame => deallocate
                         frame_allocator.deallocate_frame(
                             entry.frame().unwrap());
@@ -434,7 +495,10 @@ fn active_level_1_table_containing(
     table
 }
 
-pub fn allocate_missing_stack_frame(
+/// Allocate a read-only page which user code
+/// has attempted to write to.
+/// This is called by the page fault handler
+pub fn allocate_missing_ondemand_frame(
     addr: VirtAddr
 ) -> Result<(), &'static str> {
 

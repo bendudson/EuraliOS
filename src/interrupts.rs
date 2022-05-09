@@ -223,7 +223,7 @@ extern "x86-interrupt" fn page_fault_handler(
         // User code tried to access a read-only page
         // Probably a missing stack frame
 
-        if let Err(msg) = memory::allocate_missing_stack_frame(accessed_virtaddr) {
+        if let Err(msg) = memory::allocate_missing_ondemand_frame(accessed_virtaddr) {
             println!("Page fault error: {}", msg);
             hlt_loop();
         }

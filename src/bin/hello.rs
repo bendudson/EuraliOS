@@ -93,8 +93,6 @@ fn thread_spawn(func: extern "C" fn() -> ()) -> Result<u64, u64> {
     Ok(tid)
 }
 
-
-
 extern "C" fn test() {
     println!("Hello from thread!");
 
@@ -108,9 +106,15 @@ extern "C" fn test() {
 
 #[no_mangle]
 pub unsafe extern "sysv64" fn _start() -> ! {
-    println!("Hello from user world! {}", 42);
-
-    let arr = [0; 1000];
+    // Information passed from the operating system
+    let heap_start: usize;
+    let heap_size: usize;
+    asm!("",
+         lateout("rax") heap_start,
+         lateout("rcx") heap_size,
+         options(pure, nomem, nostack)
+    );
+    println!("Heap start {:#016X}, size: {} bytes ({} Mb)", heap_start, heap_size, heap_size / (1024 * 1024));
 
     let tid = thread_spawn(test).unwrap();
 
@@ -120,7 +124,6 @@ pub unsafe extern "sysv64" fn _start() -> ! {
             unsafe { asm!("nop");}
         }
     }
-    println!("{}", arr[10]);
 
     asm!("mov rax, 1", // exit_current_thread syscall
          "syscall");

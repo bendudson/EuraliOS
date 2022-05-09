@@ -1,0 +1,67 @@
+* User space memory management
+
+In this section we'll work on user-space memory management, and add an
+allocator so user-space programs can use heap memory.
+
+Once we can allocate objects on the heap in user programs, we can make
+a nicer interface to the threading syscalls by using a closure and
+=Box=.
+
+
+** User process memory management
+
+http://gee.cs.oswego.edu/dl/html/malloc.html
+
+Linux has two ways to allocate memory to processes: the =brk()= and
+=mmap()= syscalls. Both of these provide "heap" space that persist
+across function calls, and from the user code perspective are
+typically allocated using calls to =malloc()= or =new=.
+
+The =brk= syscall moves the "breakpoint" (hence the slightly odd name)
+between the heap and the stack: The heap starts at an address above
+the program code and grows upwards; the stack starts at a high address
+and grows downwards. The breakpoint between them is an unmapped guard
+page. Moving that guard page up therefore made more space for the
+heap, at the expense of shrinking space for the stack.
+
+The =mmap()= syscall maps a region of memory (page aligned), which can be
+released (unmapped) back to the operating system.
+
+For now we'll reuse the [[https://crates.io/crates/linked_list_allocator][linked list allocator]] which is used in the
+kernel.  We can use a similar trick that we used in the stack, to
+create a large heap without actually using much memory: Map one frame,
+and mark the rest as read-only. Our page fault handler will then
+allocate frames as they are used, and when the program exits the
+frames will be returned.
+
+To find a range of memory to use, we can use the =page_table_address=
+python code defined in the previous section on [[file:03-memory.org][Memory management]]. The
+stack pages are currently (5,0,0,0,0) to (5,0,1,0,0) i.e. addresses
+0x28000000000 to 0x28000200000, 2Mb in total.  We can choose a
+different range e.g (5,0,3,0,0) to (5,0,23,0,0), addresses
+0x28000600000 to 0x28002e00000, a total of 0x2800000 bytes or 40Mb.
+
+** Allocating pages
+
+
+** Project structure
+
+We now need to have a global allocator for the user program. We can
+use the kernel library because its currently a =bin= which is linked
+against the user program. A better solution is probably to rearrange
+the Cargo project so that user programs aren't linked against the
+kernel library code.
+
+The way this is done with Cargo is to create a [[https://doc.rust-lang.org/book/ch14-03-cargo-workspaces.html][Workspace]]. We want this
+to contain:
+
+- The kernel
+- The user-space standard library (split from hello.rs)
+- A user program (hello.rs)
+
+This is probably also a good time to give this thing a name to replace
+=blog_os=. I've settled on *EuraliOS* from "Euralia" in A.A.Milne's
+[[https://en.wikipedia.org/wiki/Once_on_a_Time][Once On A Time]].
+
+** Thread closures
+
