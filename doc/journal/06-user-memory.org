@@ -63,5 +63,128 @@ This is probably also a good time to give this thing a name to replace
 =blog_os=. I've settled on *EuraliOS* from "Euralia" in A.A.Milne's
 [[https://en.wikipedia.org/wiki/Once_on_a_Time][Once On A Time]].
 
+
+Using different configurations for packages within a Cargo workspace
+is a bit complicated. Cargo uses =Cargo.toml=, and if run in the root
+workspace directory reads =Cargo.toml= files in each package. There is
+also the =.cargo/config.toml= but only the file in the directory that
+Cargo is run from will be used.  The Cargo [[https://doc.rust-lang.org/cargo/reference/unstable.html#per-package-target][per-package-target]] feature
+allows packages in a workspace to have different targets, and there is
+some [[https://github.com/rust-lang/cargo/issues/9521][discussion here]] of that method, but I couldn't get that to work
+for this use case. All we really need is to be able to set the code &
+data address in the ELF file, but the =--image-base= argument to the
+=rust-lld= linker doesn't seem to do that.
+
+The simplest (and only) way to configure the kernel and user programs
+that I have found so far is to use a custom build script.
+Starting in the root (workspace) directory, set the linker in the
+target json file (now renamed =x86_64-euralios.json=):
+#+begin_src json
+  {
+    "llvm-target": "x86_64-unknown-none",
+    "data-layout": "e-m:e-i64:64-f80:128-n8:16:32:64-S128",
+    "arch": "x86_64",
+    "target-endian": "little",
+    "target-pointer-width": "64",
+    "target-c-int-width": "32",
+    "os": "none",
+    "executables": true,
+    "linker-flavor": "ld",  // new!
+    "linker": "ld",         // new!
+    "panic-strategy": "abort",
+    "disable-redzone": true,
+    "features": "-mmx,-sse,+soft-float"
+}
+#+end_src
+Note that the =linker-flavor= and =linker= settings are now "ld".
+The root =Cargo.toml= file is simple, just listing the two packages
+(the kernel and user program "hello"):
+#+begin_src ini
+[workspace]
+
+members = [
+    "kernel",
+    "hello"
+]
+#+end_src
+The =.cargo/config.toml= file sets the target as before (note renamed
+file), but now also sets a flag setting =relocation-model= to
+=static=, which we previously set in a command-line argument to
+=rustc= in the =makefile=.
+#+begin_src ini
+[unstable]
+build-std-features = ["compiler-builtins-mem"]
+build-std = ["core", "compiler_builtins", "alloc"]
+
+[build]
+target = "x86_64-euralios.json"  # changed file
+
+[target.'cfg(target_os = "none")']
+runner = "bootimage runner"
+rustflags = ["-C", "relocation-model=static"] # new
+#+end_src
+The =makefile= can be simplified to:
+#+begin_src makefile
+user/% : FORCE
+	cargo build --release --bin $*
+	mkdir -p user
+	cp target/x86_64-euralios/release/$* user/
+
+FORCE:
+
+.PHONY: run
+run : user/hello
+	cargo run --bin kernel
+#+end_src
+which always runs cargo to rebuild user programs, so cargo looks after dependencies.
+
+In the =hello= subdirectory we have a user program. The =Cargo.toml=
+file is quite standard:
+#+begin_src ini
+[package]
+name = "hello"
+version = "0.1.0"
+edition = "2021"
+#+end_src
+Now to pass flags to the linker we can use a [[https://doc.rust-lang.org/cargo/reference/build-scripts.html][Cargo build script]]. Cargo
+runs this to allow people to compile C codes, perform code generation etc.,
+and parses the outputs for linker settings. We just want to add a couple
+of linker flags so can put in =build.rs=:
+#+begin_src rust
+fn main() {
+    println!("cargo:rustc-link-arg=-Ttext-segment=5000000");
+    println!("cargo:rustc-link-arg=-Trodata-segment=5100000");
+}
+#+end_src
+That script passes some arguments to the (ld) linker, setting the code
+and data segments.
+
+The structure of the workspace is now:
+#+begin_src
+  - Cargo.toml
+  - makefile
+  - x86_64-euralios.json  <- modified from x86_64-blog_os.json
+  - .cargo/
+      - config.toml
+  - hello/
+      - Cargo.toml
+      - src/
+          - main.rs     <- Was hello.rs
+  - kernel/
+      - Cargo.toml
+      - src/
+          - allocator.rs
+          - gdt.rs
+          - interrupts.rs
+          - lib.rs
+          - main.rs
+          - memory.rs
+          - process.rs
+          - serial.rs
+          - syscalls.rs
+          - vga_buffer.rs
+#+end_src
+
 ** Thread closures
+
 
