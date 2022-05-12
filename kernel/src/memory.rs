@@ -760,8 +760,8 @@ impl MultilevelBitmapFrameAllocator {
             }
 
             // Get bitmap containing frame indices
-            let ptr = self.bitmap_virt_addr[0].as_mut_ptr() as *mut u32;
-            let mut bitmap = unsafe{*(ptr.offset(chunk_number as isize))};
+            let ptr = unsafe{(self.bitmap_virt_addr[0].as_mut_ptr() as *mut u32).offset(chunk_number as isize)};
+            let mut bitmap = unsafe{*ptr};
 
             // Take all frames and put them on the stack
             while bitmap != 0 {
@@ -771,28 +771,29 @@ impl MultilevelBitmapFrameAllocator {
                 self.frame_stack[self.frame_stack_number] = frame_number;
                 self.frame_stack_number += 1;
             }
-            unsafe{*ptr = 0} // Chunk now empty
+            unsafe {core::ptr::write(ptr, 0)}; // Chunk now empty
 
             // Clear higher bitmaps if the chunk is empty
             for level in 1..self.nlevels {
+                // Low 5 bits of the chunk at the lower level are the index at this level
+                let index = chunk_number & 31;
+                // High bits are the chunk at this level
+                chunk_number = chunk_number >> 5;
+
                 let ptr = unsafe{(self.bitmap_virt_addr[level].as_mut_ptr() as *mut u32)
                                  .offset(chunk_number as isize)};
                 let mut bitmap = unsafe{*ptr};
-                let index = chunk_number & 31; // Low bits are the index
 
                 bitmap &= !(1 << index); // clear bit
-                unsafe{*ptr = bitmap};
+                unsafe {core::ptr::write(ptr, bitmap)};
 
                 if bitmap != 0 {
                     // This chunk still has frames => stop clearing
                     break;
                 }
 
-                // Divide by 32 to get chunk number of higher level
-                chunk_number = chunk_number >> 5;
             }
         }
-
         if self.frame_stack_number == 0 {
             panic!("Stack still empty!") // bug!
         }
