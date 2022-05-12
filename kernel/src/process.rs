@@ -278,36 +278,41 @@ pub fn new_user_thread(bin: &[u8]) -> Result<u64, &'static str> {
             for segment in obj.segments() {
                 let segment_address = segment.address() as u64;
 
-                println!("Section {:?} : {:#016X}", segment.name(), segment_address);
+                println!("Section {:?} : {:#016X} size {}",
+                         segment.name(), segment_address, segment.size());
 
-                if let Ok(data) = segment.data() {
-                    println!("  len : {}", data.len());
+                let start_address = VirtAddr::new(segment_address);
+                let end_address = start_address + segment.size() as u64;
 
-                    let start_address = VirtAddr::new(segment_address);
-                    let end_address = start_address + data.len() as u64;
-
-                    // Check if data is in allowed range
-                    if (start_address < VirtAddr::new(USER_CODE_START))
-                        || (end_address >= VirtAddr::new(USER_CODE_END)) {
-                            return Err("ELF segment outside allowed range");
-                        }
-
-                    // Allocate memory in the pagetable
-                    if memory::allocate_pages(user_page_table_ptr,
-                                              start_address,
-                                              data.len() as u64, // Size (bytes)
-                                              PageTableFlags::PRESENT |
-                                              PageTableFlags::WRITABLE |
-                                              PageTableFlags::USER_ACCESSIBLE).is_err() {
-                        return Err("Could not allocate memory");
+                // Check if data is in allowed range
+                if (start_address < VirtAddr::new(USER_CODE_START))
+                    || (end_address >= VirtAddr::new(USER_CODE_END)) {
+                        return Err("ELF segment outside allowed range");
                     }
 
-                    // Copy data
-                    let dest_ptr = segment_address as *mut u8;
-                    for (i, value) in data.iter().enumerate() {
-                        unsafe {
-                            let ptr = dest_ptr.add(i);
-                            core::ptr::write(ptr, *value);
+                // Allocate memory in the pagetable
+                if memory::allocate_pages(user_page_table_ptr,
+                                          start_address,
+                                          segment.size() as u64, // Size (bytes)
+                                          PageTableFlags::PRESENT |
+                                          PageTableFlags::WRITABLE |
+                                          PageTableFlags::USER_ACCESSIBLE).is_err() {
+                    return Err("Could not allocate memory");
+                }
+                memory::switch_to_pagetable(user_page_table_physaddr);
+
+                if let Ok(data) = segment.data() {
+                    println!(" data len : {}", data.len());
+                    if data.len() > segment.size() as usize {
+                        return Err("ELF data length > segment size");
+                    } else if data.len() > 0 {
+                        // Copy data
+                        let dest_ptr = segment_address as *mut u8;
+                        for (i, value) in data.iter().enumerate() {
+                            unsafe {
+                                let ptr = dest_ptr.add(i);
+                                core::ptr::write(ptr, *value);
+                            }
                         }
                     }
                 } else {

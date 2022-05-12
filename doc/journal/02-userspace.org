@@ -142,6 +142,11 @@ point is correct.
 
 To load the ELF into this new virtual memory address we need to create entries
 in the page table.
+
+Note that we have to use =segment.size()= when allocating memory,
+because there can be segments with non-zero size but no data
+(so =data.len()= is zero). BSS segments, for example, are used
+for uninitialised static variables.
 #+BEGIN_SRC rust
   for segment in obj.segments() {
       let segment_address = segment.address() as u64;
@@ -154,7 +159,7 @@ in the page table.
           // Allocate memory in the pagetable
           memory::allocate_pages(user_page_table_ptr,
                                  VirtAddr::new(segment_address), // Start address
-                                 data.len() as u64, // Size (bytes)
+                                 segment.size() as u64, // Size (bytes)
                                  PageTableFlags::PRESENT |
                                  PageTableFlags::WRITABLE |
                                  PageTableFlags::USER_ACCESSIBLE);
@@ -186,7 +191,7 @@ also free the new page tables, but haven't added functions to do that
 yet.
 #+begin_src rust
   let start_address = VirtAddr::new(segment_address);
-  let end_address = start_address + data.len() as u64;
+  let end_address = start_address + segment.size() as u64;
   if (start_address < VirtAddr::new(USER_CODE_START))
       || (end_address >= VirtAddr::new(USER_CODE_END)) {
           return Err("ELF segment outside allowed range");
