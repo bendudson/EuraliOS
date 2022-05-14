@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 #![feature(asm_sym)]
+#![feature(alloc_error_handler)]
 
 use core::panic::PanicInfo;
 
@@ -8,10 +9,6 @@ use core::arch::asm;
 use core::format_args;
 use core::fmt;
 
-#[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
-    loop {}
-}
 
 struct Writer {}
 
@@ -43,6 +40,17 @@ macro_rules! println {
     ($fmt:expr) => (print!(concat!($fmt, "\n")));
     ($fmt:expr, $($arg:tt)*) => (print!(
         concat!($fmt, "\n"), $($arg)*));
+}
+
+
+#[panic_handler]
+fn panic(info: &PanicInfo) -> ! {
+    println!("User panic: {}", info);
+    unsafe {
+        asm!("mov rax, 1", // exit_current_thread syscall
+             "syscall");
+    }
+    loop {}
 }
 
 ////////////////////////////
@@ -93,6 +101,17 @@ fn thread_spawn(func: extern "C" fn() -> ()) -> Result<u64, u64> {
     Ok(tid)
 }
 
+use linked_list_allocator::LockedHeap;
+
+#[global_allocator]
+static ALLOCATOR: LockedHeap = LockedHeap::empty();
+
+// Allocator error handler
+#[alloc_error_handler]
+fn alloc_error_handler(layout: alloc::alloc::Layout) -> ! {
+    panic!("allocation error: {:?}", layout)
+}
+
 extern "C" fn test() {
     println!("Hello from thread!");
 
@@ -125,6 +144,7 @@ pub unsafe extern "sysv64" fn _start() -> ! {
         }
     }
 
+    ALLOCATOR.lock().init(heap_start, heap_size);
     asm!("mov rax, 1", // exit_current_thread syscall
          "syscall");
     loop{}
