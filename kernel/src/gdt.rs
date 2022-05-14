@@ -123,6 +123,10 @@ pub fn init() {
     }
 }
 
+pub fn get_kernel_segments() -> (SegmentSelector, SegmentSelector) {
+    (GDT.1.code_selector, GDT.1.data_selector)
+}
+
 pub fn get_user_segments() -> (SegmentSelector, SegmentSelector) {
     (GDT.1.user_code_selector, GDT.1.user_data_selector)
 }

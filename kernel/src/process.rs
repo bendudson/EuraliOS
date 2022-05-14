@@ -198,15 +198,12 @@ pub fn new_kernel_thread(function: fn()->()) -> u64 {
     context.rip = function as usize;
 
     // Set flags
-    unsafe {
-        asm!{
-            "pushf",
-            "pop rax", // Get RFLAGS in RAX
-            lateout("rax") context.rflags,
-        }
-    }
+    context.rflags = 0x200;
 
-    context.cs = 8; // Code segment flags
+    // Set segment selector flags
+    let (code_selector, data_selector) = gdt::get_kernel_segments();
+    context.cs = code_selector.0 as usize;
+    context.ss = data_selector.0 as usize;
 
     // The kernel thread has its own stack
     // Note: Need to point to the end of the memory region
@@ -462,24 +459,21 @@ pub fn schedule_next(context: &Context) -> usize {
     let mut running_queue = RUNNING_QUEUE.write();
     let mut current_thread = CURRENT_THREAD.write();
 
-    if let Some(thread) = current_thread.take() {
+    if let Some(mut thread) = current_thread.take() {
         // Put the current thread to the back of the queue
-
-        // Update the stack pointer
-        let mut thread_mut = thread;
 
         // Store context location. This should almost always be in the same
         // location on the kernel stack. The exception is the
         // first time a context switch occurs from the original kernel
         // stack to the first kernel thread stack.
-        thread_mut.context = (context as *const Context) as u64;
+        thread.context = (context as *const Context) as u64;
 
         // Save the page table. This is to enable context
         // switching during functions which manipulate page tables
         // for example new_user_thread
-        thread_mut.page_table_physaddr = memory::active_pagetable_physaddr();
+        thread.page_table_physaddr = memory::active_pagetable_physaddr();
 
-        running_queue.push_back(thread_mut);
+        running_queue.push_back(thread);
     }
     *current_thread = running_queue.pop_front();
 
