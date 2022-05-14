@@ -185,6 +185,85 @@ The structure of the workspace is now:
           - vga_buffer.rs
 #+end_src
 
+** User program allocator
+
+In the user program =hello= we can now add a [[https://crates.io/crates/linked_list_allocator][linked list allocator]]
+to manage the memory heap. It won't be able to add memory beyond the
+original range given to it, or give frames back to the kernel, but
+at least frames will only be used as they are needed: If a user program
+doesn't use much memory then it won't use many frames.
+
+In =hello/Cargo.toml= add the dependency:
+#+begin_src toml
+[dependencies]
+linked_list_allocator = "0.9.0"
+#+end_src
+then in =hello/src/main.rs= create the static allocator:
+#+begin_src rust
+use linked_list_allocator::LockedHeap;
+
+#[global_allocator]
+static ALLOCATOR: LockedHeap = LockedHeap::empty();
+#+end_src
+where the [[https://doc.rust-lang.org/std/alloc/index.html#the-global_allocator-attribute][global_allocator]] attribute registers the allocator to be
+used by default by containers like =Box= and =Vec= in this program.
+
+We need to initialise the allocator before using it, in the same way
+as the kernel heap allocator. To do that we need to know the heap
+location and size. We could hard-wire these values (=USER_HEAP_START=
+and =USER_HEAP_SIZE= in =process.rs=) in the user code, but it might
+be more fun to pass this information from the kernel, and this way we
+don't need to remember to change it in two (or more) places.
+
+At the start of the =_start()= function we can read some registers,
+which we can choose fairly arbitrarily to be RAX and RCX (RBX is
+reserved by LLVM for its own use):
+#+begin_src rust
+  pub unsafe extern "sysv64" fn _start() -> ! {
+    let heap_start: usize;
+    let heap_size: usize;
+    asm!("",
+         lateout("rax") heap_start,
+         lateout("rcx") heap_size,
+         options(pure, nomem, nostack)
+    );
+    println!("Heap start {:#016X}, size: {} bytes ({} Mb)",
+             heap_start, heap_size, heap_size / (1024 * 1024));
+    ...
+  }
+#+end_src
+
+To pass the information to the user code we can just modify
+the thread =Context=, because those values will be popped
+off the kernel stack and into the registers when the thread
+runs. In =process.rs= the =new_user_thread()= function
+already sets the segment selectors =cs= and =ss=, instruction
+and stack pointers =rip= and =rsp=. We can just add the
+heap start and size:
+#+begin_src rust
+  ...
+  context.rsp = new_thread.user_stack_end as usize;
+  context.rax = USER_HEAP_START as usize; // new
+  context.rcx = USER_HEAP_SIZE as usize; // new
+  ...
+#+end_src
+
+As an experiment we can try out the heap allocation and the page fault
+handling. In the =page_fault_handler()= in =interrupts.rs=
+add a message in the section which handles writes to read-only pages:
+#+begin_src rust
+  if error_code == (PageFaultErrorCode::PROTECTION_VIOLATION |
+                    PageFaultErrorCode::CAUSED_BY_WRITE |
+                    PageFaultErrorCode::USER_MODE) {
+      println!("READ-ONLY ACCESS!"); // New (temporary!)
+      if let Err(msg) = memory::allocate_missing_ondemand_frame(accessed_virtaddr) {
+          println!("Page fault error: {}", msg);
+          hlt_loop();
+      }
+  }
+#+end_src
+
+
 ** Thread closures
 
 

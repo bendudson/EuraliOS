@@ -1,4 +1,4 @@
-* Adding syscalls for thread control
+* Syscalls for thread control
 
 Now we're going to add system calls to enable user threads to create
 new threads, and exit cleanly. We'll learn about the [[https://www.felixcloutier.com/x86/swapgs][swapgs]] and [[https://www.felixcloutier.com/x86/wrmsr][wrmsr]]
@@ -178,29 +178,28 @@ syscall in the same way that we do in a timer interrupt.
 ** Exiting threads
 
 
-Some of this can be done with lightweight ("green") threads
-in user space, but for communication between processes the only way
-for single-threaded programs to perform tasks while waiting for events
-is to keep checking whether an event has occurred ("polling"). This
-implies buffering of messages between processes somewhere, and delays
-between an event occurring and the handling process checking for it.
-This may be acceptable in a monolithic kernel, but if the aim is to
-have a microkernel with lots of separate processes and communication
-between them, then the delays and buffering adds up to noticeably
-worse performance.
 
-To make event handling (e.g keyboard press) fast, a message sent from
-one process should trigger a context switch to a handling thread in
-the receiving process. This implies that a receiving thread is blocked
-waiting for a message to arrive, and so to do other things the process
-must have multiple threads. This is essentially the Rendezvous system
-used in Plan 9: Threads waiting for a message block until a message is
-sent, and sending threads block until there is a receive. When both
-sender and receiver meet the message is passed and context switches to
-the receiver. No buffering of messages in the kernel is needed.
+** User panic handler
 
+We can use these syscalls to write a better panic handler in the user program
+=hello.rs=:
+#+begin_src rust
+  #[panic_handler]
+  fn panic(info: &PanicInfo) -> ! {
+      println!("User panic: {}", info);
+      unsafe {
+          asm!("mov rax, 1", // exit_current_thread syscall
+               "syscall");
+      }
+      loop {}
+  }
+#+end_src
+So now when a user thread panics it will print the error message and exit.
+
+** Appendix: Security issues
 
 Security issues: https://fuchsia.dev/fuchsia-src/concepts/kernel/sysret_problem
+
 
 ** Appendix: Syscall jump table
 

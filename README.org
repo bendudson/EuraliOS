@@ -1,0 +1,90 @@
+* EuraliOS
+
+A hobby x86-64 operating system written in [[http://rust-lang.org][Rust]]. Named for Euralia in
+A.A. Milne's [[https://en.wikipedia.org/wiki/Once_on_a_Time][Once on a Time]] because I don't know who this is intended
+for except, to borrow Milne's introduction, "For those, young or old,
+who like the things which I like...  Either you will enjoy it, or you
+won't. It is that sort of +book+ project."
+
+*Disclaimer*: This was written by someone who doesn't (or didn't) know
+anything about Rust or operating systems. The result is probably not
+idiomatic Rust or a sensible OS design. If you are looking for a
+usable operating system implemented in Rust then [[https://www.redox-os.org/][Redox OS]] is probably
+what you want.
+
+This started with [[https://os.phil-opp.com/][Philipp Oppermann's amazing blog]] on OS development
+with Rust (second edition), and makes use of many of the crates that
+Phil maintains (e.g. [[https://docs.rs/x86_64/latest/x86_64/][x86_64]] and [[https://docs.rs/bootloader/latest/bootloader/][bootloader]]). That blog has inspired
+many other operating system siblings that I've found useful to study
+including [[https://github.com/WartaPoirier-corp/ananos][ananos]], the [[https://github.com/sos-os/kernel][Stupid Operating System]], [[https://github.com/intermezzOS][intermezzOS]], and
+especially [[https://github.com/vinc/moros][MOROS the Obscure Rust Operating System]]. The [[https://github.com/redox-os/kernel][Redox OS
+kernel]] is also very readable. Anything useful here was probably
+borrowed from one of these projects; mistakes and omissions are my
+own.
+
+** Features
+
+There are many different directions to explore in building an OS, and
+with EuraliOS I've focussed mainly on memory management and
+pre-emptive multitasking so far. The result is an OS that can't do
+much, but it can do it all at the same time.
+
+- [X] Basic VGA text output (phil-opp blog)
+- [X] UART Serial port output (phil-opp blog)
+- [X] ELF loader (adapted from MOROS approach, using the [[https://crates.io/crates/object][object crate]])
+- [X] Pre-emptive multitasking, with kernel and user-space threads and
+  a round-robin scheduler
+- [X] Programs in user space (Ring 3), with syscalls to access kernel
+  functions.
+- [X] Program isolation using paging
+- [X] Frame allocator based on a bitmap tree structure
+- [X] On-demand memory allocation using page fault handler
+- [X] User space stack and heap memory management
+
+There is no filesystem (yet), so user programs are compiled and then
+the ELF files are included in the kernel binary using Rust's
+[[https://doc.rust-lang.org/std/macro.include_bytes.html][include_bytes]] macro (another idea taken from [[https://github.com/vinc/moros][MOROS]]).
+
+** Building and running
+
+After setting up Rust, Cargo and QEMU (see phil-opp blog), just
+running:
+#+begin_src bash
+  $ make run
+#+end_src
+should download dependencies, build everything, and launch qemu.
+
+** Documentation
+
+I've tried to document the steps to build EuraliOS, starting from the
+end of [[https://os.phil-opp.com/heap-allocation/][post 10 (heap allocation)]] of Phil Opp's blog (2nd Ed). At that
+point the kernel had a heap and a bump frame allocator (so could
+allocate but not free memory), some code to handle pages,
+exceptions, and VGA output. Post 11 went on to add Async/Await
+cooperative multitasking, but here we go in a slightly different
+direction...
+
+- [[file:doc/journal/01-interrupts-processes.org][1. Interrupts and processes]] in which kernel multi-threading is
+  introduced by modifying the timer interrupt handler to capture and
+  change the context (registers etc).
+- [[file:doc/journal/02-userspace.org][2. Userspace]] in which a program is loaded into memory and run in
+  Ring 3 (user space). Syscall/sysret is used to implement a simple
+  way to print from user programs.
+- [[file:doc/journal/03-memory][3. Memory management]] in which we create separate page tables for
+  user processes and stacks for each thread.
+- [[file:doc/journal/04-more-syscalls.org][4. Syscalls for thread control]] which adds syscalls to spawn new
+  threads and to exit from a thread. We also learn how to use the
+  [[https://www.felixcloutier.com/x86/swapgs][swapgs]] and [[https://www.felixcloutier.com/x86/wrmsr][wrmsr]] instructions to switch stacks inside syscalls.
+- [[file:doc/journal/05-memory-returns.org][5. Memory returns]] which implements a better frame allocator that
+  can keep track of available frames, so that memory can be freed when
+  threads and processes exit.
+- [[file:doc/journal/06-user-memory.org][6. User space memory management]] in which we create a heap for each
+  user process so that user programs can use =Box=, =Vec= etc, using a
+  linked list allocator. As a bonus this allows a threading API with
+  closures as in the Rust stdlib.
+
+Useful reference material includes:
+
+- [[https://www.amd.com/system/files/TechDocs/24593.pdf][AMD64 Architecture Programmer's Manual (Vol 2: System programming)]]
+  
+  
