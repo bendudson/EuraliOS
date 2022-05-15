@@ -83,8 +83,11 @@ direction...
   linked list allocator. As a bonus this allows a threading API with
   closures as in the Rust stdlib.
 
+** Bibliography
+
 Useful reference material includes:
 
 - [[https://www.amd.com/system/files/TechDocs/24593.pdf][AMD64 Architecture Programmer's Manual (Vol 2: System programming)]]
-  
-  
+- [[https://0xax.gitbooks.io/linux-insides/content/][Linux insides]]
+- [[https://www.kernel.org/doc/html/latest/][The Linux Kernel documentation]]
+

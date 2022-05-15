@@ -44,6 +44,13 @@ $ cargo build
 #+END_SRC
 which should create an executable =target/x86_64-blog_os/debug/hello=
 
+In =process.rs= create a new function to create a new user thread,
+taking as input an ELF file binary in an array. We're going to include
+our =hello= executable in the kernel for now, and pass it to this
+function.  This first checks for the expected ELF header, and then
+uses the [[https://crates.io/crates/object][object]] crate to parse the data. ELF files are organised into
+/segments/ with a size, a starting memory address and (usually) some
+data to be loaded. For now we'll just print the segment addresses:
 #+BEGIN_SRC rust
   pub fn new_user_thread(bin: &[u8]) -> Result<usize, &'static str> {
       // Check the header
@@ -61,15 +68,14 @@ which should create an executable =target/x86_64-blog_os/debug/hello=
           for segment in obj.segments() {
               println!("Section {:?} : {:#016X}", segment.name(), segment.address());
           }
-      } else {
-          return Err("Could not parse ELF");
+          return Ok(0);
       }
-      Ok(0)
+      Err("Could not parse ELF")
   }
 #+END_SRC
 
 In =main.rs= we now include the =hello= executable using the
-[[https://doc.rust-lang.org/std/macro.include_bytes.html][include_bytes]] macro:
+[[https://doc.rust-lang.org/std/macro.include_bytes.html][include_bytes]] macro, and call =new_user_thread=:
 #+BEGIN_SRC rust
 process::new_user_thread(include_bytes!("../target/x86_64-blog_os/debug/hello"));
 #+END_SRC
@@ -79,7 +85,6 @@ Running this with
 $ cargo run --bin blog_os
 #+END_SRC
 should produce a result like
-
 #+BEGIN_SRC
 Entry point: 0x00000000201120
 Section Ok(None) : 0x00000000200000
@@ -125,7 +130,6 @@ user/% : src/bin/%.rs makefile
 	mkdir -p user
 	cp target/x86_64-blog_os/release/$* user/
 #+END_SRC
-
 which will build the =hello= executable and copy it into a =user/=
 directory. The =main.rs= code can be changed to point to this new location:
 #+BEGIN_SRC rust
@@ -140,30 +144,28 @@ run : user
 so running =make run= will build everything and run. Check that the new entry
 point is correct.
 
-To load the ELF into this new virtual memory address we need to create entries
-in the page table.
-
-Note that we have to use =segment.size()= when allocating memory,
-because there can be segments with non-zero size but no data
-(so =data.len()= is zero). BSS segments, for example, are used
-for uninitialised static variables.
+To load the ELF into this new virtual memory address we need to create
+entries in the page table. Note that we have to use =segment.size()=
+when allocating memory, because there can be segments with non-zero
+size but no data (so =data.len()= is zero). BSS segments, for example,
+are used to allocate space for uninitialised static variables.
 #+BEGIN_SRC rust
   for segment in obj.segments() {
       let segment_address = segment.address() as u64;
 
       println!("Section {:?} : {:#016X}", segment.name(), segment_address);
 
+      // Allocate memory in the pagetable
+      if memory::allocate_pages(user_page_table_ptr,
+                             VirtAddr::new(segment_address), // Start address
+                             segment.size() as u64, // Size (bytes)
+                             PageTableFlags::PRESENT |
+                             PageTableFlags::WRITABLE |
+                             PageTableFlags::USER_ACCESSIBLE).is_err() {
+          return Err("Could not allocate memory");
+      }
+
       if let Ok(data) = segment.data() {
-          println!("  len : {}", data.len());
-
-          // Allocate memory in the pagetable
-          memory::allocate_pages(user_page_table_ptr,
-                                 VirtAddr::new(segment_address), // Start address
-                                 segment.size() as u64, // Size (bytes)
-                                 PageTableFlags::PRESENT |
-                                 PageTableFlags::WRITABLE |
-                                 PageTableFlags::USER_ACCESSIBLE);
-
           // Copy data
           let dest_ptr = segment_address as *mut u8;
           for (i, value) in data.iter().enumerate() {
@@ -172,8 +174,6 @@ for uninitialised static variables.
                   core::ptr::write(ptr, *value);
               }
           }
-      } else {
-          return Err("Could not get segment data");
       }
   }
 #+END_SRC
@@ -198,36 +198,57 @@ yet.
       }
   if memory::allocate_pages(...)
 #+end_src
+We could also check that the data length is not bigger than
+the size of the segment.
+
+Having loaded data into memory we now need to create a =Thread= struct,
+similar to the =new_kernel_thread= function
+
 
 ** Switching to userspace
 
-Following [[https://nfil.dev/kernel/rust/coding/rust-kernel-to-userspace-and-back/][this blog by Nikos Filippakis]], we are now going to switch
-programs to user mode.
+Following [[https://nfil.dev/kernel/rust/coding/rust-kernel-to-userspace-and-back/][this blog by Nikos Filippakis]], and borrowing some code from From [[ https://github.com/vinc/moros/blob/trunk/src/sys/gdt.rs#L37][MOROS]],
+we are now going to switch programs to user mode.
 
-Note: TSS contains the Privilege Stack Table, which contains stack
-pointers to switch to when the privilege level changes.
-
-From [[ https://github.com/vinc/moros/blob/trunk/src/sys/gdt.rs#L37][MOROS]]
-
+First we add some segment entries to the Global Descriptor Table (GDT) for user
+code and data segments:
 #+BEGIN_SRC rust
-   static ref GDT: (GlobalDescriptorTable, Selectors) = {
-        let mut gdt = GlobalDescriptorTable::new();
-        let code_selector = gdt.add_entry(Descriptor::kernel_code_segment());
-        let data_selector = gdt.add_entry(Descriptor::kernel_data_segment());
-        let tss_selector = gdt.add_entry(Descriptor::tss_segment(&TSS));
-        let user_code_selector = gdt.add_entry(Descriptor::user_code_segment());
-        let user_data_selector = gdt.add_entry(Descriptor::user_data_segment());
-        (gdt, Selectors { code_selector, data_selector, tss_selector,
-                          user_code_selector, user_data_selector})
-    };
+  static ref GDT: (GlobalDescriptorTable, Selectors) = {
+      let mut gdt = GlobalDescriptorTable::new();
+      let code_selector = gdt.add_entry(Descriptor::kernel_code_segment());
+      let data_selector = gdt.add_entry(Descriptor::kernel_data_segment());
+      let tss_selector = gdt.add_entry(Descriptor::tss_segment(
+          unsafe {tss_reference()}));
+      let user_code_selector = gdt.add_entry(Descriptor::user_code_segment()); // new
+      let user_data_selector = gdt.add_entry(Descriptor::user_data_segment()); // new
+      (gdt, Selectors { code_selector, data_selector, tss_selector,
+                        user_code_selector, user_data_selector}) // new
+  };
+  struct Selectors {
+      code_selector: SegmentSelector,
+      data_selector: SegmentSelector,
+      tss_selector: SegmentSelector,
+      user_data_selector: SegmentSelector, // new
+      user_code_selector: SegmentSelector // new
+  }
 #+END_SRC
-
 According to [[https://nfil.dev/kernel/rust/coding/rust-kernel-to-userspace-and-back/][this post]] the actual code and data segments are obsolete
 and not used, but the code segment (CS register) sets the processor
-privilege level ("ring").  The order of the segments in the GDT does
-not seem to matter if interrupts are going to be used for system
-calls. The order is however important if the faster (and more recent)
-syscall/sysret mechanism is used.
+privilege level ("ring"). It also seems to be important to set the
+Stack Segment (SS) to avoid General Protection Faults. The order of
+the segments in the GDT does not seem to matter if interrupts are
+going to be used for system calls. The order may be important if the
+faster (and more recent) syscall/sysret mechanism is used.
+
+As we have a =get_kernel_segments= function, we can add a function to get
+the user segment selectors:
+#+begin_src rust
+  pub fn get_user_segments() -> (SegmentSelector, SegmentSelector) {
+      (GDT.1.user_code_selector, GDT.1.user_data_selector)
+  }
+#+end_src
+
+
 
 #+BEGIN_SRC rust
 context.cs = code_selector.0 as usize; // Code segment flags

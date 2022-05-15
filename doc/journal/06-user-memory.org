@@ -28,11 +28,12 @@ The =mmap()= syscall maps a region of memory (page aligned), which can be
 released (unmapped) back to the operating system.
 
 For now we'll reuse the [[https://crates.io/crates/linked_list_allocator][linked list allocator]] which is used in the
-kernel.  We can use a similar trick that we used in the stack, to
-create a large heap without actually using much memory: Map one frame,
-and mark the rest as read-only. Our page fault handler will then
-allocate frames as they are used, and when the program exits the
-frames will be returned.
+kernel, and give it a fixed size heap when the user program starts.
+We can use a similar trick that we used in the stack, to create a
+large heap without actually using much memory: Map one frame, and mark
+the rest as read-only. Our page fault handler will then allocate
+frames as they are used, and when the program exits the frames will be
+returned.
 
 To find a range of memory to use, we can use the =page_table_address=
 python code defined in the previous section on [[file:03-memory.org][Memory management]]. The
@@ -43,14 +44,67 @@ different range e.g (5,0,3,0,0) to (5,0,23,0,0), addresses
 
 ** Allocating pages
 
+#+begin_src rust
+pub fn create_user_ondemand_pages(
+    level_4_table: *mut PageTable,
+    start_addr: VirtAddr,
+    size: u64)
+    -> Result<(), MapToError<Size4KiB>> {
+
+    let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+    let frame_allocator = &mut memory_info.frame_allocator;
+    let mut mapper = unsafe {
+        OffsetPageTable::new(&mut *level_4_table,
+                             memory_info.physical_memory_offset)};
+
+    let page_range = {
+        let end_addr = start_addr + size - 1u64;
+        let start_page = Page::containing_address(start_addr);
+        let end_page = Page::containing_address(end_addr);
+        Page::range_inclusive(start_page, end_page)
+    };
+
+    // Only allocating one frame
+    let frame = frame_allocator
+        .allocate_frame()
+        .ok_or(MapToError::FrameAllocationFailed)?;
+
+    for page in page_range {
+        unsafe {
+            mapper.map_to_with_table_flags(page,
+                                           frame,
+                                           // Page not writable
+                                           PageTableFlags::PRESENT |
+                                           PageTableFlags::USER_ACCESSIBLE,
+                                           // Parent table flags include writable
+                                           PageTableFlags::PRESENT |
+                                           PageTableFlags::WRITABLE |
+                                           PageTableFlags::USER_ACCESSIBLE,
+                                           frame_allocator)?.flush()
+        };
+    }
+
+    // Make one page writable, so this 'owns' the frame
+    unsafe {
+        mapper.update_flags(page_range.start,
+                            PageTableFlags::PRESENT |
+                            PageTableFlags::WRITABLE |
+                            PageTableFlags::USER_ACCESSIBLE);
+    }
+
+    Ok(())
+}
+#+end_src
+
 
 ** Project structure
 
-We now need to have a global allocator for the user program. We can
+We now need to have a global allocator for the user program. We could
 use the kernel library because its currently a =bin= which is linked
 against the user program. A better solution is probably to rearrange
 the Cargo project so that user programs aren't linked against the
-kernel library code.
+kernel library code. User programs can then have their own global
+allocator.
 
 The way this is done with Cargo is to create a [[https://doc.rust-lang.org/book/ch14-03-cargo-workspaces.html][Workspace]]. We want this
 to contain:
@@ -61,8 +115,7 @@ to contain:
 
 This is probably also a good time to give this thing a name to replace
 =blog_os=. I've settled on *EuraliOS* from "Euralia" in A.A.Milne's
-[[https://en.wikipedia.org/wiki/Once_on_a_Time][Once On A Time]].
-
+[[https://en.wikipedia.org/wiki/Once_on_a_Time][Once On A Time]], so clearly the kernel is king "Merriwig".
 
 Using different configurations for packages within a Cargo workspace
 is a bit complicated. Cargo uses =Cargo.toml=, and if run in the root
@@ -266,4 +319,25 @@ add a message in the section which handles writes to read-only pages:
 
 ** Thread closures
 
+The Rust standard library includes a =thread::spawn= function which
+[[https://doc.rust-lang.org/book/ch16-01-threads.html][works like this]]:
+#+begin_src rust
+  use std::thread;
+  use std::time::Duration;
 
+  fn main() {
+      thread::spawn(|| {
+          for i in 1..10 {
+              println!("hi number {} from the spawned thread!", i);
+              thread::sleep(Duration::from_millis(1));
+          }
+      });
+
+      for i in 1..5 {
+          println!("hi number {} from the main thread!", i);
+          thread::sleep(Duration::from_millis(1));
+      }
+  }
+#+end_src
+
+The =spawn= function takes a closure  and passes it to [[https://github.com/rust-lang/rust/blob/master/library/std/src/sys/unix/thread.rs#L51][Thread::new()]]

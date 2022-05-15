@@ -490,7 +490,8 @@ running, and which threads are waiting. Most operating systems seem to
 use some kind of linked list for this, but [[https://rust-unofficial.github.io/too-many-lists/][lists in Rust]]
 are.. awkward. Instead we'll use a [[https://doc.rust-lang.org/std/collections/struct.VecDeque.html][VecDeque]] which we can use as a
 queue by pushing =Thread= structures onto one end and popping them off
-the other.
+the other. This is a static variable so to make writing thread safe we'll
+wrap the VecDeque in a [[https://docs.rs/spin/0.4.5/spin/struct.RwLock.html][RwLock spin lock]].
 #+begin_src rust
   use spin::RwLock;
   use lazy_static::lazy_static;
