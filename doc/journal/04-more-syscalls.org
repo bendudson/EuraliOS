@@ -41,10 +41,11 @@ There are two ways to access the GS and FS 64-bit registers directly:
 Note that push, pop and mov only access the lower 32 bits of the GS
 and FS registers.
 
-There is a third way to set the GS register indirectly, which allows the kernel
-to store an address in a location that is hidden from user programs. This
-Kernel GS base address is MSR =0xC0000102=. The =swapgs= instruction swaps
-the values in the user and kernel GS base registers. What we can do is:
+There is a third way to set the GS register indirectly, which allows
+the kernel to store an address in a location that is hidden from user
+programs. This Kernel GS base address is MSR =0xC0000102=. The
+=swapgs= instruction swaps the values in the user and kernel GS base
+registers. What we can do is:
 
 1. Store a memory address in the kernel GS base register
 2. Allow users to modify the GS register
@@ -62,9 +63,9 @@ allowed to occur during a syscall, while the GS registers are swapped,
 then they will be swapped again! To handle this there are ways to
 detect whether the interrupt occurred while in kernel code.
 
-The approach we'll use here is to only use =swapgs= in the syscall handler,
-keeping the user GS register loaded in the rest of the kernel code. This
-avoids the problem of nesting syscalls and interrupts.
+The approach we'll use here is to avoid this problem by only using
+=swapgs= in the syscall handler, keeping the user GS register loaded
+in the rest of the kernel code.
 
 *** Setting kernel GS base
 

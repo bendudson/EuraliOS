@@ -1,0 +1,63 @@
+* File descriptors
+
+After the [[file:06-user-memory.org][last section]] we can now run user programs with their own
+stack and heap memory allocation. They can print strings to screen,
+but not much else. Now we're going to enable threads to read and write
+to other streams of data, enabling user programs to use the keyboard
+input to make our operating system interactive.
+
+
+To keep things simple we're going to try and treat reading and writing
+from files, devices like keyboards, networks etc. as communications
+between processes.
+
+Communication will be over Rendezvous channels with no message buffering.
+A thread which sends to a channel blocks until another thread receives,
+and vice-versa. We can therefore have three states: The rendezvous can be
+empty, with no reader or writer; a thread can be sending and waiting for
+a receiver; or a thread is receiving and waiting for a sender. We can
+represent this with a Rust [[https://doc.rust-lang.org/book/ch06-01-defining-an-enum.html][enum]] in a new file =kernel/src/rendezvous.rs=
+#+begin_src rust
+  use alloc::boxed::Box;
+  use crate::process::Thread;
+
+  pub enum Rendezvous {
+      Empty,
+      Sending(Box<Thread>),
+      Receiving(Box<Thread>)
+  }
+#+end_src
+then add this new file to =lib.rs=:
+#+begin_src rust
+pub mod allocator;
+pub mod syscalls;
+pub mod process;
+pub mod rendezvous; // New
+#+end_src
+
+Every file that a process opens is going to correspond to a
+Rendezvous, which will be referred to by number like a file
+handle. Perhaps each process could have a HashMap of integer to
+Rendezvous, but HashMap is only in =std=, not in =alloc::collections=
+(see [[https://github.com/rust-lang/rust/issues/27242][this open issue]]), and it's probably easier to just store
+Rendezvous in a Vec inside each Process (process.rs):
+#+begin_src rust
+  struct Process {
+      page_table_physaddr: u64,
+      handles: Vec<Arc<Rendezvous>>, // New
+  }
+#+end_src
+We use an =Arc= because although a Rendezvous could be used to
+communicate between threads, they will likely be shared between two
+(or more) processes. We've now created opportunities for reference
+loops because Threads have =Arc= references to Processes, which have
+Arc references to Rendezvous, which can own Threads (in boxes).
+
+We've added another field to =Process= so have to update =new_kernel_thread=
+and =new_user_thread= e.g.:
+#+begin_src rust
+  process: Arc::new(Process {
+      page_table_physaddr: 0, // kernel thread
+      handles: Vec::new(), // New
+  }),
+#+end_src

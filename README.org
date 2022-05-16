@@ -82,12 +82,13 @@ direction...
   user process so that user programs can use =Box=, =Vec= etc, using a
   linked list allocator. As a bonus this allows a threading API with
   closures as in the Rust stdlib.
+- [[file:07-file-descriptors.org][7. File descriptors]]
 
 ** Bibliography
 
 Useful reference material includes:
 
 - [[https://www.amd.com/system/files/TechDocs/24593.pdf][AMD64 Architecture Programmer's Manual (Vol 2: System programming)]]
-- [[https://0xax.gitbooks.io/linux-insides/content/][Linux insides]]
+- [[https://0xax.gitbooks.io/linux-insides/content/][Linux insides]] by [[https://twitter.com/0xAX][@0xAX]]
 - [[https://www.kernel.org/doc/html/latest/][The Linux Kernel documentation]]
 

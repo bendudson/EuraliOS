@@ -17,6 +17,7 @@ pub mod memory;
 pub mod allocator;
 pub mod syscalls;
 pub mod process;
+pub mod rendezvous;
 
 extern crate alloc; // Memory allocation in stdlib
 

@@ -20,6 +20,7 @@ use crate::interrupts::{Context, INTERRUPT_CONTEXT_SIZE};
 use crate::gdt;
 use crate::memory;
 use crate::syscalls;
+use crate::rendezvous::Rendezvous;
 
 use object::{Object, ObjectSegment};
 
@@ -65,7 +66,10 @@ pub fn unique_id() -> u64 {
 /// Per-process state
 struct Process {
     /// Page table physical address
-    page_table_physaddr: u64
+    page_table_physaddr: u64,
+
+    /// Communication/file handles
+    handles: Vec<Arc<Rendezvous>>,
 }
 
 impl Drop for Process {
@@ -88,7 +92,7 @@ impl Drop for Process {
 ///    on the stack, then moves it onto the heap. Fixed sized arrays
 ///    therefore can't be used for the new process' stack because they
 ///    overflow the current stack.
-struct Thread {
+pub struct Thread {
     /// Thread ID
     tid: u64,
 
@@ -179,7 +183,8 @@ pub fn new_kernel_thread(function: fn()->()) -> u64 {
         Box::new(Thread {
             tid: unique_id(),
             process: Arc::new(Process {
-                page_table_physaddr: 0
+                page_table_physaddr: 0,
+                handles: Vec::new(),
             }),
             page_table_physaddr: 0, // Don't need to switch PT
             kernel_stack,
@@ -333,7 +338,8 @@ pub fn new_user_thread(bin: &[u8]) -> Result<u64, &'static str> {
                     tid: unique_id(),
                     // Create a new process
                     process: Arc::new(Process {
-                        page_table_physaddr: user_page_table_physaddr
+                        page_table_physaddr: user_page_table_physaddr,
+                        handles: Vec::new(),
                     }),
                     page_table_physaddr: user_page_table_physaddr,
                     kernel_stack: kernel_stack,
@@ -376,7 +382,7 @@ pub fn new_user_thread(bin: &[u8]) -> Result<u64, &'static str> {
             return Ok(tid);
         });
     }
-    return Err("Could not parse ELF");
+    Err("Could not parse ELF")
 }
 
 /// Fork the current user thread
