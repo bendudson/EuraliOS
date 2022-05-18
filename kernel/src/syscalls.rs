@@ -32,6 +32,7 @@ use core::{slice, str};
 use crate::process;
 use crate::gdt;
 use crate::interrupts::Context;
+use crate::rendezvous;
 
 // register for address of syscall handler
 const MSR_STAR: usize = 0xc0000081;
@@ -214,12 +215,13 @@ extern "C" fn dispatch_syscall(context_ptr: *mut Context, syscall_id: u64,
         0 => process::fork_current_thread(context),
         1 => process::exit_current_thread(context),
         2 => sys_write(arg1 as *const u8, arg2 as usize),
+        3 => sys_receive(arg1),
         _ => println!("Unknown syscall {:?} {} {} {}",
                        context_ptr, syscall_id, arg1, arg2)
     }
 }
 
-extern "C" fn sys_write(ptr: *const u8, len:usize) {
+fn sys_write(ptr: *const u8, len:usize) {
     // Check all inputs: Does ptr -> ptr+len lie entirely in user address space?
     if len == 0 {
         return;
@@ -230,4 +232,43 @@ extern "C" fn sys_write(ptr: *const u8, len:usize) {
     if let Ok(s) = str::from_utf8(u8_slice) {
         print!("{}", s);
     } // else error
+}
+
+fn sys_receive(handle: u64) {
+    // Extract the current thread
+    if let Some(thread) = process::take_current_thread() {
+        let current_tid = thread.tid();
+
+        // Get the Rendezvous and call
+        if let Some(rdv) = thread.rendezvous(handle) {
+            let (thread1, thread2) = rdv.write().receive(thread);
+            // thread1 should be started asap
+            // thread2 should be scheduled
+
+            let mut returning = false;
+            for maybe_thread in [thread1, thread2] {
+                if let Some(t) = maybe_thread {
+                    if t.tid() == current_tid {
+                        // Same thread -> return
+                        process::set_current_thread(t);
+                        returning = true;
+                    } else {
+                        process::schedule_thread(t);
+                    }
+                }
+            }
+
+            if !returning {
+                // Original thread is waiting.
+                // Should switch to a different thread
+                // For now just wait for the timer interrupt
+                unsafe {
+                    asm!("sti",
+                         "2:",
+                         "hlt",
+                         "jmp 2b");
+                }
+            }
+        }
+    }
 }

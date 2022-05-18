@@ -127,6 +127,11 @@ pub struct Thread {
 use crate::rendezvous::Message;
 
 impl Thread {
+    /// Get the Thread ID
+    pub fn tid(&self) -> u64 {
+        self.tid
+    }
+
     /// Get a reference to the thread Context
     fn context(&self) -> &Context {
         unsafe {& *(self.context as *const Context)}
@@ -210,6 +215,22 @@ pub fn schedule_thread(thread: Box<Thread>) {
     interrupts::without_interrupts(|| {
         RUNNING_QUEUE.write().push_front(thread);
     });
+}
+
+
+/// Takes ownership of the current Thread
+pub fn take_current_thread() -> Option<Box<Thread>> {
+    CURRENT_THREAD.write().take()
+}
+
+/// Makes the given thread the current thread
+/// If another thread was running schedule it
+pub fn set_current_thread(thread: Box<Thread>) {
+    // Replace the current thread
+    let old_current = CURRENT_THREAD.write().replace(thread);
+    if let Some(t) = old_current {
+        schedule_thread(t);
+    }
 }
 
 /// Start a new kernel thread by adding it to the process table.
