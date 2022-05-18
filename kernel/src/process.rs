@@ -124,7 +124,46 @@ pub struct Thread {
     context: u64,
 }
 
+use crate::rendezvous::Message;
+
 impl Thread {
+    /// Get a reference to the thread Context
+    fn context(&self) -> &Context {
+        unsafe {& *(self.context as *const Context)}
+    }
+
+    /// Get a mutable reference to the thread Context
+    fn context_mut(&self) -> &mut Context {
+        unsafe {&mut *(self.context as *mut Context)}
+    }
+
+    /// Modify a thread context, setting the RAX
+    /// register to signal an error.
+    ///
+    /// Note: Should only be applied to threads that
+    /// will return from a syscall.
+    pub fn return_error(&self, error_code: usize) {
+        self.context_mut().rax = error_code;
+    }
+
+    /// Modify a thread context, setting registers
+    ///
+    /// Note: Should only be applied to threads that
+    /// will return from a syscall.
+    pub fn return_message(&self, message: Message) {
+        let context = self.context_mut();
+
+        context.rax = 0; // No error
+        match message {
+            Message::Short(value) => {
+                context.rcx = value;
+            },
+            Message::Long => {
+                context.rcx = 42;
+            }
+        }
+    }
+
     /// Get a Rendezvous handle if it exists
     pub fn rendezvous(&self, id: u64)
                       -> Option<Arc<RwLock<Rendezvous>>> {
@@ -207,7 +246,7 @@ pub fn new_kernel_thread(function: fn()->()) -> u64 {
     };
 
     // Cast context address to Context struct
-    let context = unsafe {&mut *(new_thread.context as *mut Context)};
+    let context = new_thread.context_mut();
 
     // Set the instruction pointer
     context.rip = function as usize;
@@ -362,7 +401,7 @@ pub fn new_user_thread(bin: &[u8]) -> Result<u64, &'static str> {
             };
 
             // Cast context address to Context struct
-            let context = unsafe {&mut *(new_thread.context as *mut Context)};
+            let context = new_thread.context_mut();
 
             context.rip = entry_point as usize;
 
