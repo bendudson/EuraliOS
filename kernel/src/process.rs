@@ -15,7 +15,7 @@ use alloc::{boxed::Box, collections::vec_deque::VecDeque, vec::Vec, sync::Arc};
 use core::arch::asm;
 
 use crate::println;
-use crate::interrupts::{Context, INTERRUPT_CONTEXT_SIZE};
+use crate::interrupts::{Context, INTERRUPT_CONTEXT_SIZE, keyboard_rendezvous};
 
 use crate::gdt;
 use crate::memory;
@@ -203,7 +203,16 @@ impl Drop for Thread {
     }
 }
 
-/// Start a new kernel thread, by adding it to the process table.
+/// Adds a thread to the front of the running queue
+/// so it will be scheduled next
+pub fn schedule_thread(thread: Box<Thread>) {
+    // Turn off interrupts while modifying process table
+    interrupts::without_interrupts(|| {
+        RUNNING_QUEUE.write().push_front(thread);
+    });
+}
+
+/// Start a new kernel thread by adding it to the process table.
 /// This won't run immediately, but will run when the scheduler
 /// next switches to it.
 ///
@@ -267,11 +276,9 @@ pub fn new_kernel_thread(function: fn()->()) -> u64 {
     let tid = new_thread.tid;
 
     println!("New kernel thread {}", new_thread);
+    // Add to the scheduler
+    schedule_thread(new_thread);
 
-    // Turn off interrupts while modifying process table
-    interrupts::without_interrupts(|| {
-        RUNNING_QUEUE.write().push_back(new_thread);
-    });
     tid
 }
 
@@ -388,7 +395,7 @@ pub fn new_user_thread(bin: &[u8]) -> Result<u64, &'static str> {
                     // Create a new process
                     process: Arc::new(Process {
                         page_table_physaddr: user_page_table_physaddr,
-                        handles: Vec::new(),
+                        handles: Vec::from([keyboard_rendezvous()]),
                     }),
                     page_table_physaddr: user_page_table_physaddr,
                     kernel_stack: kernel_stack,
@@ -423,11 +430,8 @@ pub fn new_user_thread(bin: &[u8]) -> Result<u64, &'static str> {
             let tid = new_thread.tid;
 
             println!("New Thread {}", new_thread);
-            // No interrupts while modifying queue
-            interrupts::without_interrupts(|| {
-                RUNNING_QUEUE.write().push_back(new_thread);
-            });
 
+            schedule_thread(new_thread);
             return Ok(tid);
         });
     }

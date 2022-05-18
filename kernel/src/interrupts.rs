@@ -273,6 +273,21 @@ impl InterruptIndex {
     }
 }
 
+use alloc::sync::Arc;
+use spin::RwLock;
+use crate::rendezvous::{Rendezvous, Message};
+
+lazy_static! {
+    static ref KEYBOARD_RENDEZVOUS: Arc<RwLock<Rendezvous>> =
+        Arc::new(RwLock::new(Rendezvous::Empty));
+}
+
+/// Get a shared reference to the keyboard Rendezvous object.
+/// The keyboard interrupt handler will send messages to this.
+pub fn keyboard_rendezvous() -> Arc<RwLock<Rendezvous>> {
+    KEYBOARD_RENDEZVOUS.clone()
+}
+
 extern "x86-interrupt" fn keyboard_interrupt_handler(
     _stack_frame: InterruptStackFrame)
 {
@@ -294,7 +309,17 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(
     if let Ok(Some(key_event)) = keyboard.add_byte(scancode) {
         if let Some(key) = keyboard.process_keyevent(key_event) {
             match key {
-                DecodedKey::Unicode(character) => print!("{}", character),
+                DecodedKey::Unicode(character) => {
+                    print!("{}", character);
+                    let (thread1, thread2) = KEYBOARD_RENDEZVOUS.write().send(None, Message::Short(character as usize));
+                    // thread1 should be scheduled to run next
+                    if let Some(t) = thread2 {
+                        process::schedule_thread(t);
+                    }
+                    if let Some(t) = thread1 {
+                        process::schedule_thread(t);
+                    }
+                },
                 DecodedKey::RawKey(key) => print!("{:?}", key),
             }
         }
