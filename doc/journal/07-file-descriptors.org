@@ -1,4 +1,4 @@
-* File descriptors
+* Inter-process Communication (IPC)
 
 After the [[file:06-user-memory.org][last section]] we can now run user programs with their own
 stack and heap memory allocation. They can print strings to screen,
@@ -44,7 +44,7 @@ Rendezvous in a Vec inside each Process (process.rs):
 #+begin_src rust
   struct Process {
       page_table_physaddr: u64,
-      handles: Vec<Arc<Rendezvous>>, // New
+      handles: Vec<Arc<RwLock<Rendezvous>>>, // New
   }
 #+end_src
 We use an =Arc= because although a Rendezvous could be used to
@@ -53,6 +53,10 @@ communicate between threads, they will likely be shared between two
 loops because Threads have =Arc= references to Processes, which have
 Arc references to Rendezvous, which can own Threads (in boxes).
 
+Arc containers don't allow obtaining mutable references the contents,
+so to allow mutation of the Rendezvous (i.e. sending and receiving messages)
+we use an =RwLock= to control access.
+
 We've added another field to =Process= so have to update =new_kernel_thread=
 and =new_user_thread= e.g.:
 #+begin_src rust
@@ -60,4 +64,285 @@ and =new_user_thread= e.g.:
       page_table_physaddr: 0, // kernel thread
       handles: Vec::new(), // New
   }),
+#+end_src
+
+and we can add a Thread method to access these handles:
+#+begin_src rust
+  impl Thread {
+      pub fn rendezvous(&self, id: u64)
+                        -> Option<Arc<RwLock<Rendezvous>>> {
+          self.process.handles
+              .get(id as usize)
+              .map(|rv| rv.clone())
+      }
+  }
+#+end_src
+
+* Sending and receiving
+
+First we need to decide what we're going to send and receive.  To keep
+it general we can define a =Message= enum with a short kind and a long
+kind. The short kind might represent messages which fit in registers,
+while the long may involve transferring memory pages. In =rendezvous.rs=:
+#+begin_src rust
+  pub enum Message {
+      Short(usize),
+      Long,
+  }
+#+end_src
+
+When =send= is called with a Thread and the Message, the action to
+take depends on the state of the Rendezvous, which can be can be one
+of:
+1. =Empty=: Change to =Sending= state, storing the Thread and returning nothing
+2. =Sending=: Keep Sending state, return the calling Thread and signal
+   an error to the caller because only one thread can be waiting to
+   send.
+3. =Receiving=: Change to Empty, return both the receiving thread and sending thread
+The =send= method can therefore return zero, one or two Threads, so we'll use a
+return type of =
+
+To modify the Rendezvous in place via the mutable reference (&mut
+self), we can use the same method that =Option<>= does, and use [[
+ https://doc.rust-lang.org/beta/core/mem/fn.replace.html][core::mem::replace]]
+
+
+#+begin_src rust
+  use core::mem;
+
+  impl Rendezvous {
+      pub fn send(&mut self, thread: Option<Box<Thread>>, message: Message)
+                  -> (Option<Box<Thread>>, Option<Box<Thread>>) {
+          match &*self {
+              Rendezvous::Empty => {
+                  ,*self = Rendezvous::Sending(thread, message);
+                  (None, None)
+              }
+              Rendezvous::Sending(_, _) => {
+                  if let Some(t) = &thread {
+                      t.return_error(1);
+                  }
+                  (thread, None)
+              }
+              Rendezvous::Receiving(_) => {
+                  if let Rendezvous::Receiving(rec_thread) = mem::replace(self, Rendezvous::Empty) {
+                      rec_thread.return_message(message);
+                      return (Some(rec_thread), thread);
+                  }
+                  (None, None) // This should never be reached
+              }
+          }
+      }
+  }
+#+end_src
+
+      ///
+      /// 1. Empty -> Receiving, return (None, None)
+      /// 2. Sending -> Empty, return (receiving thread, sending thread)
+      /// 3. Receiving -> return (receiving thread, None)
+      ///                 Error returned to thread
+      ///
+      /// Returns
+      /// -------
+      ///
+      /// Zero, one or two threads (thread1, thread2)
+      ///
+      /// thread1  should be started asap
+      /// thread2  should be scheduled
+#+begin_src rust
+  impl Rendezvous {
+      ...
+      pub fn receive(&mut self, thread: Box<Thread>) -> (Option<Box<Thread>>, Option<Box<Thread>>) {
+          match &*self {
+              Rendezvous::Empty => {
+                  ,*self = Rendezvous::Receiving(thread);
+                  (None, None)
+              }
+              Rendezvous::Sending(_, _) => {
+                  if let Rendezvous::Sending(snd_thread, message) = mem::replace(self, Rendezvous::Empty) {
+                      thread.return_message(message);
+                      return (Some(thread), snd_thread);
+                  }
+                  (None, None) // This should never be reached
+              }
+              Rendezvous::Receiving(_) => {
+                  thread.return_error(2);
+                  (Some(thread), None)
+              }
+          }
+      }
+  }
+#+end_src
+
+In =send= and =receive= the Thread methods =return_error()= and
+=return_message= are used to send data to the threads.
+
+#+begin_src rust
+  use crate::rendezvous::Message;
+
+  impl Thread {
+      fn context_mut(&self) -> &mut Context {
+          unsafe {&mut *(self.context as *mut Context)}
+      }
+
+      pub fn return_error(&self, error_code: usize) {
+          self.context_mut().rax = error_code;
+      }
+
+      pub fn return_message(&self, message: Message) {
+          let context = self.context_mut();
+          context.rax = 0; // No error
+          match message {
+              Message::Short(value) => {
+                  context.rcx = value;
+              },
+              Message::Long => {
+                  context.rcx = 42;
+              }
+          }
+      }
+  }
+#+end_src
+
+** Sending keyboard events
+
+#+begin_src rust
+use alloc::sync::Arc;
+use spin::RwLock;
+use crate::rendezvous::{Rendezvous, Message};
+
+lazy_static! {
+    static ref KEYBOARD_RENDEZVOUS: Arc<RwLock<Rendezvous>> =
+        Arc::new(RwLock::new(Rendezvous::Empty));
+}
+
+pub fn keyboard_rendezvous() -> Arc<RwLock<Rendezvous>> {
+    KEYBOARD_RENDEZVOUS.clone()
+}
+#+end_src
+
+#+begin_src rust
+  extern "x86-interrupt" fn keyboard_interrupt_handler(
+      _stack_frame: InterruptStackFrame)
+  {
+      ...
+          match key {
+              DecodedKey::Unicode(character) => {
+                  print!("{}", character);
+                  let (thread1, thread2) =
+                      KEYBOARD_RENDEZVOUS.write()
+                      .send(None, Message::Short(character as usize));
+                  if let Some(t) = thread2 {
+                      process::schedule_thread(t);
+                  }
+                  if let Some(t) = thread1 {
+                      process::schedule_thread(t);
+                  }
+              },
+              DecodedKey::RawKey(key) => print!("{:?}", key),
+          }
+  }
+#+end_src
+
+In =process.rs=:
+#+begin_src rust
+  pub fn schedule_thread(thread: Box<Thread>) {
+      interrupts::without_interrupts(|| {
+          RUNNING_QUEUE.write().push_front(thread);
+      });
+  }
+#+end_src
+
+#+begin_src rust
+  use crate::interrupts::{Context, INTERRUPT_CONTEXT_SIZE, keyboard_rendezvous};
+
+  ...
+      Box::new(Thread {
+          tid: unique_id(),
+          // Create a new process
+          process: Arc::new(Process {
+              page_table_physaddr: user_page_table_physaddr,
+              handles: Vec::from([keyboard_rendezvous()]), // New
+          }),
+          ...
+#+end_src
+
+** Receiving syscall
+
+In =syscall.rs=
+#+begin_src rust
+   use crate::rendezvous;
+
+  2 => sys_write(arg1 as *const u8, arg2 as usize),
+  3 => sys_receive(arg1), // New
+  _ => println!("Unknown syscall {:?} {} {} {}",
+                context_ptr, syscall_id, arg1, arg2)
+
+#+end_src
+
+#+begin_src rust
+  fn sys_receive(handle: u64) {
+      // Extract the current thread
+      if let Some(thread) = process::take_current_thread() {
+          let current_tid = thread.tid();
+
+          // Get the Rendezvous and call
+          if let Some(rdv) = thread.rendezvous(handle) {
+              let (thread1, thread2) = rdv.write().receive(thread);
+              // thread1 should be started asap
+              // thread2 should be scheduled
+
+              let mut returning = false;
+              for maybe_thread in [thread1, thread2] {
+                  if let Some(t) = maybe_thread {
+                      if t.tid() == current_tid {
+                          // Same thread -> return
+                          process::set_current_thread(t);
+                          returning = true;
+                      } else {
+                          process::schedule_thread(t);
+                      }
+                  }
+              }
+
+              if !returning {
+                  // Original thread is waiting.
+                  // Should switch to a different thread
+                  // For now just wait for the timer interrupt
+                  unsafe {
+                      asm!("sti",
+                           "2:",
+                           "hlt",
+                           "jmp 2b");
+                  }
+              }
+          }
+      }
+  }
+#+end_src
+
+which need in =process.rs=:
+#+begin_src rust
+  impl Thread {
+      /// Get the Thread ID
+      pub fn tid(&self) -> u64 {
+          self.tid
+      }
+      ...
+  }
+
+  /// Takes ownership of the current Thread
+  pub fn take_current_thread() -> Option<Box<Thread>> {
+      CURRENT_THREAD.write().take()
+  }
+
+  /// Makes the given thread the current thread
+  /// If another thread was running schedule it
+  pub fn set_current_thread(thread: Box<Thread>) {
+      // Replace the current thread
+      let old_current = CURRENT_THREAD.write().replace(thread);
+      if let Some(t) = old_current {
+          schedule_thread(t);
+      }
+  }
 #+end_src
