@@ -69,7 +69,7 @@ struct Process {
     page_table_physaddr: u64,
 
     /// Communication/file handles
-    handles: Vec<Arc<Rendezvous>>,
+    handles: Vec<Arc<RwLock<Rendezvous>>>,
 }
 
 impl Drop for Process {
@@ -122,6 +122,16 @@ pub struct Thread {
     /// Address within the kernel_stack which stores
     /// the Context structure containing thread state.
     context: u64,
+}
+
+impl Thread {
+    /// Get a Rendezvous handle if it exists
+    pub fn rendezvous(&self, id: u64)
+                      -> Option<Arc<RwLock<Rendezvous>>> {
+        self.process.handles
+            .get(id as usize)
+            .map(|rv| rv.clone())
+    }
 }
 
 use core::fmt;
