@@ -30,6 +30,7 @@ pre-emptive multitasking so far. The result is an OS that can't do
 much, but it can do it all at the same time.
 
 - [X] Basic VGA text output (phil-opp blog)
+- [X] Keyboard input (phil-opp blog)
 - [X] UART Serial port output (phil-opp blog)
 - [X] ELF loader (adapted from MOROS approach, using the [[https://crates.io/crates/object][object crate]])
 - [X] Pre-emptive multitasking, with kernel and user-space threads and
@@ -60,7 +61,7 @@ I've tried to document the steps to build EuraliOS, starting from the
 end of [[https://os.phil-opp.com/heap-allocation/][post 10 (heap allocation)]] of Phil Opp's blog (2nd Ed). At that
 point the kernel had a heap and a bump frame allocator (so could
 allocate but not free memory), some code to handle pages,
-exceptions, and VGA output. Post 11 went on to add Async/Await
+exceptions, and VGA output. [[https://os.phil-opp.com/async-await/][Post 11]] went on to add Async/Await
 cooperative multitasking, but here we go in a slightly different
 direction...
 
@@ -70,7 +71,7 @@ direction...
 - [[file:doc/journal/02-userspace.org][2. Userspace]] in which a program is loaded into memory and run in
   Ring 3 (user space). Syscall/sysret is used to implement a simple
   way to print from user programs.
-- [[file:doc/journal/03-memory][3. Memory management]] in which we create separate page tables for
+- [[file:doc/journal/03-memory.org][3. Memory management]] in which we create separate page tables for
   user processes and stacks for each thread.
 - [[file:doc/journal/04-more-syscalls.org][4. Syscalls for thread control]] which adds syscalls to spawn new
   threads and to exit from a thread. We also learn how to use the

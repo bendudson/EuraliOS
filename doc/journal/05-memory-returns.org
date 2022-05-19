@@ -36,7 +36,12 @@ frame availability in a tree structure.
 If we use 32 bits for the level-2 bitmap, then we can keep track of 32
 x 32 = 1024 frames, or 4Mb. Later we'll generalise this to more than
 two levels, and the number of levels needed will increase as the log
-(base 32) of the total number of frames.
+(base 32) of the total number of frames. The process of finding an available
+frame in a 3-level bitmap is illustrated in figure [[fig-multi_level_bitmap]].
+
+#+CAPTION: Diagram of a multi-level bitmap
+#+NAME: fig-multi_level_bitmap
+[[./img/multi_level_bitmap.svg]]
 
 Finding an available frame means quickly finding a '1' bit somewhere
 in this bitmap.  To scan bitmaps efficiently we can use the [[https://www.felixcloutier.com/x86/bsf][Bit Scan
