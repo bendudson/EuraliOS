@@ -1,0 +1,25 @@
+* Faster IPC
+
+In the [[file:07-ipc.org][last section]] a method to communicate between threads
+was implemented (in =rendezvous.rs=), and used to add a
+=read= syscall so that user programs can get keyboard input.
+
+The way this works is: When a key is pressed whichever thread is
+running (thread A) is interrupted, and the keyboard handler calls
+=send= on the rendezvous. In most cases there is already a thread
+waiting (thread B), so =send= returns the =Box<Thread>= corresponding
+to thread B, which the keyboard handler passes to
+=process:schedule_thread=.  The keyboard handler then returns to
+thread A, and a little time later the timer interrupt stops thread A
+and switches context to thread B.
+
+What's happened to thread B is curious: It called the kernel with a
+=syscall=, but returns from that call with an =iret= from the timer
+interrupt handler. This shows that our sysret and interrupt handlers
+treat contexts consistently, and that we can use =iret= to restart any
+thread. Note that the other way around doesn't work: We can't
+interrupt a thread and then return to it with a [[https://www.felixcloutier.com/x86/sysret][sysret]] instruction
+because =sysret= uses the =rcx= and =r11= registers. The interrupted
+thread would, as far as it is concerned, suddenly have two of its
+registers unexpectedly modified.
+

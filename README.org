@@ -85,6 +85,8 @@ direction...
 - [[file:doc/journal/07-ipc.org][7. Inter-process communication (IPC)]] where a simple "rendezvous"
   communication method is implemented, enabling a user program to
   get input from the keyboard.
+- [[file:doc/journal/08-faster-ipc.org][8. Faster IPC]]
+
 ** Bibliography
 
 Useful reference material includes:

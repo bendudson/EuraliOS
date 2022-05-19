@@ -277,17 +277,18 @@ In =syscall.rs=
    use crate::rendezvous;
 
   2 => sys_write(arg1 as *const u8, arg2 as usize),
-  3 => sys_receive(arg1), // New
+  3 => sys_receive(context_ptr, arg1), // New
   _ => println!("Unknown syscall {:?} {} {} {}",
                 context_ptr, syscall_id, arg1, arg2)
 
 #+end_src
 
 #+begin_src rust
-  fn sys_receive(handle: u64) {
+  fn sys_receive(context_ptr: *mut Context, handle: u64) {
       // Extract the current thread
       if let Some(thread) = process::take_current_thread() {
           let current_tid = thread.tid();
+          thread.set_context(context_ptr);
 
           // Get the Rendezvous and call
           if let Some(rdv) = thread.rendezvous(handle) {
@@ -324,12 +325,16 @@ In =syscall.rs=
   }
 #+end_src
 
-which need in =process.rs=:
+which needs a few more utilities in =process.rs=, to interact with the
+scheduling and set the thread context:
 #+begin_src rust
   impl Thread {
       /// Get the Thread ID
       pub fn tid(&self) -> u64 {
           self.tid
+      }
+      pub fn set_context(&mut self, context_ptr: *mut Context) {
+        self.context = context_ptr as u64;
       }
       ...
   }
@@ -342,7 +347,6 @@ which need in =process.rs=:
   /// Makes the given thread the current thread
   /// If another thread was running schedule it
   pub fn set_current_thread(thread: Box<Thread>) {
-      // Replace the current thread
       let old_current = CURRENT_THREAD.write().replace(thread);
       if let Some(t) = old_current {
           schedule_thread(t);
@@ -355,15 +359,45 @@ which need in =process.rs=:
 In =hello.rs=
 
 #+begin_src rust
-  loop{
-      let err: u64;
-      let value: u64;
-      asm!("mov rax, 3", // sys_receive
-           "mov rdi, 0", // handle
-           "syscall",
-           lateout("rax") err,    // Error code
-           lateout("rdi") value); // Short message value
-      println!("Received: {} , {} => {}", err, value, char::from_u32(value as u32).unwrap());
-  }
+    pub unsafe extern "sysv64" fn _start() -> ! {
+        ...
+        loop{
+            let err: u64;
+            let value: u64;
+            asm!("mov rax, 3", // sys_receive
+                 "mov rdi, 0", // handle
+                 "syscall",
+                 lateout("rax") err,    // Error code
+                 lateout("rdi") value); // Short message value
+            println!("Received: {} , {} => {}", err, value,
+                     char::from_u32(value as u32).unwrap());
+        }
+    }
 #+end_src
 
+Running this an pressing some keys should print the characters from
+this user thread! Try holding down a key so keyboard events are
+generated rapidly: That should check what happens if =send= is called
+on the Rendezvous before =receive= and so the =sys_receive= function
+returns via =sysret= rather than waiting for an interrupt.
+
+There are still some problems:
+1. If we have more than one user thread, and they both try to read
+   from the keyboard, one of them will get an error message. You can
+   test this by creating two user threads in =main.rs= (the
+   =kernel_thread_main= function): One of the threads will keep
+   printing error code 2, which we set in =Rendezvous.receive()=.
+
+2. There are unnecessary delays between an event occurring (e.g. a key
+   press) and the message reaching the code that will respond (the
+   =hello= program): In =sys_receive= if there is no message then we
+   wait (call =hlt=) until the next timer interrupt. More seriously,
+   when an event occurs (in =keyboard_interrupt_handler=) we have to
+   schedule the receiving thread and wait until the next timer
+   interrupt. That limits a sequence of messages to a maximum rate of
+   one message per timer interrupt, about 10 per second. At that rate
+   a chain of only a few message hops will introduce a noticeable
+   delay.
+
+In the [[file:08-faster-ipc.org][next section]] we'll look at fixing the second problem to make
+IPC faster.
