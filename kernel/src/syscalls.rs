@@ -215,7 +215,7 @@ extern "C" fn dispatch_syscall(context_ptr: *mut Context, syscall_id: u64,
         0 => process::fork_current_thread(context),
         1 => process::exit_current_thread(context),
         2 => sys_write(arg1 as *const u8, arg2 as usize),
-        3 => sys_receive(arg1),
+        3 => sys_receive(context_ptr, arg1),
         _ => println!("Unknown syscall {:?} {} {} {}",
                        context_ptr, syscall_id, arg1, arg2)
     }
@@ -234,10 +234,12 @@ fn sys_write(ptr: *const u8, len:usize) {
     } // else error
 }
 
-fn sys_receive(handle: u64) {
+fn sys_receive(context_ptr: *mut Context, handle: u64) {
     // Extract the current thread
-    if let Some(thread) = process::take_current_thread() {
+    if let Some(mut thread) = process::take_current_thread() {
         let current_tid = thread.tid();
+        thread.set_context(context_ptr);
+
 
         // Get the Rendezvous and call
         if let Some(rdv) = thread.rendezvous(handle) {

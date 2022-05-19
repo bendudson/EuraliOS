@@ -175,8 +175,7 @@ self), we can use the same method that =Option<>= does, and use [[
 #+end_src
 
 In =send= and =receive= the Thread methods =return_error()= and
-=return_message= are used to send data to the threads.
-
+=return_message= are used to send data to the threads:
 #+begin_src rust
   use crate::rendezvous::Message;
 
@@ -194,15 +193,19 @@ In =send= and =receive= the Thread methods =return_error()= and
           context.rax = 0; // No error
           match message {
               Message::Short(value) => {
-                  context.rcx = value;
+                  context.rdi = value;
               },
               Message::Long => {
-                  context.rcx = 42;
+                  context.rdi = 42;
               }
           }
       }
   }
 #+end_src
+Note that we have to be a little careful with which registers
+are modified in =return_message()=: the =sysret= instruction
+takes the instruction pointer from RCX, and RFLAGS from R11.
+LLVM seems to reserve RBX.
 
 ** Sending keyboard events
 
@@ -267,7 +270,7 @@ In =process.rs=:
           ...
 #+end_src
 
-** Receiving syscall
+** Adding a sys_receive syscall
 
 In =syscall.rs=
 #+begin_src rust
@@ -346,3 +349,21 @@ which need in =process.rs=:
       }
   }
 #+end_src
+
+** Calling from user space
+
+In =hello.rs=
+
+#+begin_src rust
+  loop{
+      let err: u64;
+      let value: u64;
+      asm!("mov rax, 3", // sys_receive
+           "mov rdi, 0", // handle
+           "syscall",
+           lateout("rax") err,    // Error code
+           lateout("rdi") value); // Short message value
+      println!("Received: {} , {} => {}", err, value, char::from_u32(value as u32).unwrap());
+  }
+#+end_src
+

@@ -142,6 +142,10 @@ impl Thread {
         unsafe {&mut *(self.context as *mut Context)}
     }
 
+    pub fn set_context(&mut self, context_ptr: *mut Context) {
+        self.context = context_ptr as u64;
+    }
+
     /// Modify a thread context, setting the RAX
     /// register to signal an error.
     ///
@@ -155,16 +159,20 @@ impl Thread {
     ///
     /// Note: Should only be applied to threads that
     /// will return from a syscall.
+    ///
+    /// Note:
+    ///  - RCX and R11 are used by sysret so can't be used
+    ///    to return data
     pub fn return_message(&self, message: Message) {
         let context = self.context_mut();
 
         context.rax = 0; // No error
         match message {
             Message::Short(value) => {
-                context.rcx = value;
+                context.rdi = value;
             },
             Message::Long => {
-                context.rcx = 42;
+                context.rdi = 42;
             }
         }
     }

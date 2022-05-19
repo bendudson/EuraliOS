@@ -141,10 +141,25 @@ pub unsafe extern "sysv64" fn _start() -> ! {
         println!("{} : {}", tid, i);
         for i in 1..10000000 {
             unsafe { asm!("nop");}
+    ALLOCATOR.lock().init(heap_start, heap_size);
+
+    loop{
+        println!("Calling sys_read");
+        let err: u64;
+        let value: u64;
+        asm!("mov rax, 3", // sys_receive
+             "mov rdi, 0", // handle
+             "syscall",
+             lateout("rax") err,
+             lateout("rdi") value);
+        let ch = char::from_u32(value as u32).unwrap();
+        println!("Received: {} , {} => {}", err, value, ch);
+        if ch == 'x' {
+            println!("Exiting");
+            break;
         }
     }
 
-    ALLOCATOR.lock().init(heap_start, heap_size);
     asm!("mov rax, 1", // exit_current_thread syscall
          "syscall");
     loop{}

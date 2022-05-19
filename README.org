@@ -82,8 +82,9 @@ direction...
   user process so that user programs can use =Box=, =Vec= etc, using a
   linked list allocator. As a bonus this allows a threading API with
   closures as in the Rust stdlib.
-- [[file:07-file-descriptors.org][7. File descriptors]]
-
+- [[file:doc/journal/07-ipc.org][7. Inter-process communication (IPC)]] where a simple "rendezvous"
+  communication method is implemented, enabling a user program to
+  get input from the keyboard.
 ** Bibliography
 
 Useful reference material includes:
