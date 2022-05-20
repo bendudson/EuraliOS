@@ -628,8 +628,8 @@ we're going to define soon):
 #+begin_src rust
   use crate::process;
 
-  extern "C" fn timer_handler(context: &mut Context) -> usize {
-      let next_stack = process::schedule_next(context);
+  extern "C" fn timer_handler(context_addr: usize) -> usize {
+      let next_stack = process::schedule_next(context_addr);
       unsafe {
           PICS.lock()
               .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
@@ -646,13 +646,13 @@ we'll just implement the simplest *Round Robin* method, in which the
 threads take turns and each gets the same amount of time.
 
 #+begin_src rust
-  pub fn schedule_next(context: &Context) -> usize {
+  pub fn schedule_next(context_addr: usize) -> usize {
       let mut running_queue = RUNNING_QUEUE.write();
       let mut current_thread = CURRENT_THREAD.write();
 
       if let Some(mut thread) = current_thread.take() {
           // Save the location of the Context struct
-          thread.context = (context as *const Context) as u64;
+          thread.context = context_addr as u64;
           // Put to the back of the queue
           running_queue.push_back(thread);
       }

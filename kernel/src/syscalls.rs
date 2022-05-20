@@ -31,7 +31,7 @@ use core::{slice, str};
 
 use crate::process;
 use crate::gdt;
-use crate::interrupts::Context;
+use crate::interrupts::{self, Context};
 use crate::rendezvous;
 
 // register for address of syscall handler
@@ -240,7 +240,6 @@ fn sys_receive(context_ptr: *mut Context, handle: u64) {
         let current_tid = thread.tid();
         thread.set_context(context_ptr);
 
-
         // Get the Rendezvous and call
         if let Some(rdv) = thread.rendezvous(handle) {
             let (thread1, thread2) = rdv.write().receive(thread);
@@ -262,14 +261,9 @@ fn sys_receive(context_ptr: *mut Context, handle: u64) {
 
             if !returning {
                 // Original thread is waiting.
-                // Should switch to a different thread
-                // For now just wait for the timer interrupt
-                unsafe {
-                    asm!("sti",
-                         "2:",
-                         "hlt",
-                         "jmp 2b");
-                }
+                // Switch to a different thread
+                let new_context_addr = process::schedule_next(context_ptr as usize);
+                interrupts::launch_thread(new_context_addr);
             }
         }
     }

@@ -23,3 +23,68 @@ because =sysret= uses the =rcx= and =r11= registers. The interrupted
 thread would, as far as it is concerned, suddenly have two of its
 registers unexpectedly modified.
 
+** Speeding up sys_receive
+
+The easier part to speed up is removing the =hlt= instruction in the
+=sys_receive= function (=syscalls.rs=). If the calling thread blocks
+(waiting for a message) then all we need to do is find the next
+thread, and then jump into the middle of the =interrupt_wrap!= macro
+(=interrupts.rs=), as if we had returned from the timer interrupt.
+
+We can do that by just copying the assembly starting ="pop r15"= and
+ending =iret=, in a new function =launch_thread()= in =interrupts.rs=:
+#+begin_src rust
+pub fn launch_thread(context_addr: usize) -> ! {
+    unsafe {
+        asm!("mov rsp, rdi", // Set the stack to the Context address
+
+             "pop r15",
+             "pop r14",
+             "pop r13",
+
+             "pop r12",
+             "pop r11",
+             "pop r10",
+             "pop r9",
+
+             "pop r8",
+             "pop rbp",
+             "pop rsi",
+             "pop rdi",
+
+             "pop rdx",
+             "pop rcx",
+             "pop rbx",
+             "pop rax",
+
+             "sti", // Enable interrupts
+             "iretq",// Interrupt return
+             in("rdi") context_addr,
+             options(noreturn));
+    }
+}
+#+end_src
+This takes the address of the Context as input, sets the stack pointer
+(=rsi=) to that address, pops the registers and then returns via
+=iret=. That =iret= restores the instruction pointer, RFLAGS, CS and
+SS registers because the Context contains an exception frame even if
+it was created in a =syscall=.
+
+Now in =syscalls.rs= the =sys_receive()= function can be
+modified, to first get the next thread from the scheduler,
+and then call =launch_thread= to run it:
+#+begin_src rust
+  use crate::interrupts; // New
+  fn sys_receive(context_ptr: *mut Context, handle: u64) {
+      ...
+          if !returning {
+              let new_context_addr =
+                  process::schedule_next(context_ptr as usize);
+              interrupts::launch_thread(new_context_addr);
+          }
+  }
+#+end_src
+
+That's it! The =schedule_next()= function already handles changing page tables,
+the kernel stack in the TSS, and the =CURRENT_THREAD=.
+

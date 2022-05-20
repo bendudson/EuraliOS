@@ -543,7 +543,7 @@ pub fn exit_current_thread(current_context: &mut Context) {
 ///
 /// Returns the stack containing the process state
 /// (interrupts::Context struct)
-pub fn schedule_next(context: &Context) -> usize {
+pub fn schedule_next(context_addr: usize) -> usize {
     let mut running_queue = RUNNING_QUEUE.write();
     let mut current_thread = CURRENT_THREAD.write();
 
@@ -554,7 +554,7 @@ pub fn schedule_next(context: &Context) -> usize {
         // location on the kernel stack. The exception is the
         // first time a context switch occurs from the original kernel
         // stack to the first kernel thread stack.
-        thread.context = (context as *const Context) as u64;
+        thread.context = context_addr as u64;
 
         // Save the page table. This is to enable context
         // switching during functions which manipulate page tables

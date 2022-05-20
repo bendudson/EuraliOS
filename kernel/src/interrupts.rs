@@ -80,10 +80,10 @@ pub struct Context {
 /// Number of bytes needed to store a Context struct
 pub const INTERRUPT_CONTEXT_SIZE: usize = 20 * 8;
 
-extern "C" fn timer_handler(context: &mut Context) -> usize {
+extern "C" fn timer_handler(context_addr: usize) -> usize {
     // Process scheduler decides which process to schedule
     // Returns the stack pointer to switch to.
-    let next_stack = process::schedule_next(context);
+    let next_stack = process::schedule_next(context_addr);
 
     // Tell the PIC that the interrupt has been processed
     unsafe {
@@ -188,6 +188,39 @@ macro_rules! interrupt_wrap {
 
 interrupt_wrap!(timer_handler => timer_handler_naked);
 
+/// Run a thread by using `iret`
+pub fn launch_thread(context_addr: usize) -> ! {
+    unsafe {
+        asm!("mov rsp, rdi", // Set the stack to the Context address
+
+             // Pop scratch registers from new stack
+             "pop r15",
+             "pop r14",
+             "pop r13",
+
+             "pop r12",
+             "pop r11",
+             "pop r10",
+             "pop r9",
+
+             "pop r8",
+             "pop rbp",
+             "pop rsi",
+             "pop rdi",
+
+             "pop rdx",
+             "pop rcx",
+             "pop rbx",
+             "pop rax",
+             // Enable interrupts
+             "sti",
+             // Interrupt return
+             "iretq",
+             in("rdi") context_addr,
+             options(noreturn));
+    }
+}
+
 extern "x86-interrupt" fn breakpoint_handler(
     stack_frame: InterruptStackFrame)
 {
@@ -221,7 +254,7 @@ extern "x86-interrupt" fn page_fault_handler(
                       PageFaultErrorCode::CAUSED_BY_WRITE |
                       PageFaultErrorCode::USER_MODE) {
         // User code tried to access a read-only page
-        // Probably a missing stack frame
+        // Missing stack or heap frame
 
         if let Err(msg) = memory::allocate_missing_ondemand_frame(accessed_virtaddr) {
             println!("Page fault error: {}", msg);
