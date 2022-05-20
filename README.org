@@ -18,9 +18,9 @@ Phil maintains (e.g. [[https://docs.rs/x86_64/latest/x86_64/][x86_64]] and [[htt
 many other operating system siblings that I've found useful to study
 including [[https://github.com/WartaPoirier-corp/ananos][ananos]], the [[https://github.com/sos-os/kernel][Stupid Operating System]], [[https://github.com/intermezzOS][intermezzOS]], and
 especially [[https://github.com/vinc/moros][MOROS the Obscure Rust Operating System]]. The [[https://github.com/redox-os/kernel][Redox OS
-kernel]] is also very readable. Anything useful here was probably
-borrowed from one of these projects; mistakes and omissions are my
-own.
+kernel]] is also very readable, and [[https://github.com/betrusted-io/xous-core][Xous]] has a similar focus on message
+passing. Anything useful here was probably borrowed from one of these
+projects; mistakes and omissions are my own.
 
 ** Features
 

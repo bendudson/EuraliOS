@@ -167,7 +167,53 @@ that is the same as the original thread, and can be put in the
 scheduler. The easiest way to do this is to capture a Context in
 syscall in the same way that we do in a timer interrupt.
 
+The =Context= struct is defined in =interrupts.rs=. Because the stack
+grows downwards in memory we start at the end of the struct (=ss= and
+=rsp= fields), and store the values in order until we get to the top
+(=r14= and =r15=). We've already pushed the user stack (=rsp=) but
+need to reserve space before that for the stack segment (SS). We
+therefore subtract 8 (bytes) from rsp to make space before the =rsp=
+value, and we have to do a similar thing for CS. Other differences
+from the interrupt handler code are that =syscall= stores the user
+instruction pointer (=rip=) in =rcx=, and RFLAGS in =r11=.  The
+assembly code in the nakes =handle_syscall()= function so far looks
+like:
+#+begin_src rust
+  asm!(
+      "swapgs", // Put the TSS address into GS (stored in syscalls::init)
+      "mov gs:{tss_temp}, rsp", // Save user stack pointer in TSS entry
 
+      "mov rsp, gs:{tss_timer}", // Get kernel stack pointer
+      "sub rsp, {ks_offset}", // Use a different location than timer interrupt
+
+      // Create an Exception stack frame
+      "sub rsp, 8", // To be replaced with SS
+      "push gs:{tss_temp}", // User stack pointer
+      "swapgs", // Put TSS address back
+
+      "push r11", // Caller's RFLAGS
+      "sub rsp, 8",  // CS
+      "push rcx", // Caller's RIP
+
+      "push rax",
+      "push rbx",
+      "push rcx",
+      "push rdx",
+
+      "push rdi",
+      "push rsi",
+      "push rbp",
+      "push r8",
+
+      "push r9",
+      "push r10",
+      "push r11",
+      "push r12",
+
+      "push r13",
+      "push r14",
+      "push r15",
+#+end_src
 
 
 ** Kernel code to fork threads

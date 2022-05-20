@@ -44,10 +44,10 @@ frame in a 3-level bitmap is illustrated in figure [[fig-multi_level_bitmap]].
 [[./img/multi_level_bitmap.svg]]
 
 Finding an available frame means quickly finding a '1' bit somewhere
-in this bitmap.  To scan bitmaps efficiently we can use the [[https://www.felixcloutier.com/x86/bsf][Bit Scan
-Forward]] instruction, which on modern hardware finds the first non-zero
-bit in a 16, 32 or 64-bit register in a constant (small) number of
-clock cycles. Let's wrap this into a function:
+in a 32-bit chunk of the bitmap.  To scan bitmaps efficiently we can
+use the [[https://www.felixcloutier.com/x86/bsf][Bit Scan Forward]] instruction, which on modern hardware finds
+the first non-zero bit in a 16, 32 or 64-bit register in a constant
+(small) number of clock cycles. Let's wrap this into a function:
 #+begin_src rust
 fn nonzero_bit_index(bitmap: u32) -> u32 {
     let index: u32;
@@ -410,6 +410,8 @@ To get a frame from the allocator now looks like:
   }
 #+end_src
 
+
+
 *** Returning a frame
 
 Putting a frame back into the allocator looks like:
@@ -493,7 +495,7 @@ only one frame:
       ...
   }
 #+end_src
-(Note that the highest memory page which is writable, because stacks
+(Note that it is the highest memory page which is writable, because stacks
 start at the top and move downwards).
 
 Now we get an output like:
@@ -754,9 +756,11 @@ pub fn free_user_pagetables(level_4_physaddr: u64) {
 #+end_src
 
 We have to be a bit careful with freeing page tables: When a program
-exits its page table will be active. Before freeing page tables we should
-switch to the kernel page table, even though the function above doesn't
-actually modify any page tables.
+exits its page table will be active. Before freeing page tables we
+should switch to the kernel page table, even though the function above
+doesn't actually modify any page tables (it just marks them as
+available in the frame allocator, so another process might request and
+then modify them).
 
 #+begin_src rust
 pub fn switch_to_kernel_pagetable() {
