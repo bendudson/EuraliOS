@@ -4,16 +4,18 @@ use x86_64::structures::tss::TaskStateSegment;
 use spin::Mutex;
 use lazy_static::lazy_static;
 
+/// Fixed kernel stack which is the same for all processes.  Index 0
+/// should only be used for interrupts which won't switch contexts
 pub const DOUBLE_FAULT_IST_INDEX: u16 = 0;
 pub const PAGE_FAULT_IST_INDEX: u16 = 0;
 pub const GENERAL_PROTECTION_FAULT_IST_INDEX: u16 = 0;
-pub const KEYBOARD_INTERRUPT_INDEX: u16 = 0;
 
 /// Used by timer interrupt and syscall to set kernel stack
 ///
 /// Note: Syscalls must offset the stack location because
 ///       otherwise syscalls could not be interrupted.
 pub const TIMER_INTERRUPT_INDEX: u16 = 1;
+pub const KEYBOARD_INTERRUPT_INDEX: u16 = 1;
 
 /// Use an interrupt stack table entry as temporary storage
 /// for the user stack during a syscall.

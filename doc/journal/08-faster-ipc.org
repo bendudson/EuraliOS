@@ -88,3 +88,75 @@ and then call =launch_thread= to run it:
 That's it! The =schedule_next()= function already handles changing page tables,
 the kernel stack in the TSS, and the =CURRENT_THREAD=.
 
+** Speeding up keyboard_interrupt_handler
+
+The keyboard interrupt handler uses the =x86-interrupt= calling
+convention, which saves us some work but doesn't capture a context in
+the same was as our timer interrupt or syscall handlers. To switch to
+the thread which receives the keyboard message, rather than returning
+to the interrupted thread, we need to get that context.
+
+Fortunately we already have a macro that will do this for us:
+=interrupt_wrap!=. In =interrupts.rs= replace:
+#+begin_src rust
+  extern "x86-interrupt" fn keyboard_interrupt_handler(
+      _stack_frame: InterruptStackFrame)
+#+end_src
+with
+#+begin_src rust
+  interrupt_wrap!(keyboard_handler_inner => keyboard_interrupt_handler);
+
+  extern "C" fn keyboard_handler_inner(context_addr: usize)
+                                       -> usize {
+      ...
+      0 // New
+  }
+#+end_src
+and everything should still work as before. The handler returns 0
+so the stack isn't modified and it returns to the original thread.
+
+Then we can change the end of this function to decide whether to
+return to the interrupted thread, or schedule another:
+#+begin_src rust
+    ...
+    let next_context = if returning {context_addr} else {
+        // Schedule a different thread to run
+        process::schedule_next(context_addr)
+    };
+
+    unsafe {
+        PICS.lock()
+            .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
+    }
+    next_context
+  }
+#+end_src
+
+This should work if you type at a reasonable speed, but if you mash
+the keyboard you'll find a page fault with error code USER_MODE |
+INSTRUCTION_FETCH. By adding print statements you can see that this is
+happening because of this sequence of events:
+
+- Keyboard interrupts thread 1, it's context is written to the
+  keyboard interrupt handler stack (GDT index 0). Control is passed to
+  thread 2 which was waiting.
+- Thread 2 is interrupted before it can call sys_receive again. It's
+  context is written to the keyboard handler stack, overwriting thread
+  1's context.
+- Soon thereafter thread 1 is run again. Unfortunately its context
+  still points to the keyboard interrupt stack, which has been
+  overwritten by thread 2's context, so now has the wrong instruction
+  pointer.
+
+The fix is quite simple: In =gdt.rs= change =KEYBOARD_INTERRUPT_INDEX=
+from 0 to 1, so it's the same as the timer interrupt index and is
+unique to each thread. We need to remember to use the stack at GDT
+index 1 for any interrupt where we might switch contexts. The page
+fault handler is ok (for now) because it either returns to the same
+thread (e.g on-demand paging), or the thread will be stopped and not
+restarted.
+
+We now have a user space program that can quite efficiently receive
+input from the keyboard via messaging. In the [[file:09-message-sending.org][next section]] we'll enable
+user programs to send messages to write to the screen.
+

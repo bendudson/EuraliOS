@@ -93,7 +93,7 @@ extern "C" fn timer_handler(context_addr: usize) -> usize {
     next_stack
 }
 
-/// Handler for the timer interrupt.
+/// Interrupt handler wrapper which captures a Context
 ///
 /// This handler is different from other handlers because it is where
 /// context switching is done. This means that we need to push the
@@ -107,6 +107,8 @@ extern "C" fn timer_handler(context_addr: usize) -> usize {
 ///  - A naked function is used so that we can control which registers
 ///    are read and written. During a context switch we want to pop
 ///    different values to those pushed.
+///  - If a handler uses this wrapper then the TSS index (gdt.rs)
+///    should be the same as TIMER_INTERRUPT_INDEX, unique to each thread.
 ///
 /// Macro wrapper adapted from MOROS by Vincent Ollivier
 /// https://github.com/vinc/moros/blob/trunk/src/sys/idt.rs#L123
@@ -321,8 +323,10 @@ pub fn keyboard_rendezvous() -> Arc<RwLock<Rendezvous>> {
     KEYBOARD_RENDEZVOUS.clone()
 }
 
-extern "x86-interrupt" fn keyboard_interrupt_handler(
-    _stack_frame: InterruptStackFrame)
+interrupt_wrap!(keyboard_handler_inner => keyboard_interrupt_handler);
+
+extern "C" fn keyboard_handler_inner(context_addr: usize)
+                                     -> usize
 {
     use pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1};
     use spin::Mutex;
@@ -338,6 +342,8 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(
     let mut keyboard = KEYBOARD.lock();
     let mut port = Port::new(0x60);
 
+    let mut returning = true; // Back to original thread?
+
     let scancode: u8 = unsafe { port.read() };
     if let Ok(Some(key_event)) = keyboard.add_byte(scancode) {
         if let Some(key) = keyboard.process_keyevent(key_event) {
@@ -351,6 +357,7 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(
                     }
                     if let Some(t) = thread1 {
                         process::schedule_thread(t);
+                        returning = false;
                     }
                 },
                 DecodedKey::RawKey(key) => print!("{:?}", key),
@@ -358,8 +365,14 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(
         }
     }
 
+    let next_context = if returning {context_addr} else {
+        // Schedule a different thread to run
+        process::schedule_next(context_addr)
+    };
+
     unsafe {
         PICS.lock()
             .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
     }
+    next_context
 }
