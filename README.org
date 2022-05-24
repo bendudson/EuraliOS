@@ -88,6 +88,7 @@ direction...
   get input from the keyboard.
 - [[file:doc/journal/08-faster-ipc.org][8. Faster IPC]] in which we switch tasks in syscalls and keyboard
   interrupt handler, to minimise delays in the communication.
+- [[file:doc/journal/09-message-sending.org][9. Sending messages]] 
 
 ** Bibliography
 

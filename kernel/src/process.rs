@@ -15,7 +15,7 @@ use alloc::{boxed::Box, collections::vec_deque::VecDeque, vec::Vec, sync::Arc};
 use core::arch::asm;
 
 use crate::println;
-use crate::interrupts::{Context, INTERRUPT_CONTEXT_SIZE, keyboard_rendezvous};
+use crate::interrupts::{Context, INTERRUPT_CONTEXT_SIZE};
 
 use crate::gdt;
 use crate::memory;
@@ -31,7 +31,7 @@ const KERNEL_STACK_SIZE: usize = 4096 * 2;
 const USER_STACK_SIZE: usize = 4096 * 5;
 
 /// Lowest address that user code can be loaded into
-const USER_CODE_START: u64 = 0x5000000;
+pub const USER_CODE_START: u64 = 0x5000000;
 /// Exclusive upper limit for user code
 const USER_CODE_END: u64 = 0x80000000;
 
@@ -257,7 +257,7 @@ pub fn set_current_thread(thread: Box<Thread>) {
 /// -------
 /// The TID of the new thread
 ///
-pub fn new_kernel_thread(function: fn()->()) -> u64 {
+pub fn new_kernel_thread(function: fn()->(), handles: Vec<Arc<RwLock<Rendezvous>>>) -> u64 {
     // Create a new process table entry
     //
     // Note this is first created on the stack, then moved into a Box
@@ -273,7 +273,7 @@ pub fn new_kernel_thread(function: fn()->()) -> u64 {
             tid: unique_id(),
             process: Arc::new(Process {
                 page_table_physaddr: 0,
-                handles: Vec::new(),
+                handles,
             }),
             page_table_physaddr: 0, // Don't need to switch PT
             kernel_stack,
@@ -338,7 +338,10 @@ fn with_pagetable<F, R>(page_table_physaddr: u64, func: F) -> R where
     result
 }
 
-pub fn new_user_thread(bin: &[u8]) -> Result<u64, &'static str> {
+pub fn new_user_thread(
+    bin: &[u8],
+    handles: Vec<Arc<RwLock<Rendezvous>>>
+) -> Result<u64, &'static str> {
     // Check the header
     const ELF_MAGIC: [u8; 4] = [0x7f, b'E', b'L', b'F'];
 
@@ -428,7 +431,7 @@ pub fn new_user_thread(bin: &[u8]) -> Result<u64, &'static str> {
                     // Create a new process
                     process: Arc::new(Process {
                         page_table_physaddr: user_page_table_physaddr,
-                        handles: Vec::from([keyboard_rendezvous()]),
+                        handles,
                     }),
                     page_table_physaddr: user_page_table_physaddr,
                     kernel_stack: kernel_stack,
@@ -523,11 +526,11 @@ pub fn fork_current_thread(current_context: &mut Context) {
 
 /// This function is called via syscall (and maybe other mechanism)
 /// to remove the current thread.
-pub fn exit_current_thread(current_context: &mut Context) {
+pub fn exit_current_thread(_current_context: &mut Context) {
     {
         let mut current_thread = CURRENT_THREAD.write();
 
-        if let Some(thread) = current_thread.take() {
+        if let Some(_thread) = current_thread.take() {
             // Drop thread, freeing stacks. If this is the last thread
             // in this process, memory and page tables will be freed
             // in the Process drop() function

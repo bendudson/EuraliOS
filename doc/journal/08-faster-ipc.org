@@ -31,7 +31,7 @@ The easier part to speed up is removing the =hlt= instruction in the
 thread, and then jump into the middle of the =interrupt_wrap!= macro
 (=interrupts.rs=), as if we had returned from the timer interrupt.
 
-We can do that by just copying the assembly starting ="pop r15"= and
+We can do that by just copying the assembly starting =pop r15= and
 ending =iret=, in a new function =launch_thread()= in =interrupts.rs=:
 #+begin_src rust
 pub fn launch_thread(context_addr: usize) -> ! {

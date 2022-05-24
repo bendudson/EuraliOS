@@ -153,6 +153,43 @@ pub fn _print(args: fmt::Arguments) {
     });
 }
 
+//////////////////////////////////////////////////////
+
+use alloc::sync::Arc;
+use spin::RwLock;
+extern crate alloc;
+use alloc::vec::Vec;
+use core::arch::asm;
+
+use crate::process;
+use crate::rendezvous::{Rendezvous, Message};
+
+///
+fn listener() {
+    loop {
+        let err: u64;
+        let value: u64;
+        unsafe {
+            asm!("mov rax, 3", // sys_receive
+                 "mov rdi, 0", // handle
+                 "syscall",
+                 lateout("rax") err,
+                 lateout("rdi") value);
+        }
+        let ch = char::from_u32(value as u32).unwrap();
+        println!("VGA: {} , {} => {}", err, value, ch);
+    }
+}
+
+pub fn start_listener() -> Arc<RwLock<Rendezvous>> {
+    let rz = Arc::new(RwLock::new(Rendezvous::Empty));
+    process::new_kernel_thread(listener,
+                               Vec::from([rz.clone()]));
+    rz
+}
+
+//////////////////////////////////////////////////////
+
 // verify that println works without panicking
 #[test_case]
 fn test_println_simple() {

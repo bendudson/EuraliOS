@@ -1,0 +1,267 @@
+* Sending messages
+
+** VGA listener
+
+First we will create a task which will keep receiving messages, printing
+them when they arrive. In =vga_buffer.rs= we can write a function similar
+to the =hello= user code, calling the =sys_receive= syscall:
+#+begin_src rust
+  use core::arch::asm;
+
+  fn listener() {
+      loop {
+          // Receive
+          let err: u64;
+          let value: u64;
+          unsafe {
+              asm!("mov rax, 3", // sys_receive
+                   "mov rdi, 0", // handle
+                   "syscall",
+                   lateout("rax") err,
+                   lateout("rdi") value);
+          }
+          let ch = char::from_u32(value as u32).unwrap();
+          println!("VGA: {} , {} => {}", err, value, ch);
+      }
+  }
+#+end_src
+and a function to start the listener and return a Rendezvous handle to
+send messages to:
+#+begin_src rust
+  use alloc::sync::Arc;
+  use spin::RwLock;
+  use crate::process;
+  use crate::rendezvous::Rendezvous;
+
+  pub fn start_listener() -> Arc<RwLock<Rendezvous>> {
+      let rz = Arc::new(RwLock::new(Rendezvous::Empty));
+      process::new_kernel_thread(listener); // Here pass rz
+      rz
+  }
+#+end_src
+(we'll fill in the pieces soon...). We need a way to create a kernel thread
+with a Rendezvous handle, so for that we can modify =process.rs=, passing
+a vector of handles as a second argument:
+#+begin_src rust
+  pub fn new_kernel_thread(
+      function: fn()->(),
+      handles: Vec<Arc<RwLock<Rendezvous>>>
+  ) -> u64 {
+      ...
+          Box::new(Thread {
+            tid: unique_id(),
+            process: Arc::new(Process {
+                page_table_physaddr: 0,
+                handles, // New
+            }),
+            ...
+  }
+#+end_src
+then the =start_listener= function can become:
+#+begin_src rust
+  extern crate alloc;
+  use alloc::vec::Vec;
+
+  pub fn start_listener() -> Arc<RwLock<Rendezvous>> {
+      let rz = Arc::new(RwLock::new(Rendezvous::Empty));
+      process::new_kernel_thread(listener,
+                                 Vec::from([rz.clone()]));
+      rz
+  }
+#+end_src
+
+In =main.rs= (=kernel_entry()=) we need to modify the call to =new_kernel_thread=:
+#+begin_src rust
+  extern crate alloc;
+  use alloc::vec::Vec;
+
+  fn kernel_entry(boot_info: &'static BootInfo) -> ! {
+      ...
+      process::new_kernel_thread(kernel_thread_main,
+                                 Vec::new()); // New
+      kernel::hlt_loop();
+  }
+#+end_src
+
+** sys_send syscall
+
+Now that we have a way to receive messages, we need to add a way to
+send them. In =syscalls.rs=:
+#+begin_src rust
+  use crate::rendezvous::Message;
+
+  fn sys_send(context_ptr: *mut Context, handle: u64, data: u64) {
+      // Extract the current thread
+      if let Some(mut thread) = process::take_current_thread() {
+          let current_tid = thread.tid();
+          thread.set_context(context_ptr);
+
+          // Get the Rendezvous and call
+          if let Some(rdv) = thread.rendezvous(handle) {
+              let (thread1, thread2) = rdv.write().send(Some(thread),
+                                                        Message::Short(data as usize));
+              // thread1 should be started asap
+              // thread2 should be scheduled
+
+              let mut returning = false;
+              for maybe_thread in [thread2, thread1] {
+                  if let Some(t) = maybe_thread {
+                      if t.tid() == current_tid {
+                          // Same thread -> return
+                          process::set_current_thread(t);
+                          returning = true;
+                      } else {
+                          process::schedule_thread(t);
+                      }
+                  }
+              }
+
+              if !returning {
+                  // Original thread is waiting.
+                  // Switch to a different thread
+                  let new_context_addr = process::schedule_next(context_ptr as usize);
+                  interrupts::launch_thread(new_context_addr);
+              }
+          } else {
+              // Missing handle
+              thread.return_error(SYSCALL_ERROR_INVALID_HANDLE);
+              process::set_current_thread(thread);
+          }
+      }
+  }
+#+end_src
+
+and then add this function to =dispatch_syscall()=:
+#+begin_src rust
+  extern "C" fn dispatch_syscall(
+      context_ptr: *mut Context,
+      syscall_id: u64,
+      arg1: u64, arg2: u64) {
+      ...
+      match syscall_id {
+        0 => process::fork_current_thread(context),
+        1 => process::exit_current_thread(context),
+        2 => sys_write(arg1 as *const u8, arg2 as usize),
+        3 => sys_receive(context_ptr, arg1),
+        4 => sys_send(context_ptr, arg1, arg2), // New
+        _ => println!("Unknown syscall {:?} {} {} {}",
+                       context_ptr, syscall_id, arg1, arg2)
+      }
+  }
+#+end_src
+
+To enable the user code to use the VGA listener handle, we can modify
+=new_user_thread()= to add an argument:
+#+begin_src rust
+  pub fn new_user_thread(
+      bin: &[u8],
+      handles: Vec<Arc<RwLock<Rendezvous>>>  // New
+  ) -> Result<u64, &'static str> {
+      ...
+          // Create a new process
+          process: Arc::new(Process {
+              page_table_physaddr: user_page_table_physaddr,
+              handles, // New
+          }),
+  }
+#+end_src
+Now the =kernel_thread_main= function in =main.rs= needs to be
+modified:
+#+begin_src rust
+  use kernel::vga_buffer;
+  use kernel::interrupts;
+
+  fn kernel_thread_main() {
+      let kbd_rz = interrupts::keyboard_rendezvous();
+      let vga_rz = vga_buffer::start_listener();
+
+      process::new_user_thread(
+        include_bytes!("../../user/hello"),
+        Vec::from([kbd_rz, vga_rz]));
+
+      kernel::hlt_loop();
+  }
+#+end_src
+so now the user program will run with handle 0 linked to the
+keyboard input, and handle 1 linked to the vga output.
+
+In the user code =_start()= function we can now try sending messages
+to the vga listener:
+#+begin_src rust
+  loop{
+      println!("Calling sys_read");
+      let err: u64;
+      let value: u64;
+      asm!("mov rax, 3", // sys_receive
+           "mov rdi, 0", // handle
+           "syscall",
+           lateout("rax") err,
+           lateout("rdi") value);
+      let ch = char::from_u32(value as u32).unwrap();
+      println!("Received: {} => {}", value, ch);
+
+      let err: u64;
+      unsafe {
+          asm!("mov rax, 4", // sys_send
+               "mov rdi, 1", // handle
+               "syscall",
+               in("rsi") value,
+               lateout("rax") err);
+      }
+  }
+#+end_src
+
+Pressing a key should send a message to the user code, print a
+"Received: " message, then send a message to the VGA listener
+and... panic!
+
+[file:img/09-01-page-fault.png]
+
+** Syscalls from kernel code
+
+The error code says that this is a protection error in user mode,
+which occurred on an instruction fetch. The instruction pointer
+address 0x4091f1 is below the user start address (0x500000) so
+is in the kernel code, but it's in Ring 3. 
+
+The reason this is happening is the way syscalls are handled: When the
+syscall handler is entered, it creates a context but does not have the
+CS and SS values, which specify the permissions.  Those values are set
+in =dispatch_syscall()= to the user segments.  When the message is
+received and the listener thread is started, those user segment values
+are used, so the thread is in Ring 3.
+
+#+begin_src rust
+  let (code_selector, data_selector) =
+      if context.rip < process::USER_CODE_START as usize {
+          // Called from kernel code
+          gdt::get_kernel_segments()
+      } else {
+          gdt::get_user_segments()
+      };
+#+end_src
+
+This should now run, until you type too quickly when it crashes
+again. When keyboard events are sent quickly a message is already
+waiting when the VGA listener calls =sys_receive=, and so
+returns via a =sysret= rather than =iret=. =sysret= sets the
+segments to user mode, and unfortunately this is difficult to
+modify. A workaround is to detect when we're returning to
+kernel code, and avoid calling =sysret=:
+#+begin_src rust
+  ...
+  "pop rsp", // Restore user stack
+
+  "cmp rcx, {user_code_start}",
+  "jl 2f", // rip < USER_CODE_START
+  "sysretq", // back to userland
+
+  "2:", // kernel code return
+  "push r11",
+  "popf", // Set RFLAGS
+  "jmp rcx", // Jump to kernel code
+  user_code_start = const(process::USER_CODE_START),
+  ...
+#+end_src
+
+(note that =USER_CODE_START= in =process.rs= needs to be made public)

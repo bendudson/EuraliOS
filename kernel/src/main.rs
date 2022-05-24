@@ -7,10 +7,14 @@
 use core::panic::PanicInfo;
 use kernel::println;
 use bootloader::{BootInfo, entry_point};
+extern crate alloc;
+use alloc::vec::Vec;
 
 use kernel::memory;
 use kernel::syscalls;
 use kernel::process;
+use kernel::vga_buffer;
+use kernel::interrupts;
 
 entry_point!(kernel_entry);
 
@@ -21,9 +25,14 @@ entry_point!(kernel_entry);
 fn kernel_thread_main() {
     println!("Kernel thread start");
 
+    let vga_rz = vga_buffer::start_listener();
+
     // Using MOROS approach of including ELF files
     // https://github.com/vinc/moros/blob/trunk/src/usr/install.rs
-    process::new_user_thread(include_bytes!("../../user/hello"));
+    process::new_user_thread(
+        include_bytes!("../../user/hello"),
+        Vec::from([interrupts::keyboard_rendezvous(),
+                   vga_rz]));
 
     kernel::hlt_loop();
 }
@@ -49,7 +58,7 @@ fn kernel_entry(boot_info: &'static BootInfo) -> ! {
 
     // Launch the main kernel thread
     // which will be scheduled and take over from here
-    process::new_kernel_thread(kernel_thread_main);
+    process::new_kernel_thread(kernel_thread_main, Vec::new());
 
     kernel::hlt_loop();
 }

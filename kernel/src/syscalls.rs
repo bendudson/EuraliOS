@@ -36,7 +36,7 @@ use core::{slice, str};
 use crate::process;
 use crate::gdt;
 use crate::interrupts::{self, Context};
-use crate::rendezvous;
+use crate::rendezvous::Message;
 
 // register for address of syscall handler
 const MSR_STAR: usize = 0xc0000081;
@@ -196,11 +196,20 @@ extern "C" fn handle_syscall() {
             "add rsp, 24", // Skip RIP, CS and RFLAGS
             "pop rsp", // Restore user stack
             // No need to pop SS
+
+            "cmp rcx, {user_code_start}",
+            "jl 2f", // rip < USER_CODE_START
             "sysretq", // back to userland
+
+            "2:", // kernel code return
+            "push r11",
+            "popf", // Set RFLAGS
+            "jmp rcx",
             dispatch_fn = sym dispatch_syscall,
             tss_timer = const(0x24 + gdt::TIMER_INTERRUPT_INDEX * 8),
             tss_temp = const(0x24 + gdt::SYSCALL_TEMP_INDEX * 8),
             ks_offset = const(SYSCALL_KERNEL_STACK_OFFSET),
+            user_code_start = const(process::USER_CODE_START),
             options(noreturn));
     }
 }
@@ -211,7 +220,13 @@ extern "C" fn dispatch_syscall(context_ptr: *mut Context, syscall_id: u64,
     let context = unsafe{&mut *context_ptr};
 
     // Set the CS and SS segment selectors
-    let (code_selector, data_selector) = gdt::get_user_segments();
+    let (code_selector, data_selector) =
+        if context.rip < process::USER_CODE_START as usize {
+            // Called from kernel code
+            gdt::get_kernel_segments()
+        } else {
+            gdt::get_user_segments()
+        };
     context.cs = code_selector.0 as usize;
     context.ss = data_selector.0 as usize;
 
@@ -220,6 +235,7 @@ extern "C" fn dispatch_syscall(context_ptr: *mut Context, syscall_id: u64,
         1 => process::exit_current_thread(context),
         2 => sys_write(arg1 as *const u8, arg2 as usize),
         3 => sys_receive(context_ptr, arg1),
+        4 => sys_send(context_ptr, arg1, arg2),
         _ => println!("Unknown syscall {:?} {} {} {}",
                        context_ptr, syscall_id, arg1, arg2)
     }
@@ -251,7 +267,47 @@ fn sys_receive(context_ptr: *mut Context, handle: u64) {
             // thread2 should be scheduled
 
             let mut returning = false;
-            for maybe_thread in [thread1, thread2] {
+            for maybe_thread in [thread2, thread1] {
+                if let Some(t) = maybe_thread {
+                    if t.tid() == current_tid {
+                        // Same thread -> return
+                        process::set_current_thread(t);
+                        returning = true;
+                    } else {
+                        process::schedule_thread(t);
+                    }
+                }
+            }
+
+            if !returning {
+                // Original thread is waiting.
+                // Switch to a different thread
+                let new_context_addr = process::schedule_next(context_ptr as usize);
+                interrupts::launch_thread(new_context_addr);
+            }
+        } else {
+            // Missing handle
+            thread.return_error(SYSCALL_ERROR_INVALID_HANDLE);
+            process::set_current_thread(thread);
+        }
+    }
+}
+
+fn sys_send(context_ptr: *mut Context, handle: u64, data: u64) {
+    // Extract the current thread
+    if let Some(mut thread) = process::take_current_thread() {
+        let current_tid = thread.tid();
+        thread.set_context(context_ptr);
+
+        // Get the Rendezvous and call
+        if let Some(rdv) = thread.rendezvous(handle) {
+            let (thread1, thread2) = rdv.write().send(Some(thread),
+                                                      Message::Short(data as usize));
+            // thread1 should be started asap
+            // thread2 should be scheduled
+
+            let mut returning = false;
+            for maybe_thread in [thread2, thread1] {
                 if let Some(t) = maybe_thread {
                     if t.tid() == current_tid {
                         // Same thread -> return

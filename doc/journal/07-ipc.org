@@ -127,6 +127,9 @@ self), we can use the same method that =Option<>= does, and use [[
               Rendezvous::Receiving(_) => {
                   if let Rendezvous::Receiving(rec_thread) = mem::replace(self, Rendezvous::Empty) {
                       rec_thread.return_message(message);
+                      if let Some(ref t) = thread {
+                          t.return_error(0);
+                      }
                       return (Some(rec_thread), thread);
                   }
                   (None, None) // This should never be reached
@@ -161,6 +164,9 @@ self), we can use the same method that =Option<>= does, and use [[
               Rendezvous::Sending(_, _) => {
                   if let Rendezvous::Sending(snd_thread, message) = mem::replace(self, Rendezvous::Empty) {
                       thread.return_message(message);
+                      if let Some(ref t) = snd_thread {
+                          t.return_error(0);
+                      }
                       return (Some(thread), snd_thread);
                   }
                   (None, None) // This should never be reached
@@ -284,6 +290,10 @@ In =syscall.rs=
 #+end_src
 
 #+begin_src rust
+  pub const SYSCALL_ERROR_SEND_BLOCKING: usize = 1;
+  pub const SYSCALL_ERROR_RECV_BLOCKING: usize = 2;
+  pub const SYSCALL_ERROR_INVALID_HANDLE: usize = 3;
+
   fn sys_receive(context_ptr: *mut Context, handle: u64) {
       // Extract the current thread
       if let Some(thread) = process::take_current_thread() {
@@ -320,6 +330,10 @@ In =syscall.rs=
                            "jmp 2b");
                   }
               }
+          } else {
+              // Missing handle
+              thread.return_error(SYSCALL_ERROR_INVALID_HANDLE);
+              process::set_current_thread(thread);
           }
       }
   }
