@@ -1,5 +1,6 @@
 use alloc::boxed::Box;
 use crate::process::Thread;
+use crate::syscalls;
 use core::mem;
 
 pub enum Message {
@@ -35,7 +36,7 @@ impl Rendezvous {
             Rendezvous::Sending(_, _) => {
                 // Signal error to thread: Can't have two sending threads
                 if let Some(t) = &thread {
-                    t.return_error(1);
+                    t.return_error(syscalls::SYSCALL_ERROR_SEND_BLOCKING);
                 }
                 (thread, None)
             }
@@ -44,6 +45,9 @@ impl Rendezvous {
                 // core::mem::replace https://doc.rust-lang.org/beta/core/mem/fn.replace.html
                 if let Rendezvous::Receiving(rec_thread) = mem::replace(self, Rendezvous::Empty) {
                     rec_thread.return_message(message);
+                    if let Some(ref t) = thread {
+                        t.return_error(0);
+                    }
                     return (Some(rec_thread), thread);
                 }
                 (None, None) // This should never be reached
@@ -75,13 +79,16 @@ impl Rendezvous {
                 // Complete the message transfer
                 if let Rendezvous::Sending(snd_thread, message) = mem::replace(self, Rendezvous::Empty) {
                     thread.return_message(message);
+                    if let Some(ref t) = snd_thread {
+                        t.return_error(0);
+                    }
                     return (Some(thread), snd_thread);
                 }
                 (None, None) // This should never be reached
             }
             Rendezvous::Receiving(_) => {
                 // Already receiving
-                thread.return_error(2);
+                thread.return_error(syscalls::SYSCALL_ERROR_RECV_BLOCKING);
                 (Some(thread), None)
             }
         }

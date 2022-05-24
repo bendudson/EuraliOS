@@ -211,8 +211,10 @@ TID: {}, rip: {:#016X}
 
 impl Drop for Thread {
     fn drop(&mut self) {
-        memory::free_user_stack(
-            VirtAddr::new(self.user_stack_end));
+        if let Err(e) = memory::free_user_stack(
+            VirtAddr::new(self.user_stack_end)) {
+            println!("Error in Thread::drop : {:?}", e);
+        }
     }
 }
 
@@ -352,10 +354,12 @@ pub fn new_user_thread(bin: &[u8]) -> Result<u64, &'static str> {
             memory::create_kernel_only_pagetable();
 
         // Allocate user heap
-        memory::create_user_ondemand_pages(
+        if memory::create_user_ondemand_pages(
             user_page_table_ptr,
             VirtAddr::new(USER_HEAP_START),
-            USER_HEAP_SIZE);
+            USER_HEAP_SIZE).is_err() {
+            return Err("Couldn't allocate on-demand pages");
+        }
 
         return with_pagetable(user_page_table_physaddr, || {
 

@@ -25,6 +25,10 @@
 //! - recv(handle) -> message
 //! - send_recv(handle, message) -> message
 
+pub const SYSCALL_ERROR_SEND_BLOCKING: usize = 1;
+pub const SYSCALL_ERROR_RECV_BLOCKING: usize = 2;
+pub const SYSCALL_ERROR_INVALID_HANDLE: usize = 3;
+
 use crate::{print, println};
 use core::arch::asm;
 use core::{slice, str};
@@ -265,6 +269,10 @@ fn sys_receive(context_ptr: *mut Context, handle: u64) {
                 let new_context_addr = process::schedule_next(context_ptr as usize);
                 interrupts::launch_thread(new_context_addr);
             }
+        } else {
+            // Missing handle
+            thread.return_error(SYSCALL_ERROR_INVALID_HANDLE);
+            process::set_current_thread(thread);
         }
     }
 }
