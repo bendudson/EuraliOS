@@ -2,6 +2,7 @@
 
 members = [
     "kernel",
-    "hello"
+    "hello",
+    "euralios_std"
 ]
 
