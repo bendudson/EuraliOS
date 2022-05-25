@@ -215,7 +215,9 @@ Pressing a key should send a message to the user code, print a
 "Received: " message, then send a message to the VGA listener
 and... panic!
 
-[file:img/09-01-page-fault.png]
+#+CAPTION: Page fault due to kernel thread resuming in Ring 3
+#+NAME: fig-page-fault
+[[./img/09-01-page-fault.png]]
 
 ** Syscalls from kernel code
 
@@ -265,3 +267,7 @@ kernel code, and avoid calling =sysret=:
 #+end_src
 
 (note that =USER_CODE_START= in =process.rs= needs to be made public)
+
+#+CAPTION: Keyboard and VGA messaging
+#+NAME: fig-page-fault
+[[./img/09-02-vga-listener.png]]
