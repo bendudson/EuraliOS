@@ -4,8 +4,8 @@ use crate::syscalls;
 use core::mem;
 
 pub enum Message {
-    Short(usize),
     Long,
+    Short(usize, usize, usize),
 }
 
 /// A Rendezvous is in one of three states:

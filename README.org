@@ -90,8 +90,9 @@ direction...
   interrupt handler, to minimise delays in the communication.
 - [[file:doc/journal/09-message-sending.org][9. Sending messages]] which adds the =send= syscall, allowing the user
   program to send messages to a VGA output kernel thread.
-- [[file:doc/journal/10-stdlib.org][10. Standard library]] in which we start a =euralios_std= "standard" library,
-  moving code out of the user program.
+- [[file:doc/journal/10-stdlib.org][10. A standard library]] in which we start a =euralios_std= "standard"
+  library, moving code out of the user program.
+- [[file:doc/journal/11-messages.org][11. More messages]]
 
 ** Bibliography
 

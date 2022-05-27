@@ -168,8 +168,10 @@ impl Thread {
 
         context.rax = 0; // No error
         match message {
-            Message::Short(value) => {
-                context.rdi = value;
+            Message::Short(data1, data2, data3) => {
+                context.rdi = data1;
+                context.rsi = data2;
+                context.rdx = data3;
             },
             Message::Long => {
                 context.rdi = 42;

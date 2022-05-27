@@ -1,0 +1,200 @@
+* Message types
+
+So far messages have just been passing a single 64-bit register, but
+we're getting to the point where we might want to pass more
+information, and different kinds of information, between threads. Like
+[[https://betrusted.io/xous-book/ch00-00-introduction.html#messages-aka-ipc][messages in Xous]] we're going to have a short (and hopefully fast)
+message type, and a long type for larger or more complex messages.
+
+** Short messages
+
+Short messages just copy registers between threads. We use RAX for the
+syscall number and error return code, RDI for the handle, and we can't
+use RCX or R11 because these are used by syscall/sysret.  The Linux
+syscall interface uses RDI, RSI, RDX, R10, R8 and R9 registers, so
+these are reasonable choices.
+
+There is a penalty to using too many registers: The more registers we
+clobber with message passing, the more the user program will have to
+push and pop from the stack or avoid using those registers. The optimum
+number of registers will depend on the typical message sizes, so
+tuning will have to wait until later.
+
+Somewhat arbitrarily we're going to use three registers for now:
+We can pack the syscall number (8 bits) and handle (32 bits) into RAX,
+and use RDI, RSI and RDX for the data. 
+
+We'll make the =Short= message type larger
+#+begin_src rust
+  pub enum Message {
+     Short(usize, usize, usize),
+     Long,
+  }
+#+end_src
+
+The user code (=euralios_std/src/syscalls.rs=) is now going to put the
+syscall number and handle into RAX, and the three values into RDI, RSI
+and RDX:
+#+begin_src rust
+pub fn send(
+    handle: u32,
+    data1: u64,
+    data2: u64, // New
+    data3: u64  // New
+) -> Result<(), u64> {
+    let err: u64;
+    unsafe {
+        asm!("syscall",
+             in("rax") 4 + ((handle as u64) << 32),  // New
+             in("rdi") data1,
+             in("rsi") data2, // New
+             in("rdx") data3, // New
+             lateout("rax") err);
+    }
+    if err == 0 {
+        return Ok(());
+    }
+    Err(err)
+}
+#+end_src
+
+On the kernel side to set these values into =sys_send= function we
+first need to add to =handle_syscall()=. In the C calling convention
+the first six function arguments are stored in registers RDI, RSI, RDX, RCX, R8 and R9.
+The fifth argument is therefore R8, which will contain =data3=:
+#+begin_src rust
+  "mov r8, rdx", // New
+  "mov rcx, rsi",
+  "mov rdx, rdi",
+  "mov rsi, rax",
+#+end_src
+and =dispatch_syscall()=
+#+begin_src rust
+    extern "C" fn dispatch_syscall(context_ptr: *mut Context, syscall_id: u64,
+                                   arg1: u64, arg2: u64, arg3: u64) {
+        ...
+        match syscall_id & 0xFF {
+            ...
+            4 => sys_send(context_ptr, syscall_id,
+                          arg1, arg2, arg3), // New
+            ...
+        }
+    }
+#+end_src
+and =sys_send()=
+#+begin_src rust
+  fn sys_send(
+      context_ptr: *mut Context,
+      syscall_id: u64,
+      data1: u64,
+      data2: u64,
+      data3: u64) {
+      let handle = syscall_id >> 32; // New
+      ...
+          let (thread1, thread2) = rdv.write().send(
+              Some(thread),
+              Message::Short(data1 as usize,
+                             data2 as usize, // New
+                             data3 as usize)); // New
+  }
+#+end_src
+
+The other place we send messages is in the =keyboard_handler_inner=
+function (=interrupts.rs=);
+#+begin_src rust
+  let (thread1, thread2) =
+      KEYBOARD_RENDEZVOUS.write().send(
+          None,
+          Message::Short(character as usize,
+                         0, 0)); // New
+#+end_src
+
+To get the data out of the kernel to the receiving thread, we need to
+modify =return_message()= in =process.rs= which consumes a Message object
+and puts the values into a receiving thread's registers:
+#+begin_src rust
+  pub fn return_message(&self, message: Message) {
+      let context = self.context_mut();
+      context.rax = 0;
+      match message {
+          Message::Short(value1, value2, value3) => {
+              context.rdi = value1;
+              context.rsi = value2; // New
+              context.rdx = value3; // New
+          },
+          Message::Long => {
+              context.rdi = 42;
+          }
+      }
+  }
+#+end_src
+
+** Long messages
+
+A long message has to handle everything that we might want to send
+between processes. That includes:
+
+- Simple values, as in short messages
+- Communication / Rendezvous handles
+- Memory chunk handles, which will refer to a set of pages
+
+For the communication and memory handles we might want to either copy
+or move/assign to the other process.
+
+We need somewhere to store this metadata, so the kernel and receiving
+thread know what kind of values are being sent. The RAX register seems
+like a good place to do this: We're using RAX for the syscall number,
+but we don't need 64 bits for that. We're not likely to need more than
+256 syscalls (8 bits), leaving 56 bits for metadata.
+
+RAX will contain
+- 8 bits for the syscall number
+- 24 bits to describe content of data (RDI, RSI and RDX)
+- 32 bits for the handle
+
+There are 5 possible states (value/comm. copy/comm. move/memory
+copy/memory move) so we need at least 3 bits. Using 4 to allow for
+future development, with 56 bits we could describe 14 values. We could
+pack these into registers because we probably don't need 64 bits to
+describe a handle, but we still need a way to send 64-bit values.
+
+To keep things simple we'll use the same three registers as short
+messages (RDI, RSI and RDX), and just send three things: A long
+message could consist of a value (e.g. an opcode), a handle, and a
+memory chunk. We can expand this if it turns out to be too
+restrictive, or chop registers into pieces to send handles that fit in
+fewer than 64 bits.
+
+** Message format
+
+The RAX register is our control register, which the kernel will
+examine to work out how to treat the RDI, RSI and RDX registers.
+The
+
+- 8 bits for the syscall number
+- 1 bit to specify if it's a long or short message. If a short
+  message then the kernel skips any other checks and just copies the
+  values.
+- 2 bits per register (6 total) specifying the type (value/comm
+  handle/memory handle)
+- 1 bit per register (3 total) to specify copy or move
+
+so a total of 18 bits, and lots of room to spare.
+
+** Sending messages
+
+If we're going to use only 8 bits of RAX to store the syscall number,
+then in =dispatch_syscall()= we need to modify the match, and then
+pass the syscall_id into the =sys_send= function:
+
+#+begin_src rust
+  match syscall_id & 0xFF {
+      ...
+      4 => sys_send(context_ptr, syscall_id, arg1, arg2),
+  }
+#+end_src
+
+
+** Receiving messages
+
+

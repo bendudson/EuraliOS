@@ -30,7 +30,7 @@ pub unsafe extern "sysv64" fn _start() -> ! {
     );
     memory::init(heap_start, heap_size);
 
-    /// Call the user program
+    // Call the user program
     main();
 
     syscalls::thread_exit();

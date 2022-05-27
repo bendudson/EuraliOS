@@ -42,33 +42,55 @@ pub fn thread_exit() -> ! {
     loop{}
 }
 
-pub fn receive(handle: u64) -> Result<u64, u64> {
+pub enum Message {
+    Short(u64, u64, u64),
+    Long
+}
+
+pub fn receive(handle: u64) -> Result<Message, u64> {
     let mut err: u64;
-    let value: u64;
+    let (data1, data2, data3): (u64, u64, u64);
     unsafe {
         asm!("mov rax, 3", // sys_receive
              "syscall",
              in("rdi") handle,
              lateout("rax") err,
-             lateout("rdi") value);
+             lateout("rdi") data1,
+             lateout("rsi") data2,
+             lateout("rdx") data3,
+             out("rcx") _,
+             out("r11") _);
     }
     if err == 0 {
-        return Ok(value);
+        return Ok(Message::Short(data1, data2, data3));
     }
     Err(err)
 }
 
-pub fn send(handle: u64, value: u64) -> Result<(), u64> {
-    let err: u64;
-    unsafe {
-        asm!("mov rax, 4", // sys_send
-             "syscall",
-             in("rdi") handle,
-             in("rsi") value,
-             lateout("rax") err);
+use crate::debug_println;
+
+pub fn send(
+    handle: u32,
+    message: Message
+) -> Result<(), u64> {
+    match message {
+        Message::Short(data1, data2, data3) => {
+            let err: u64;
+            unsafe {
+                asm!("syscall",
+                     in("rax") 4 + ((handle as u64) << 32),
+                     in("rdi") data1,
+                     in("rsi") data2,
+                     in("rdx") data3,
+                     lateout("rax") err,
+                     out("rcx") _,
+                     out("r11") _);
+            }
+            if err == 0 {
+                return Ok(());
+            }
+            Err(err)
+        },
+        _ => return Err(0)
     }
-    if err == 0 {
-        return Ok(());
-    }
-    Err(err)
 }

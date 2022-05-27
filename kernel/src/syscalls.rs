@@ -168,6 +168,7 @@ extern "C" fn handle_syscall() {
             // Call the rust dispatch_syscall function
             // C calling convention so arguments are in registers
             // RDI, RSI, RDX, RCX, R8, R9
+            "mov r8, rdx", // Fifth argument <- Syscall third argument
             "mov rcx, rsi", // Fourth argument <- Syscall second argument
             "mov rdx, rdi", // Third argument <- Syscall first argument
             "mov rsi, rax", // Second argument is the syscall number
@@ -215,7 +216,7 @@ extern "C" fn handle_syscall() {
 }
 
 extern "C" fn dispatch_syscall(context_ptr: *mut Context, syscall_id: u64,
-                               arg1: u64, arg2: u64) {
+                               arg1: u64, arg2: u64, arg3: u64) {
 
     let context = unsafe{&mut *context_ptr};
 
@@ -230,12 +231,12 @@ extern "C" fn dispatch_syscall(context_ptr: *mut Context, syscall_id: u64,
     context.cs = code_selector.0 as usize;
     context.ss = data_selector.0 as usize;
 
-    match syscall_id {
+    match syscall_id & 0xFF {
         0 => process::fork_current_thread(context),
         1 => process::exit_current_thread(context),
         2 => sys_write(arg1 as *const u8, arg2 as usize),
         3 => sys_receive(context_ptr, arg1),
-        4 => sys_send(context_ptr, arg1, arg2),
+        4 => sys_send(context_ptr, syscall_id, arg1, arg2, arg3),
         _ => println!("Unknown syscall {:?} {} {} {}",
                        context_ptr, syscall_id, arg1, arg2)
     }
@@ -293,7 +294,13 @@ fn sys_receive(context_ptr: *mut Context, handle: u64) {
     }
 }
 
-fn sys_send(context_ptr: *mut Context, handle: u64, data: u64) {
+fn sys_send(
+    context_ptr: *mut Context,
+    syscall_id: u64,
+    data1: u64,
+    data2: u64,
+    data3: u64) {
+    let handle = syscall_id >> 32; // High 32 bits are the handle
     // Extract the current thread
     if let Some(mut thread) = process::take_current_thread() {
         let current_tid = thread.tid();
@@ -301,8 +308,11 @@ fn sys_send(context_ptr: *mut Context, handle: u64, data: u64) {
 
         // Get the Rendezvous and call
         if let Some(rdv) = thread.rendezvous(handle) {
-            let (thread1, thread2) = rdv.write().send(Some(thread),
-                                                      Message::Short(data as usize));
+            let (thread1, thread2) = rdv.write().send(
+                Some(thread),
+                Message::Short(data1 as usize,
+                               data2 as usize,
+                               data3 as usize));
             // thread1 should be started asap
             // thread2 should be scheduled
 
