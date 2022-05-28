@@ -5,7 +5,7 @@ use core::mem;
 
 pub enum Message {
     Long,
-    Short(usize, usize, usize),
+    Short(u64, u64, u64),
 }
 
 /// A Rendezvous is in one of three states:

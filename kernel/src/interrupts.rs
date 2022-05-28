@@ -353,7 +353,7 @@ extern "C" fn keyboard_handler_inner(context_addr: usize)
                     let (thread1, thread2) =
                         KEYBOARD_RENDEZVOUS.write().send(
                             None,
-                            Message::Short(character as usize, 0, 0));
+                            Message::Short(character as u64, 0, 0));
                     // thread1 should be scheduled to run next
                     if let Some(t) = thread2 {
                         process::schedule_thread(t);

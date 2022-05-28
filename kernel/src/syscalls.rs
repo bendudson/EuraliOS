@@ -310,9 +310,9 @@ fn sys_send(
         if let Some(rdv) = thread.rendezvous(handle) {
             let (thread1, thread2) = rdv.write().send(
                 Some(thread),
-                Message::Short(data1 as usize,
-                               data2 as usize,
-                               data3 as usize));
+                Message::Short(data1,
+                               data2,
+                               data3));
             // thread1 should be started asap
             // thread2 should be scheduled
 
