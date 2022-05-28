@@ -42,18 +42,31 @@ In =euralios_std/src/lib.rs=:
 pub mod syscalls;
 #+end_src
 
-and in a new file =syscalls.rs= we can start with:
+and in a new file =euralios_std/src/syscalls.rs= we can start by
+moving the =thread_exit()=, =receive()= and =send()= functions out of
+=hello/src/main.rs=:
 #+begin_src rust
   use core::arch::asm;
 
   pub fn thread_exit() -> ! {
       unsafe {
           asm!("mov rax, 1", // exit_current_thread
-               "syscall");
+               "syscall",
+               out("rcx") _,  // syscall clobber
+               out("r11") _); // syscall clobber
       }
       loop{}
   }
+#+end_src
+Note that the =rcx= and =r11= registers are now marked as clobbered,
+because the =syscall= instruction modifies these registers. The code
+worked before because fortunately the rust compiler/LLVM backend
+didn't use those registers. Without these statements I ran into
+strange page faults when more data than could fit in one register was
+returned from a function containing a =syscall= instruction, caused by
+overwriting these registers without telling the compiler.
 
+#+begin_src rust
   pub fn receive(handle: u64) -> Result<u64, u64> {
       let mut err: u64;
       let value: u64;
@@ -62,7 +75,9 @@ and in a new file =syscalls.rs= we can start with:
                "syscall",
                in(rdi) handle,
                lateout("rax") err,
-               lateout("rdi") value);
+               lateout("rdi") value,
+               out("rcx") _,
+               out("r11") _);
       }
       if err == 0 {
           return Ok(value);
@@ -77,7 +92,9 @@ and in a new file =syscalls.rs= we can start with:
                "syscall",
                in("rdi") handle,
                in("rsi") value,
-               lateout("rax") err);
+               lateout("rax") err,
+               out("rcx") _,
+               out("r11") _);
       }
       if err == 0 {
           return Ok(());
@@ -124,39 +141,41 @@ pub unsafe extern "sysv64" fn _start() -> ! {
 ** Debug output
 
 #+begin_src rust
-use core::arch::asm;
-use core::format_args;
-use core::fmt;
+  use core::arch::asm;
+  use core::format_args;
+  use core::fmt;
 
-struct Writer {}
+  struct Writer {}
 
-impl fmt::Write for Writer {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        unsafe {
-            asm!("mov rax, 2", // syscall function
-                 "syscall",
-                 in("rdi") s.as_ptr(), // First argument
-                 in("rsi") s.len()); // Second argument
-        }
-        Ok(())
-    }
-}
+  impl fmt::Write for Writer {
+      fn write_str(&mut self, s: &str) -> fmt::Result {
+          unsafe {
+              asm!("mov rax, 2", // syscall function
+                   "syscall",
+                   in("rdi") s.as_ptr(), // First argument
+                   in("rsi") s.len(), // Second argument
+                   out("rcx") _,
+                   out("r11") _);
+          }
+          Ok(())
+      }
+  }
 
-pub fn _print(args: fmt::Arguments) {
-    use core::fmt::Write;
-    Writer{}.write_fmt(args).unwrap();
-}
+  pub fn _print(args: fmt::Arguments) {
+      use core::fmt::Write;
+      Writer{}.write_fmt(args).unwrap();
+  }
 
-#[macro_export]
-macro_rules! debug_print {
-    ($($arg:tt)*) => ($crate::debug::_print(format_args!($($arg)*)));
-}
+  #[macro_export]
+  macro_rules! debug_print {
+      ($($arg:tt)*) => ($crate::debug::_print(format_args!($($arg)*)));
+  }
 
-#[macro_export]
-macro_rules! debug_println {
-    () => ($crate::debug_print!("\n"));
-    ($($arg:tt)*) => ($crate::debug_print!("{}\n", format_args!($($arg)*)));
-}
+  #[macro_export]
+  macro_rules! debug_println {
+      () => ($crate::debug_print!("\n"));
+      ($($arg:tt)*) => ($crate::debug_print!("{}\n", format_args!($($arg)*)));
+  }
 #+end_src
 
 ** Memory

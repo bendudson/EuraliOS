@@ -10,7 +10,9 @@ impl fmt::Write for Writer {
             asm!("mov rax, 2", // syscall function
                  "syscall",
                  in("rdi") s.as_ptr(), // First argument
-                 in("rsi") s.len()); // Second argument
+                 in("rsi") s.len(), // Second argument
+                 out("rcx") _,
+                 out("r11") _);
         }
         Ok(())
     }
