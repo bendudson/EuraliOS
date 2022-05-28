@@ -69,7 +69,7 @@ struct Process {
     page_table_physaddr: u64,
 
     /// Communication/file handles
-    handles: Vec<Arc<RwLock<Rendezvous>>>,
+    handles: Vec<Option<Arc<RwLock<Rendezvous>>>>,
 }
 
 impl Drop for Process {
@@ -182,9 +182,10 @@ impl Thread {
     /// Get a Rendezvous handle if it exists
     pub fn rendezvous(&self, id: u64)
                       -> Option<Arc<RwLock<Rendezvous>>> {
-        self.process.handles
-            .get(id as usize)
-            .map(|rv| rv.clone())
+        self.process.handles.get(id as usize) // Option<&Option<Arc<>>>
+            .unwrap_or(&None)  // &Option<Arc<>>
+            .as_ref() // Option<&Arc<>>
+            .map(|rv| rv.clone()) // Option<Arc<>>
     }
 }
 
@@ -259,7 +260,7 @@ pub fn set_current_thread(thread: Box<Thread>) {
 /// -------
 /// The TID of the new thread
 ///
-pub fn new_kernel_thread(function: fn()->(), handles: Vec<Arc<RwLock<Rendezvous>>>) -> u64 {
+pub fn new_kernel_thread(function: fn()->(), mut handles: Vec<Arc<RwLock<Rendezvous>>>) -> u64 {
     // Create a new process table entry
     //
     // Note this is first created on the stack, then moved into a Box
@@ -275,7 +276,9 @@ pub fn new_kernel_thread(function: fn()->(), handles: Vec<Arc<RwLock<Rendezvous>
             tid: unique_id(),
             process: Arc::new(Process {
                 page_table_physaddr: 0,
-                handles,
+                // Wrap each handle in an Option
+                handles:handles.drain(..)
+                    .map(|h| Some(h)).collect(),
             }),
             page_table_physaddr: 0, // Don't need to switch PT
             kernel_stack,
@@ -342,7 +345,7 @@ fn with_pagetable<F, R>(page_table_physaddr: u64, func: F) -> R where
 
 pub fn new_user_thread(
     bin: &[u8],
-    handles: Vec<Arc<RwLock<Rendezvous>>>
+    mut handles: Vec<Arc<RwLock<Rendezvous>>>
 ) -> Result<u64, &'static str> {
     // Check the header
     const ELF_MAGIC: [u8; 4] = [0x7f, b'E', b'L', b'F'];
@@ -433,7 +436,8 @@ pub fn new_user_thread(
                     // Create a new process
                     process: Arc::new(Process {
                         page_table_physaddr: user_page_table_physaddr,
-                        handles,
+                        handles:handles.drain(..)
+                            .map(|h| Some(h)).collect(),
                     }),
                     page_table_physaddr: user_page_table_physaddr,
                     kernel_stack: kernel_stack,
