@@ -1,11 +1,17 @@
-use alloc::boxed::Box;
+use alloc::{boxed::Box, sync::Arc};
 use crate::process::Thread;
 use crate::syscalls;
 use core::mem;
+use spin::RwLock;
+
+pub enum MessageData {
+    Value(u64),
+    Rendezvous(Arc<RwLock<Rendezvous>>),
+}
 
 pub enum Message {
-    Long,
     Short(u64, u64, u64),
+    Long(u64, MessageData, MessageData),
 }
 
 /// A Rendezvous is in one of three states:

@@ -20,7 +20,7 @@ use crate::interrupts::{Context, INTERRUPT_CONTEXT_SIZE};
 use crate::gdt;
 use crate::memory;
 use crate::syscalls;
-use crate::rendezvous::Rendezvous;
+use crate::rendezvous::{Rendezvous, MessageData};
 
 use object::{Object, ObjectSegment};
 
@@ -97,7 +97,7 @@ pub struct Thread {
     tid: u64,
 
     /// Process shared data
-    process: Arc<Process>,
+    process: Arc<RwLock<Process>>,
 
     /// Page table physical address
     ///
@@ -173,19 +173,61 @@ impl Thread {
                 context.rsi = data2 as usize;
                 context.rdx = data3 as usize;
             },
-            Message::Long => {
-                context.rdi = 42;
+            Message::Long(data1, data2, data3) => {
+                context.rdi = data1 as usize;
+
+                context.rsi = match data2 {
+                    MessageData::Value(value) => value,
+                    MessageData::Rendezvous(rdv) => {
+                        context.rax |= (syscalls::MESSAGE_DATA2_RDV |
+                                        syscalls:: MESSAGE_LONG) as usize;
+                        self.give_rendezvous(rdv)
+                    }
+                } as usize;
+
+                context.rdx = match data3 {
+                    MessageData::Value(value) => value,
+                    MessageData::Rendezvous(rdv) => {
+                        context.rax |= (syscalls::MESSAGE_DATA3_RDV |
+                                        syscalls::MESSAGE_LONG) as usize;
+                        self.give_rendezvous(rdv)
+                    }
+                } as usize;
             }
         }
     }
 
-    /// Get a Rendezvous handle if it exists
+    /// Get a clone of a rendezvous handle if it exists
     pub fn rendezvous(&self, id: u64)
                       -> Option<Arc<RwLock<Rendezvous>>> {
-        self.process.handles.get(id as usize) // Option<&Option<Arc<>>>
+        self.process.read().handles.get(id as usize) // Option<&Option<Arc<>>>
             .unwrap_or(&None)  // &Option<Arc<>>
             .as_ref() // Option<&Arc<>>
             .map(|rv| rv.clone()) // Option<Arc<>>
+    }
+
+    /// Take the rendezvous, leaving handle empty (None)
+    pub fn take_rendezvous(&self, id: u64)
+                           -> Option<Arc<RwLock<Rendezvous>>> {
+        self.process.write().handles.get_mut(id as usize).map_or(None, |elem| elem.take())
+    }
+
+    /// Add a rendezvous to the process, returning the handle
+    pub fn give_rendezvous(&self, rendezvous: Arc<RwLock<Rendezvous>>) -> u64 {
+        // Lock the handles
+        let handles = &mut self.process.write().handles;
+
+        // Find empty handle slot
+        for (pos, handle) in handles.iter().enumerate() {
+            if handle.is_none() {
+                // Found empty slot => Store rendezvous
+                handles[pos] = Some(rendezvous);
+                return pos as u64;
+            }
+        }
+        // All full => Add new handle
+        handles.push(Some(rendezvous));
+        (handles.len() - 1) as u64
     }
 }
 
@@ -274,12 +316,12 @@ pub fn new_kernel_thread(function: fn()->(), mut handles: Vec<Arc<RwLock<Rendezv
 
         Box::new(Thread {
             tid: unique_id(),
-            process: Arc::new(Process {
+            process: Arc::new(RwLock::new(Process {
                 page_table_physaddr: 0,
                 // Wrap each handle in an Option
                 handles:handles.drain(..)
                     .map(|h| Some(h)).collect(),
-            }),
+            })),
             page_table_physaddr: 0, // Don't need to switch PT
             kernel_stack,
             // Note that stacks move backwards, so SP points to the end
@@ -434,11 +476,11 @@ pub fn new_user_thread(
                 Box::new(Thread {
                     tid: unique_id(),
                     // Create a new process
-                    process: Arc::new(Process {
+                    process: Arc::new(RwLock::new(Process {
                         page_table_physaddr: user_page_table_physaddr,
                         handles:handles.drain(..)
                             .map(|h| Some(h)).collect(),
-                    }),
+                    })),
                     page_table_physaddr: user_page_table_physaddr,
                     kernel_stack: kernel_stack,
                     // Note that stacks move backwards, so SP points to the end

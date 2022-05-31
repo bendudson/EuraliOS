@@ -10,24 +10,36 @@
 //! 0   fork_current_thread() -> (RAX: errcode, RDI: thread_id)
 //! 1   exit_current_thread() -> !   (does not return)
 //! 2   write(RDI: *const u8, RSI: usize) -> ()
+//! 3   receive
+//! 4   send
 //!
 //! Potential future syscalls
 //! -------------------------
 //!
+//! - launch_process(..)         Start a new process
+//!
+//! - wait(time)                 Stop thread for set time
 //! - yield() -> ()              Thread yields control
-//! - thread_fork() -> u64       Spawn a new thread.
-//!                              Returns zero to new thread, thread ID to original
 //! - thread_kill(u64) -> bool   Kill the specified thread. Must be in the same process.
 //! - unique_id() -> u64         Return a unique number
 //!
+//! - mount(str, handle)         Attach a process to a vfs node
 //! - open(str) -> handle        Open a vfs node
-//! - send(handle, message) -> bool
-//! - recv(handle) -> message
-//! - send_recv(handle, message) -> message
+//!
+//! - send_receive(handle, message)  Ensure reply from same thread
 
 pub const SYSCALL_ERROR_SEND_BLOCKING: usize = 1;
 pub const SYSCALL_ERROR_RECV_BLOCKING: usize = 2;
 pub const SYSCALL_ERROR_INVALID_HANDLE: usize = 3;
+
+pub const MESSAGE_LONG: u64 = 2 << 8;
+pub const MESSAGE_DATA2_RDV: u64 = 2 << 9;
+const MESSAGE_DATA2_TYPE: u64 = MESSAGE_DATA2_RDV; // Bit mask
+const MESSAGE_DATA2_MOVE: u64 = 2 << 10;
+
+pub const MESSAGE_DATA3_RDV: u64 = 2 << 11;
+const MESSAGE_DATA3_TYPE: u64 = MESSAGE_DATA3_RDV; // Bit mask
+const MESSAGE_DATA3_MOVE: u64 = 2 << 12;
 
 use crate::{print, println};
 use core::arch::asm;
@@ -36,7 +48,7 @@ use core::{slice, str};
 use crate::process;
 use crate::gdt;
 use crate::interrupts::{self, Context};
-use crate::rendezvous::Message;
+use crate::rendezvous::{Message, MessageData};
 
 // register for address of syscall handler
 const MSR_STAR: usize = 0xc0000081;
@@ -308,11 +320,58 @@ fn sys_send(
 
         // Get the Rendezvous and call
         if let Some(rdv) = thread.rendezvous(handle) {
-            let (thread1, thread2) = rdv.write().send(
-                Some(thread),
+
+            let message = if syscall_id & MESSAGE_LONG == 0 {
                 Message::Short(data1,
                                data2,
-                               data3));
+                               data3)
+            } else {
+                // Long message
+
+                let message = Message::Long(
+                    data1,
+                    if syscall_id & MESSAGE_DATA2_TYPE == MESSAGE_DATA2_RDV {
+                        // Moving or copying a handle
+                        // First copy, then drop if message is valid
+                        if let Some(rdv) = thread.rendezvous(data2) {
+                            MessageData::Rendezvous(rdv)
+                        } else {
+                            // Invalid handle
+                            thread.return_error(SYSCALL_ERROR_INVALID_HANDLE);
+                            process::set_current_thread(thread);
+                            return;
+                        }
+                    } else {
+                        MessageData::Value(data2)
+                    },
+                    if syscall_id & MESSAGE_DATA3_TYPE == MESSAGE_DATA3_RDV {
+                        if let Some(rdv) = thread.rendezvous(data3) {
+                            MessageData::Rendezvous(rdv)
+                        } else {
+                            // Invalid handle.
+                            // If we moved data2 we would have to put it back here
+                            thread.return_error(SYSCALL_ERROR_INVALID_HANDLE);
+                            process::set_current_thread(thread);
+                            return;
+                        }
+                    } else {
+                        MessageData::Value(data3)
+                    });
+                // Message is valid => Remove handles being moved
+                if (syscall_id & MESSAGE_DATA2_TYPE == MESSAGE_DATA2_RDV) &&
+                    (syscall_id & MESSAGE_DATA2_MOVE != 0) {
+                        let _ = thread.take_rendezvous(data3);
+                    }
+                if (syscall_id & MESSAGE_DATA3_TYPE == MESSAGE_DATA3_RDV) &&
+                    (syscall_id & MESSAGE_DATA3_MOVE != 0) {
+                        let _ = thread.take_rendezvous(data3);
+                    }
+                message
+            };
+
+            let (thread1, thread2) = rdv.write().send(
+                Some(thread),
+                message);
             // thread1 should be started asap
             // thread2 should be scheduled
 
