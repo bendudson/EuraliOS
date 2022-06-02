@@ -20,7 +20,7 @@ members = [
 #+end_src
 then run =cargo= to create the =euralios_std= crate:
 #+begin_src sh
-  cargo add euralios_std --lib
+  cargo new euralios_std --lib
 #+end_src
 
 Our user program =hello= is going to depend on this library,

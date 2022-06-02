@@ -82,7 +82,9 @@ direction...
 - [[file:doc/journal/06-user-memory.org][6. User space memory management]] in which we create a heap for each
   user process so that user programs can use =Box=, =Vec= etc, using a
   linked list allocator. As a bonus this allows a threading API with
-  closures as in the Rust stdlib.
+  closures as in the Rust stdlib. We also re-organise the repository
+  into a Cargo Workspace, with separate crates for the kernel and user
+  program.
 - [[file:doc/journal/07-ipc.org][7. Inter-process communication (IPC)]] where a simple "rendezvous"
   communication method is implemented, enabling a user program to
   get input from the keyboard.
@@ -91,7 +93,7 @@ direction...
 - [[file:doc/journal/09-message-sending.org][9. Sending messages]] which adds the =send= syscall, allowing the user
   program to send messages to a VGA output kernel thread.
 - [[file:doc/journal/10-stdlib.org][10. A standard library]] in which we start a =euralios_std= "standard"
-  library, moving code out of the user program.
+  library, moving code out of the user program into a separate crate.
 - [[file:doc/journal/11-messages.org][11. More messages]]
 
 ** Bibliography
@@ -102,3 +104,6 @@ Useful reference material includes:
 - [[https://0xax.gitbooks.io/linux-insides/content/][Linux insides]] by [[https://twitter.com/0xAX][@0xAX]]
 - [[https://www.kernel.org/doc/html/latest/][The Linux Kernel documentation]]
 
+Other relevant links
+
+- [[https://osblog.stephenmarz.com/index.html][The Adventures of OS: Making a RISC-V Operating System using Rust]]

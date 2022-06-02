@@ -1,5 +1,4 @@
 use core::arch::asm;
-use core::format_args;
 use core::fmt;
 
 struct Writer {}

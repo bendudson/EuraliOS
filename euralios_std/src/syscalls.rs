@@ -7,8 +7,8 @@ use core::arch::asm;
 ///  Ok(thread_id) or Err(error_code)
 ///
 pub fn thread_spawn(func: extern "C" fn() -> ()) -> Result<u64, u64> {
-    let mut tid: u64 = 0;
-    let mut errcode: u64 = 0;
+    let mut tid: u64;
+    let mut errcode: u64;
     unsafe {
         asm!("mov rax, 0", // fork_current_thread syscall
              "syscall",
@@ -66,8 +66,6 @@ pub fn receive(handle: u64) -> Result<Message, u64> {
     }
     Err(err)
 }
-
-use crate::debug_println;
 
 pub fn send(
     handle: u32,
