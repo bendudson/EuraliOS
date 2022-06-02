@@ -1,0 +1,35 @@
+* Devices
+
+The [[https://www.felixcloutier.com/x86/in][IN]] and [[https://www.felixcloutier.com/x86/out][OUT]] instructions are used to access ports. These ports
+control many external devices, including those connected to the PCI
+bus.
+
+Add a new user program =pci= to the =members= list in the root =Cargo.toml= file, and create
+the outline with:
+#+begin_src shell
+  cargo new pci
+#+end_src
+
+In =pci= edit the =Cargo.toml= file, and add
+#+begin_src toml
+  [dependencies]
+  euralios_std = { path = "../euralios_std" }
+#+end_src
+and copy =build.rs= from =hello/= to =pci/=. The =pci/src/main.rs= file can contain a basic main function for now:
+#+begin_src rust
+  #![no_std]
+  #![no_main]
+
+  use euralios_std::debug_println;
+
+  #[no_mangle]
+  fn main() {
+      debug_println!("Hello world!");
+  }
+#+end_src
+Finally in the root =makefile= we need to add the =pci= program:
+#+begin_src makefile
+  .PHONY: run
+  run : user/hello user/pci
+          cargo run --release --bin kernel
+#+end_src

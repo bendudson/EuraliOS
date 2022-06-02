@@ -3,6 +3,7 @@
 members = [
     "kernel",
     "hello",
-    "euralios_std"
+    "euralios_std",
+    "pci"
 ]
 

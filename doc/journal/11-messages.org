@@ -353,3 +353,9 @@ construct this with =process: Arc::new(RwLock::new(Process {...}))=
         (handles.len() - 1) as u64
     }
 #+end_src
+
+
+Ok, enough messaging for now (hurray!). Next it's time for the
+operating system to start doing something useful, so we'll start work
+on accessing devices and storage [[file:./12-devices.org][next time]].
+
