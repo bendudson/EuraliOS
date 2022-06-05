@@ -27,9 +27,111 @@ and copy =build.rs= from =hello/= to =pci/=. The =pci/src/main.rs= file can cont
       debug_println!("Hello world!");
   }
 #+end_src
-Finally in the root =makefile= we need to add the =pci= program:
+To build the executable when we execute "make run", in the root
+=makefile= we need to add the =pci= program:
 #+begin_src makefile
   .PHONY: run
   run : user/hello user/pci
           cargo run --release --bin kernel
 #+end_src
+
+For now in =kernel/src/main.rs= in the =kernel_thread_main()= function
+replace "../../user/hello" with "../../user/pci". Running
+should now print "Hello world!".
+
+** Accessing ports from user programs
+
+This program first writes to the PCI address port =0xCF8=, and
+then reads from the data port =0xCFC=.
+#+begin_src rust
+  #[no_mangle]
+  fn main() {
+      debug_println!("Hello world!");
+
+      let device_info: u32;
+      let device_addr: u32 = 0x8000_0000;
+      const addr_port: u16 = 0x0CF8;
+      const data_port: u16 = 0x0CFC;
+      unsafe {
+          asm!("out dx, eax",
+               in("dx") addr_port,
+               in("eax") device_addr);
+
+          asm!("in eax, dx",
+               in("dx") data_port,
+               lateout("eax") device_info);
+      }
+      debug_println!("Device: {}", device_info);
+  }
+#+end_src
+
+Note that the =in= and =out= instructions are unusual in only
+using the =eax= register (or subsets of it) for the data,
+and =dx= for the port number.
+
+When this is run it produces a General Protection Fault (GPF):
+The =in= and =out= instructions are privileged, with controls
+on which processes can use them.
+
+#+CAPTION: General Protection Fault due to user thread using I/O instructions without sufficient IO privileges.
+#+NAME: fig-gpf
+[[./img/12-01-gpf.png]]
+
+To allow a user program to write to ports we need to change the I/O
+Privilege Level (IOPL) to 3 (the ring our program is running in). This
+is set in bits 12 and 13 of [[https://en.wikipedia.org/wiki/FLAGS_register][RFLAGS]], mask 0x3000.
+
+In =process.rs=, =new_user_thread= modify the rflags:
+#+begin_src rust
+context.rflags = 0x0200 + 0x3000;
+#+end_src
+And now our program should run, printing a value for device_info!
+
+It's probably not a good idea for every program to be able to read and
+write to ports because a program could do anything to attached
+devices. We need to be able to decide if a process should have IO
+privileges by passing an argument to =new_user_thread=.  We could just
+add a =bool= argument, but at the calling site a =true= or =false=
+isn't very informative. Rust doesn't (yet?) have keyword arguments,
+but the [[https://www.ameyalokare.com/rust/2017/11/02/rust-builder-pattern.html][builder pattern]] seems to be a common replacement. That seems
+too much for just a couple of parameters, so for now we'll just do the
+simple thing and define a struct:
+#+begin_src rust
+  pub struct Params {
+      pub handles: Vec<Arc<RwLock<Rendezvous>>>,
+      pub io_privileges: bool
+  }
+
+  pub fn new_user_thread(
+      bin: &[u8],
+      params: Params
+  ) -> Result<u64, &'static str> {
+      ...
+  }
+#+end_src
+(somewhere before =drain='ing handles we need to define =let mut
+handles = params.handles;=). The flags can now be set with
+#+begin_src rust
+  context.rflags = if params.io_privileges {
+      0x200 + 0x3000 // Interrupt enable + IOPL 3
+  } else {
+      0x200 // Interrupt enable
+  };
+#+end_src
+
+At the calling site =kernel_thread_main()= in =kernel/src/main.rs=:
+#+begin_src rust
+  process::new_user_thread(
+          include_bytes!("../../user/pci"),
+          process::Params{
+              handles: Vec::from([
+                  interrupts::keyboard_rendezvous(),
+                  vga_rz
+              ]),
+              io_privileges: true
+          });
+#+end_src
+The user program should now print a device number if =io_privileges=
+is =true= and cause a General Protection Fault if it's =false=.
+
+

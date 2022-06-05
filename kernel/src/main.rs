@@ -30,9 +30,14 @@ fn kernel_thread_main() {
     // Using MOROS approach of including ELF files
     // https://github.com/vinc/moros/blob/trunk/src/usr/install.rs
     process::new_user_thread(
-        include_bytes!("../../user/hello"),
-        Vec::from([interrupts::keyboard_rendezvous(),
-                   vga_rz]));
+        include_bytes!("../../user/pci"),
+        process::Params{
+            handles: Vec::from([
+                interrupts::keyboard_rendezvous(),
+                vga_rz
+            ]),
+            io_privileges: true
+        });
 
     kernel::hlt_loop();
 }

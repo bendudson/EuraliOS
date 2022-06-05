@@ -385,9 +385,14 @@ fn with_pagetable<F, R>(page_table_physaddr: u64, func: F) -> R where
     result
 }
 
+pub struct Params {
+    pub handles: Vec<Arc<RwLock<Rendezvous>>>,
+    pub io_privileges: bool
+}
+
 pub fn new_user_thread(
     bin: &[u8],
-    mut handles: Vec<Arc<RwLock<Rendezvous>>>
+    params: Params
 ) -> Result<u64, &'static str> {
     // Check the header
     const ELF_MAGIC: [u8; 4] = [0x7f, b'E', b'L', b'F'];
@@ -473,6 +478,7 @@ pub fn new_user_thread(
                 // Allocate user stack
                 let (user_stack_start, user_stack_end) = memory::allocate_user_stack(user_page_table_ptr)?;
 
+                let mut handles = params.handles;
                 Box::new(Thread {
                     tid: unique_id(),
                     // Create a new process
@@ -497,7 +503,11 @@ pub fn new_user_thread(
             context.rip = entry_point as usize;
 
             // Set flags
-            context.rflags = 0x0200; // Interrupt enable
+            context.rflags = if params.io_privileges {
+                0x200 + 0x3000 // Interrupt enable + IOPL 3
+            } else {
+                0x200 // Interrupt enable
+            };
 
             let (code_selector, data_selector) = gdt::get_user_segments();
             context.cs = code_selector.0 as usize; // Code segment flags
