@@ -50,15 +50,15 @@ then reads from the data port =0xCFC=.
 
       let device_info: u32;
       let device_addr: u32 = 0x8000_0000;
-      const addr_port: u16 = 0x0CF8;
-      const data_port: u16 = 0x0CFC;
+      const CONFIG_ADDRESS: u16 = 0x0CF8;
+      const CONFIG_DATA: u16 = 0x0CFC;
       unsafe {
           asm!("out dx, eax",
-               in("dx") addr_port,
+               in("dx") CONFIG_ADDRESS,
                in("eax") device_addr);
 
           asm!("in eax, dx",
-               in("dx") data_port,
+               in("dx") CONFIG_DATA,
                lateout("eax") device_info);
       }
       debug_println!("Device: {}", device_info);
@@ -134,4 +134,232 @@ At the calling site =kernel_thread_main()= in =kernel/src/main.rs=:
 The user program should now print a device number if =io_privileges=
 is =true= and cause a General Protection Fault if it's =false=.
 
+
+Device 8086:1237
+
+According to the [[https://pci-ids.ucw.cz/read/PC/8086][PCI ID repository]] this is vendor
+Intel Corporation, and 8086:1237 is [[https://pci-ids.ucw.cz/read/PC/8086/1237][440FX - 82441FX PMC]], the
+[[https://en.wikipedia.org/wiki/Intel_440FX]["Natoma"]] chipset.
+
+** Tidying up the code
+
+There is a lot of information on the PCI bus on the [[https://wiki.osdev.org/PCI][OSDev wiki]] including
+tables of the bit offsets, and device classes.
+
+First we can wrap up the configuration code reader with a struct
+representing a PCI bus location (bus, slot and function):
+#+begin_src rust
+#[derive(Clone, Copy)]
+struct PciLocation {
+    bus:  u16,
+    slot: u16,
+    function: u16
+}
+#+end_src
+It's a simple type so it derives Clone and Copy traits so it can be
+easily copied rather than moved.
+
+We can then put the configuration reading code into a method:
+#+begin_src rust
+  const CONFIG_ADDRESS: u16 = 0xCF8;
+  const CONFIG_DATA: u16 = 0xCFC;
+
+  impl PciLocation {
+      fn read_register(&self, register: u8) -> u32 {
+          let addr = 0x8000_0000
+              | ((self.bus  as u32) << 16)
+              | ((self.slot as u32) << 11)
+              | ((self.function as u32) <<  8)
+              | ((register as u32) << 2);
+
+          let value: u32;
+          unsafe {
+              asm!("out dx, eax",
+                   in("dx") CONFIG_ADDRESS,
+                   in("eax") addr,
+                   options(nomem, nostack));
+
+              asm!("in eax, dx",
+                   in("dx") CONFIG_DATA,
+                   lateout("eax") value,
+                   options(nomem, nostack));
+          }
+          value
+      }
+  }
+#+end_src
+
+We then need a struct to represent a device which may be attached
+to a PCI location:
+#+begin_src rust
+  struct Device {
+      location: PciLocation,
+      vendor_id: u16, // Identifies the manufacturer of the device
+      device_id: u16, // Identifies the particular device. Valid IDs are allocated by the vendor
+      class: u8, // The type of function the device performs
+      subclass: u8, // The specific function the device performs
+      prog_if: u8, // register-level programming interface, if any
+      revision_id: u8 // revision identifier. Valid IDs are allocated by the vendor
+  }
+#+end_src
+
+To create a =Device= struct we can query a =PciLocation=:
+#+begin_src rust
+  impl PciLocation {
+      fn get_device(&self) -> Option<Device> {
+        let reg_0 = self.read_register(0);
+        if reg_0 == 0xFFFF_FFFF {
+            return None // No device
+        }
+
+        let vendor_id = (reg_0 & 0xFFFF) as u16;
+        let device_id = (reg_0 >> 16) as u16;
+
+        let reg_2 = self.read_register(2);
+
+        let revision_id = (reg_2 & 0xFF) as u8;
+        let prog_if = ((reg_2 >> 8) & 0xFF) as u8;
+        let subclass = ((reg_2 >> 16) & 0xFF) as u8;
+        let class = ((reg_2 >> 24) & 0xFF) as u8;
+        Some(Device {
+            location: self.clone(),
+            vendor_id,
+            device_id,
+            class,
+            subclass,
+            prog_if,
+            revision_id
+        })
+    }
+  }
+#+end_src
+
+We need some way to print these structs. =PciLocation= is straightforward:
+#+begin_src rust
+  use core::fmt;
+  impl fmt::Display for PciLocation {
+      fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+             write!(f, "PCI {:04X}:{:02X}:{:02X}",
+                    self.bus, self.slot, self.function)
+      }
+  }
+#+end_src
+
+To print =Device= structs we can use:
+#+begin_src rust
+  impl fmt::Display for Device {
+      fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+          write!(f, "{} [{:04X}:{:04X}] {}:{}",
+                 self.location, self.vendor_id, self.device_id,
+                 self.class, self.subclass)
+      }
+  }
+#+end_src
+but it would be nice to have a human-readable description of the
+device class. There is a [[https://wiki.osdev.org/PCI#Class_Codes][table of class codes on OSDev wiki]], but we don't
+need the whole table for QEMU. A subset which will do for now is in this
+=class_str()= method:
+#+begin_src rust
+impl Device {
+    fn class_str(&self) -> &'static str {
+        match self.class {
+            0x0 => match self.subclass {
+                0 => "Non-VGA-Compatible Unclassified Device",
+                1 => "VGA-Compatible Unclassified Device",
+                _ => "Unknown",
+            },
+            0x1 => match self.subclass {
+                0x0 => "SCSI Bus Controller",
+                0x1 => "IDE Controller",
+                0x2 => "Floppy Disk Controller",
+                0x3 => "IPI Bus Controller",
+                0x4 => "RAID Controller",
+                0x5 => "ATA Controller",
+                0x6 => "Serial ATA Controller",
+                0x7 => "Serial Attached SCSI Controller",
+                0x8 => "Non-Volatile Memory Controller",
+                _ => "Mass Storage Controller"
+            }
+            0x2 => match self.subclass {
+                0x0 => "Ethernet Controller",
+                0x1 => "Token Ring Controller",
+                0x2 => "FDDI Controller",
+                0x3 => "ATM Controller",
+                0x4 => "ISDN Controller",
+                0x5 => "WorldFip Controller",
+                0x6 => "PICMG 2.14 Multi Computing Controller",
+                0x7 => "Infiniband Controller",
+                0x8 => "Fabric Controller",
+                _ => "Network Controller"
+            }
+            0x3 => match self.subclass {
+                0x0 => "VGA Compatible Controller",
+                0x1 => "XGA Controller",
+                0x2 => "3D Controller (Not VGA-Compatible)",
+                _ => "Display Controller"
+            }
+            0x4 => match self.subclass {
+                0x0 => "Multimedia Video Controller",
+                0x1 => "Multimedia Audio Controller",
+                0x2 => "Computer Telephony Device",
+                0x3 => "Audio Device",
+                _ => "Multimedia Controller"
+            }
+            0x5 => match self.subclass {
+                0x0 => "RAM Controller",
+                0x1 => "Flash Controller",
+                _ => "Memory Controller"
+            }
+            0x6 => match self.subclass {
+                0x0 => "Host Bridge",
+                0x1 => "ISA Bridge",
+                0x2 => "EISA Bridge",
+                0x3 => "MCA Bridge",
+                0x4 => "PCI-to-PCI Bridge",
+                0x5 => "PCMCIA Bridge",
+                0x6 => "NuBus Bridge",
+                0x7 => "CardBus Bridge",
+                0x8 => "RACEway Bridge",
+                0x9 => "PCI-to-PCI Bridge",
+                0xA => "InfiniBand-to-PCI Host Bridge",
+                _ => "Bridge"
+            }
+            _ => "Unknown"
+        }
+    }
+}
+#+end_src
+
+That allows =Device= to be formatted as:
+#+begin_src rust
+  impl fmt::Display for Device {
+      fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+          write!(f, "{} [{:04X}:{:04X}] {}",
+                 self.location, self.vendor_id, self.device_id, self.class_str())
+      }
+  }
+#+end_src
+
+Finally we can run a brute force check of all PCI locations, printing
+the devices:
+#+begin_src rust
+  #[no_mangle]
+  fn main() {
+      // Brute force check of all PCI slots
+      for bus in 0..256 {
+          for slot in 0..32 {
+              if let Some(device) = (
+                  PciLocation{bus,
+                              slot,
+                              function:0}).get_device() {
+                  debug_println!("Device {}", device);
+              }
+          }
+      }
+  }
+#+end_src
+
+#+CAPTION: List of PCI locations, vendor:device IDs, and device class on QEMU
+#+NAME: fig-class
+[[./img/12-02-class.png]]
 
