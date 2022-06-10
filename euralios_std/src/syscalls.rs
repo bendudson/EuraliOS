@@ -37,9 +37,9 @@ pub fn thread_spawn(func: extern "C" fn() -> ()) -> Result<u64, u64> {
 pub fn thread_exit() -> ! {
     unsafe {
         asm!("mov rax, 1", // exit_current_thread syscall
-             "syscall");
+             "syscall",
+             options(noreturn));
     }
-    loop{}
 }
 
 pub enum Message {

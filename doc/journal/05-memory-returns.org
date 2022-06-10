@@ -698,16 +698,17 @@ and modify the =hello.rs= user program so that all threads exit.
 At the end of =_start()=, replace the infinite loop with an
 exit syscall:
 #+begin_src rust
-  #[no_mangle]
-  pub unsafe extern "sysv64" fn _start() -> ! {
-      ...
-      asm!("mov rax, 1", // exit_current_thread syscall
-           "syscall");
-      loop{} // Still needed for ! return
-  }
+    #[no_mangle]
+    pub unsafe extern "sysv64" fn _start() -> ! {
+        ...
+        asm!("mov rax, 1", // exit_current_thread syscall
+             "syscall",
+        options(noreturn)); // needed for ! return
+    }
 #+end_src
-Note that the compiler doesn't know that the syscall will never
-return, so we still need a loop at the end of the function.
+Note that the =noreturn= option tells the compiler that this assembly
+code will never return (because the thread will be dropped and control
+passed to another thread).
 
 Running this you should now see the "Dropping Process" message.
 
