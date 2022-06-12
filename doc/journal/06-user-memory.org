@@ -343,4 +343,6 @@ The Rust standard library includes a =thread::spawn= function which
 The =spawn= function takes ownership of a closure, puts it in a =Box=,
 and passes it to [[https://github.com/rust-lang/rust/blob/master/library/std/src/sys/unix/thread.rs#L51][Thread::new()]]
 
-In the [[file:07-file-descriptors.org][next section]]
+In the [[file:07-ipc.org][next section]] we'll start working on inter-process/thread communication,
+allowing threads to send messages to each other.
+

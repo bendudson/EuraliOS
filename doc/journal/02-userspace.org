@@ -629,9 +629,10 @@ macro_rules! println {
         concat!($fmt, "\n"), $($arg)*));
 }
 #+end_src
-Eventually we will want to define these in a standard library which all
-user programs can use, but this will be enough for testing for now.
-Our =hello.rs= start function can now be simplified to:
+Eventually we will want to define these in a standard library which
+all user programs can use ([[./10-stdlib.org][section 10]]), but this will be enough for
+testing for now.  Our =hello.rs= start function can now be simplified
+to:
 #+begin_src rust
   #[no_mangle]
   pub unsafe extern "sysv64" fn _start() -> ! {
