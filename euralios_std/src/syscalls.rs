@@ -92,3 +92,6 @@ pub fn send(
         _ => return Err(0)
     }
 }
+
+// Standard message types
+pub const MESSAGE_TYPE_CHAR: u64 = 0;

@@ -1,0 +1,9 @@
+* Network adapter
+
+In [[./12-devices.org][section 12]] we wrote a basic =pci= program, which scans the
+PCI bus for devices and makes it available to other processes.
+Then in the [[./13-return-to-sender.org][last section]] we worked on enabling programs to open
+connections, and ensuring that return messages go to the right
+program. In this section we'll start adding device drivers,
+starting with a network adapter.
+

@@ -8,7 +8,7 @@ fn main() {
     loop{
         let msg = syscalls::receive(0).unwrap();
         let value = match msg {
-            Message::Short(value, _, _) => value,
+            Message::Short(_, value, _) => value,
             _ => 0
         };
         let ch = char::from_u32(value as u32).unwrap();

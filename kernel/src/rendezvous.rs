@@ -4,6 +4,9 @@ use crate::syscalls;
 use core::mem;
 use spin::RwLock;
 
+// Standard message types
+pub const MESSAGE_TYPE_CHAR: u64 = 0;
+
 pub enum MessageData {
     Value(u64),
     Rendezvous(Arc<RwLock<Rendezvous>>),

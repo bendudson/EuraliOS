@@ -11,8 +11,11 @@
 #![no_main]
 
 use core::arch::asm;
-use euralios_std::debug_println;
+use euralios_std::{debug_println, syscalls};
 use core::fmt;
+
+extern crate alloc;
+use alloc::vec::Vec;
 
 const CONFIG_ADDRESS: u16 = 0xCF8;
 const CONFIG_DATA: u16 = 0xCFC;
@@ -32,11 +35,16 @@ impl fmt::Display for PciLocation {
 }
 
 impl PciLocation {
-    fn read_register(&self, register: u8) -> u32 {
-        let addr = 0x8000_0000
+    /// Return PCI bus address
+    fn address(&self) -> u32 {
+        0x8000_0000
             | ((self.bus  as u32) << 16)
             | ((self.slot as u32) << 11)
             | ((self.function as u32) <<  8)
+    }
+
+    fn read_register(&self, register: u8) -> u32 {
+        let addr = self.address()
             | ((register as u32) << 2);
 
         let value: u32;
@@ -170,8 +178,15 @@ impl fmt::Display for Device {
     }
 }
 
+const MESSAGE_PCI_DEVICE: u64 = 256;
+const MESSAGE_PCI_ADDRESS: u64 = 257; // The bus/slot/function address
+const MESSAGE_PCI_NOTFOUND: u64 = 258;
+
 #[no_mangle]
 fn main() {
+
+    let mut devices = Vec::new();
+
     // Brute force check of all PCI slots
     for bus in 0..256 {
         for slot in 0..32 {
@@ -180,6 +195,54 @@ fn main() {
                             slot,
                             function:0}).get_device() {
                 debug_println!("Device {}", device);
+                devices.push(device);
+            }
+        }
+    }
+
+    // Enter loop waiting for messages
+    loop {
+        match syscalls::receive(0) {
+            Ok(message) => {
+                debug_println!("Received message");
+                match message {
+                    // A character e.g. from keyboard
+                    syscalls::Message::Short(
+                        syscalls::MESSAGE_TYPE_CHAR, ch, _) => {
+                        debug_println!("Character: {}", ch);
+                    }
+                    // Find a device with given vendor and device ID
+                    // and return a message to the same Rendezvous
+                    syscalls::Message::Short(
+                        MESSAGE_PCI_DEVICE, vendor_device, _) => {
+                        let vendor_id = (vendor_device & 0xFFFF) as u16;
+                        let device_id = (vendor_device >> 16) as u16;
+
+                        debug_println!("Finding device [{:04X}:{:04X}]",
+                                       vendor_id, device_id);
+
+                        if let Some(device) = devices.iter().find(
+                            |&d| d.vendor_id == vendor_id &&
+                                d.device_id == device_id) {
+
+                            syscalls::send(0,
+                                           syscalls::Message::Short(
+                                               MESSAGE_PCI_ADDRESS,
+                                               device.location.address() as u64,
+                                               0));
+                        } else {
+                            // Not found
+                            syscalls::send(0,
+                                           syscalls::Message::Short(
+                                               MESSAGE_PCI_NOTFOUND,
+                                               0xFFFF_FFFF_FFFF_FFFF, 0));
+                        }
+                    }
+                    _ => {}
+                }
+            },
+            Err(code) => {
+                debug_println!("Receive error {}", code);
             }
         }
     }

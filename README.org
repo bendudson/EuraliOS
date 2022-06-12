@@ -95,8 +95,10 @@ direction...
 - [[file:doc/journal/10-stdlib.org][10. A standard library]] in which we start a =euralios_std= "standard"
   library, moving code out of the user program into a separate crate.
 - [[file:doc/journal/11-messages.org][11. More messages]]
-- [[file:doc/journal/12-devices.org][12. Devices and I/O]] where we start working on input/output to PCI
+- [[file:doc/journal/12-devices.org][12. PCI devices]] where we start working on input/output to PCI
   devices.
+- [[file:doc/journal/13-return-to-sender.org][13. Return to sender]]
+- [[file:doc/journal/14-network.org][14. Networking]]
 
 ** Bibliography
 

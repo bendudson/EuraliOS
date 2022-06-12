@@ -174,7 +174,9 @@ fn listener() {
                  "mov rdi, 0", // handle
                  "syscall",
                  lateout("rax") err,
-                 lateout("rdi") value);
+                 lateout("rsi") value,
+                 out("rdi") _,
+                 out("rdx") _);
         }
         let ch = char::from_u32(value as u32).unwrap();
         println!("VGA: {} , {} => {}", err, value, ch);

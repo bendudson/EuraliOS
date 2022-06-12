@@ -165,11 +165,16 @@ We can then put the configuration reading code into a method:
   const CONFIG_DATA: u16 = 0xCFC;
 
   impl PciLocation {
-      fn read_register(&self, register: u8) -> u32 {
-          let addr = 0x8000_0000
+      /// Return PCI bus address
+      fn address(&self) -> u32 {
+          0x8000_0000
               | ((self.bus  as u32) << 16)
               | ((self.slot as u32) << 11)
               | ((self.function as u32) <<  8)
+      }
+
+      fn read_register(&self, register: u8) -> u32 {
+          let addr = self.address()
               | ((register as u32) << 2);
 
           let value: u32;
@@ -363,3 +368,213 @@ the devices:
 #+NAME: fig-class
 [[./img/12-02-class.png]]
 
+In addition to the host and ISA bridges, and the VGA-compatible
+controller (1234:1111, the [[https://pci-ids.ucw.cz/read/PC/1234/1111][QEMU Virtual Video Controller]]), there is a network controller
+with vendor ID 8086 (Intel) and device ID 100E. This is the ID of the QEMU e1000 network
+card which is [[https://wiki.osdev.org/Intel_Ethernet_i217][described here on OSDev]].
+
+Now that the PCI
+
+** Storing PCI device information
+
+When scanning for devices we need to save the information
+somewhere we can use. Fortunately user programs have a heap
+allocator so we can use a =Vec= in =pci/src/main.rs=:
+#+begin_src rust
+  extern crate alloc;
+  use alloc::vec::Vec;
+
+  #[no_mangle]
+  fn main() {
+      let mut devices = Vec::new();
+
+      // Brute force check of all PCI slots
+      for bus in 0..256 {
+          ...
+              debug_println!("Device {}", device);
+              devices.push(device);
+          ...
+      }
+#+end_src
+
+To make this information available to other processes we can
+use an event loop at the end of =main()=:
+#+begin_src rust
+  loop {
+      match syscalls::receive(0) {
+          Ok(message) => {
+              debug_println!("Received message");
+          },
+          Err(code) => {
+              debug_println!("Receive error {}", code);
+          }
+      }
+  }
+#+end_src
+
+Running this you now should see the list of PCI devices as before, but
+now pressing a key (which sends a message to handle 0) prints
+"Received message".
+
+** Message types
+
+The PCI program will probably grow to have multiple functions, so we
+need a convention to determine how to handle the message.
+In the [[./11-messages.org][section on messaging]] we decided that =rdi= would always be a value
+so we can use that to store the message type.
+
+So far we only have one kind of message, a character sent from the
+keyboard or sent to the VGA device. We can call that message type 0
+and add it to =kernel/src/rendezvous.rs= and
+=euralios_std/src/syscalls.rs=:
+#+begin_src rust
+  // Standard message types
+  pub const MESSAGE_TYPE_CHAR: u64 = 0;
+#+end_src
+Then update the messages sent by =keyboard_handler_inner()= in
+=kernel/src/interrupts.rs= so that the first value (in =rdi=) is the
+message type, and character in the second value (=rsi=):
+#+begin_src rust
+  Message::Short(MESSAGE_TYPE_CHAR,
+                 character as u64, 0));
+#+end_src
+
+This message is received in =hello/src/main.rs= so needs to
+be updated to get the character from the second value:
+#+begin_src rust
+  let value = match msg {
+      Message::Short(_, value, _) => value,
+      _ => 0
+  };
+#+end_src
+The message is then received in =kernel/src/vga_buffer.rs=
+=listener()= function which becomes:
+#+begin_src rust
+fn listener() {
+    loop {
+        let err: u64;
+        let value: u64;
+        unsafe {
+            asm!("mov rax, 3", // sys_receive
+                 "mov rdi, 0", // handle
+                 "syscall",
+                 lateout("rax") err,
+                 lateout("rsi") value,
+                 out("rdi") _,
+                 out("rdx") _);
+        }
+        let ch = char::from_u32(value as u32).unwrap();
+        println!("VGA: {} , {} => {}", err, value, ch);
+    }
+}
+#+end_src
+
+Eventually we'll probably have a set of system-wide standard message
+types, so we can leave low numbers for those, and use numbers above
+256 (for example) for types specific to particular programs.
+
+When =pci= receives a message we can now match the type of the message.
+We can add a =MESSAGE_PCI_DEVICE= message type, which other programs
+can send to find a device:
+#+begin_src rust
+  const MESSAGE_PCI_DEVICE: u64 = 256;
+
+  fn main() {
+      ...
+      debug_println!("Received message");
+      match message {
+        syscalls::Message::Short(
+            syscalls::MESSAGE_TYPE_CHAR, ch, _) => {
+            // A character e.g. from keyboard
+            debug_println!("Character: {}", ch);
+        }
+        syscalls::Message::Short(
+            MESSAGE_PCI_DEVICE, vendor_device, _) => {
+            // Find a device with given vendor and device ID
+
+            let vendor_id = (vendor_device & 0xFFFF) as u16;
+            let device_id = (vendor_device >> 16) as u16;
+
+            debug_println!("Finding device [{:04X}:{:04X}]",
+                           vendor_id, device_id);
+        }
+        _ => {}
+    }
+#+end_src
+
+** Returning device information
+
+When the =pci= program receives a =MESSAGE_PCI_DEVICE= message, it
+should look for the device, and return a message back to the
+sender. The easiest way to do that is to send a message back to the
+same rendezvous (handle 0 in this case). We need two message types: A
+message containing a PCI location address (bus, slot, function), and
+one for "device not found":
+#+begin_src rust
+const MESSAGE_PCI_ADDRESS: u64 = 257;
+const MESSAGE_PCI_NOTFOUND: u64 = 258;
+#+end_src
+
+We can find the device by iterating over the =devices= vector with
+a predicate which checks that the vendor and device IDs match those
+requested:
+#+begin_src rust
+  if let Some(device) = devices.iter().find(
+      |&d| d.vendor_id == vendor_id &&
+          d.device_id == device_id) {
+      // Found
+  } else {
+      // Not found
+  }
+#+end_src
+If the device is found then we can send the PCI location address back:
+#+begin_src rust
+  syscalls::send(0,
+                 syscalls::Message::Short(
+                     MESSAGE_PCI_ADDRESS,
+                     device.location.address() as u64,
+                     0));
+#+end_src
+while if it's not found then we send a different message:
+#+begin_src rust
+  syscalls::send(0,
+                 syscalls::Message::Short(
+                     MESSAGE_PCI_NOTFOUND,
+                     0xFFFF_FFFF_FFFF_FFFF, 0));
+#+end_src
+
+To use this interface, another task sends a =MESSAGE_PCI_DEVICE=
+message to the rendezvous corresponding to the =pci= program's input,
+and then waits for a =MESSAGE_PCI_ADDRESS= or =MESSAGE_PCI_NOTFOUND=
+message back i.e something like:
+#+begin_src rust
+  syscalls::send(handle,
+                 syscalls::Message::Short(
+                     MESSAGE_PCI_DEVICE,
+                     0x8086_100E as u64, 0));
+  match syscalls::receive(handle) {
+      syscalls::Message::Short(
+          MESSAGE_PCI_ADDRESS, address, _) => {
+          // Do something with address
+      },
+      syscalls::Message::Short(
+          MESSAGE_PCI_NOTFOUND, _, _) => {
+          // Device not found
+      },
+      _ => {}
+  }
+#+end_src
+
+There are a couple of issues with this interface which we will
+try to address in the [[./13-return-to-sender.org][next section]]:
+
+1. It doesn't ensure that the return message goes to the process (A)
+   that sent the request: In between process A calling =send= and the
+   =pci= process sending a reply, another process (B) may be scheduled
+   which also sends a message to the =pci= process. We need a
+   =sendreceive= syscall which only allows the process which received
+   a message to send the next message, preventing another process from
+   jumping in.
+
+2. The process communicating with the =pci= process needs a way to get
+   the rendezvous handle.

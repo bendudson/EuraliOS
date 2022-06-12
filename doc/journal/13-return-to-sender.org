@@ -1,0 +1,6 @@
+* Return to sender
+
+The traditional next step might be to implement a mass storage driver
+to allow the OS to read and write to disk. Instead we're going to
+work on bringing the network device up in the [[./14-network.org][next section]].
+
