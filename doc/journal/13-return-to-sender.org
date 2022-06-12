@@ -4,3 +4,18 @@ The traditional next step might be to implement a mass storage driver
 to allow the OS to read and write to disk. Instead we're going to
 work on bringing the network device up in the [[./14-network.org][next section]].
 
+** Starting a driver
+
+In the [[./14-network.org][next section]] we're going to work on a driver for a network
+card, the [[https://wiki.osdev.org/RTL8139][RTL8139]]. We'll start this here by writing the code to
+request information on PCI devices from the =pci= process.
+
+Create a new crate:
+#+begin_src shell
+  cargo new rtl8139
+#+end_src
+then modify =Cargo.toml= (in the root and =rtl8139= directories), the
+root =makefile=, add =build.rs= and a basic =rtl8139/src/main.rs= file
+as done for =pci= in the [[./12-devices.org][last section]]. Compiling everything (=make run=) should
+produce a =user/rtl8139= executable.
+

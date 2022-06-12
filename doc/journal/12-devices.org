@@ -373,13 +373,14 @@ controller (1234:1111, the [[https://pci-ids.ucw.cz/read/PC/1234/1111][QEMU Virt
 with vendor ID 8086 (Intel) and device ID 100E. This is the ID of the QEMU e1000 network
 card which is [[https://wiki.osdev.org/Intel_Ethernet_i217][described here on OSDev]].
 
-Now that the PCI
+Now that we can scan the PCI bus and find devices, it's time to make
+that information available to other processes.
 
 ** Storing PCI device information
 
-When scanning for devices we need to save the information
-somewhere we can use. Fortunately user programs have a heap
-allocator so we can use a =Vec= in =pci/src/main.rs=:
+When scanning for devices we need to save the information somewhere we
+can use. Fortunately user programs have a heap allocator so we can use
+a =Vec= in =pci/src/main.rs=:
 #+begin_src rust
   extern crate alloc;
   use alloc::vec::Vec;

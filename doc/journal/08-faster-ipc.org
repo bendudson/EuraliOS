@@ -92,7 +92,7 @@ the kernel stack in the TSS, and the =CURRENT_THREAD=.
 
 The keyboard interrupt handler uses the =x86-interrupt= calling
 convention, which saves us some work but doesn't capture a context in
-the same was as our timer interrupt or syscall handlers. To switch to
+the same way as our timer interrupt or syscall handlers. To switch to
 the thread which receives the keyboard message, rather than returning
 to the interrupted thread, we need to get that context.
 
