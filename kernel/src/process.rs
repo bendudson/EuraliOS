@@ -63,6 +63,8 @@ pub fn unique_id() -> u64 {
     })
 }
 
+use alloc::string::String;
+
 /// Per-process state
 struct Process {
     /// Page table physical address
@@ -70,6 +72,9 @@ struct Process {
 
     /// Communication/file handles
     handles: Vec<Option<Arc<RwLock<Rendezvous>>>>,
+
+    /// Paths to handlers which can be open'ed
+    mounts: Arc<RwLock<Vec<(String, Arc<RwLock<Rendezvous>>)>>>
 }
 
 impl Drop for Process {
@@ -321,6 +326,8 @@ pub fn new_kernel_thread(function: fn()->(), mut handles: Vec<Arc<RwLock<Rendezv
                 // Wrap each handle in an Option
                 handles:handles.drain(..)
                     .map(|h| Some(h)).collect(),
+                // Empty set of mount paths
+                mounts: Arc::new(RwLock::new(Vec::new()))
             })),
             page_table_physaddr: 0, // Don't need to switch PT
             kernel_stack,
@@ -387,7 +394,8 @@ fn with_pagetable<F, R>(page_table_physaddr: u64, func: F) -> R where
 
 pub struct Params {
     pub handles: Vec<Arc<RwLock<Rendezvous>>>,
-    pub io_privileges: bool
+    pub io_privileges: bool,
+    pub mounts: Arc<RwLock<Vec<(String, Arc<RwLock<Rendezvous>>)>>>
 }
 
 pub fn new_user_thread(
@@ -486,6 +494,7 @@ pub fn new_user_thread(
                         page_table_physaddr: user_page_table_physaddr,
                         handles:handles.drain(..)
                             .map(|h| Some(h)).collect(),
+                        mounts: params.mounts,
                     })),
                     page_table_physaddr: user_page_table_physaddr,
                     kernel_stack: kernel_stack,

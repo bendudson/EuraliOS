@@ -19,3 +19,100 @@ root =makefile=, add =build.rs= and a basic =rtl8139/src/main.rs= file
 as done for =pci= in the [[./12-devices.org][last section]]. Compiling everything (=make run=) should
 produce a =user/rtl8139= executable.
 
+** Finding PCI in a Virtual File System
+
+We want this =rtl8139= driver to be able to send messages to the =pci=
+program.  One way to do this would be for the kernel to add a
+rendezvous handle, but this would be a custom solution and is a good
+excuse to start developing something more general: A Virtual File
+System (VFS).
+
+A virtual file system organises resources into a hierarchical
+structure, with nested directories containing 'files'. These may
+correspond to real directories and files on disk, or they may
+represent devices or other information, for example the [[https://en.wikipedia.org/wiki/Procfs][Proc
+filesystem]] provides access to information on running processes, with a
+'directory' for each process.
+
+Operating systems vary in how virtual file systems are presented to
+user programs. In Unix-like operating systems such as Linux almost all
+programs see the same file system, but not always: the [[https://en.wikipedia.org/wiki/Chroot][chroot]] command
+and [[https://en.wikipedia.org/wiki/FreeBSD_jail][FreeBSD jails]] provide ways to run programs which see a different
+view of the file system. [[https://en.wikipedia.org/wiki/Plan_9_from_Bell_Labs][Plan 9]] took this further and allows every
+program to have a different view of the filesystem.
+
+In EuraliOS the kernel "Merrywig" is going to be quite lazy, and let
+user programs do most of the work of creating the VFS. The kernel is
+just going to keep a list of "mount points", and use that to direct
+program requests to list directories or open files. We'll keep the
+option of either sharing VFS between processes or creating a separate
+one for each process, by giving each =Process= a =Arc<RwLock<>>= to
+contain a potentially shared =Vec= of pairs of =String= (mount path)
+and =Arc<RwLock<Rendezvous>>= objects. In =kernel/src/process.rs=:
+#+begin_src rust
+  struct Process {
+      page_table_physaddr: u64,
+      handles: Vec<Option<Arc<RwLock<Rendezvous>>>>,
+      mounts: Arc<RwLock<Vec<(String, Arc<RwLock<Rendezvous>>)>>> // New
+  }
+#+end_src
+
+Kernel threads (probably?) don't need mounts, so in =new_kernel_thread()=
+we just need to add:
+#+begin_src rust
+  mounts: Arc::new(RwLock::new(Vec::new()))
+#+end_src
+
+User programs need a new parameter:
+#+begin_src rust
+  pub struct Params {
+      pub handles: Vec<Arc<RwLock<Rendezvous>>>,
+      pub io_privileges: bool,
+      pub mounts: Arc<RwLock<Vec<(String, Arc<RwLock<Rendezvous>>)>>> // New
+  }
+#+end_src
+which is moved into the =Process=:
+#+begin_src rust
+  process: Arc::new(RwLock::new(Process {
+      ...
+      mounts: params.mounts, // New
+  })),
+#+end_src
+
+In =kernel/src/main.rs= the =kernel_thread_main()= function can
+now be modified to launch both =pci= and =rtl8139= processes. We
+need to set up the inputs so that (for now) both the keyboard
+and the mount point are connected to the same Rendezvous (=pci_input=):
+#+begin_src rust
+  let pci_input = interrupts::keyboard_rendezvous();
+  let vga_rz = vga_buffer::start_listener();
+
+  process::new_user_thread(
+      include_bytes!("../../user/pci"),
+      process::Params{
+          handles: Vec::from([
+              pci_input.clone(),
+              vga_rz.clone()
+          ]),
+          io_privileges: true,
+          mounts: Arc::new(RwLock::new(Vec::new()))
+      });
+
+  process::new_user_thread(
+      include_bytes!("../../user/rtl8139"),
+      process::Params{
+          handles: Vec::from([
+              // New input (not shared with anything else)
+              Arc::new(RwLock::new(Rendezvous::Empty)),
+              // VGA output
+              vga_rz
+          ]),
+          io_privileges: true,
+          mounts: Arc::new(RwLock::new(Vec::from([
+              // A VFS path to the PCI input
+              (String::from("/pci"), pci_input)
+          ])))
+      });
+#+end_src
+
+

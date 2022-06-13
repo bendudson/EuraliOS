@@ -8,13 +8,15 @@ use core::panic::PanicInfo;
 use kernel::println;
 use bootloader::{BootInfo, entry_point};
 extern crate alloc;
-use alloc::vec::Vec;
+use alloc::{vec::Vec, sync::Arc, string::String};
+use spin::RwLock;
 
 use kernel::memory;
 use kernel::syscalls;
 use kernel::process;
 use kernel::vga_buffer;
 use kernel::interrupts;
+use kernel::rendezvous::Rendezvous;
 
 entry_point!(kernel_entry);
 
@@ -25,18 +27,35 @@ entry_point!(kernel_entry);
 fn kernel_thread_main() {
     println!("Kernel thread start");
 
+    let pci_input = interrupts::keyboard_rendezvous();
     let vga_rz = vga_buffer::start_listener();
 
-    // Using MOROS approach of including ELF files
-    // https://github.com/vinc/moros/blob/trunk/src/usr/install.rs
+    // Start PCI program with keyboard input and VGA output
     process::new_user_thread(
         include_bytes!("../../user/pci"),
         process::Params{
             handles: Vec::from([
-                interrupts::keyboard_rendezvous(),
+                pci_input.clone(),
+                vga_rz.clone()
+            ]),
+            io_privileges: true,
+            mounts: Arc::new(RwLock::new(Vec::new()))
+        });
+
+    process::new_user_thread(
+        include_bytes!("../../user/rtl8139"),
+        process::Params{
+            handles: Vec::from([
+                // New input (not shared with anything else)
+                Arc::new(RwLock::new(Rendezvous::Empty)),
+                // VGA output
                 vga_rz
             ]),
-            io_privileges: true
+            io_privileges: true,
+            mounts: Arc::new(RwLock::new(Vec::from([
+                // A VFS path to the PCI input
+                (String::from("/pci"), pci_input)
+            ])))
         });
 
     kernel::hlt_loop();
