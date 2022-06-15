@@ -93,5 +93,26 @@ pub fn send(
     }
 }
 
+/// Returns a handle on success, or an error code
+pub fn open(path: &str) -> Result<u32, u64> {
+    let error: u64;
+    let handle: u32;
+    unsafe {
+        asm!("mov rax, 6", // syscall function
+             "syscall",
+             in("rdi") path.as_ptr(), // First argument
+             in("rsi") path.len(), // Second argument
+             out("rax") error,
+             lateout("rdi") handle,
+             out("rcx") _,
+             out("r11") _);
+    }
+    if error == 0 {
+        Ok(handle)
+    } else {
+        Err(error)
+    }
+}
+
 // Standard message types
 pub const MESSAGE_TYPE_CHAR: u64 = 0;

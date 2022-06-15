@@ -12,6 +12,7 @@
 //! 2   write(RDI: *const u8, RSI: usize) -> ()
 //! 3   receive
 //! 4   send
+//! 6   open(RDI: *const u8, RSI: usize) -> RAX: errcode, RDI: handle
 //!
 //! Potential future syscalls
 //! -------------------------
@@ -31,6 +32,10 @@
 pub const SYSCALL_ERROR_SEND_BLOCKING: usize = 1;
 pub const SYSCALL_ERROR_RECV_BLOCKING: usize = 2;
 pub const SYSCALL_ERROR_INVALID_HANDLE: usize = 3;
+pub const SYSCALL_ERROR_MEMALLOC: usize = 4; // Memory allocation error
+pub const SYSCALL_ERROR_PARAM: usize = 5; // Invalid parameter
+pub const SYSCALL_ERROR_UTF8: usize = 6; // UTF8 conversion error
+pub const SYSCALL_ERROR_NOTFOUND: usize = 7;
 
 pub const MESSAGE_LONG: u64 = 2 << 8;
 pub const MESSAGE_DATA2_RDV: u64 = 2 << 9;
@@ -62,8 +67,6 @@ const MSR_KERNEL_GS_BASE: usize = 0xC0000102;
 /// stored in the TSS interrupt table.
 /// This is to enable syscalls to be interrupted.
 const SYSCALL_KERNEL_STACK_OFFSET: u64 = 1024;
-
-pub const SYSCALL_ERROR_MEMALLOC: usize = 1;
 
 /// Set up syscall handler
 ///
@@ -249,8 +252,9 @@ extern "C" fn dispatch_syscall(context_ptr: *mut Context, syscall_id: u64,
         2 => sys_write(arg1 as *const u8, arg2 as usize),
         3 => sys_receive(context_ptr, arg1),
         4 => sys_send(context_ptr, syscall_id, arg1, arg2, arg3),
+        6 => sys_open(context_ptr, arg1 as *const u8, arg2 as usize),
         _ => println!("Unknown syscall {:?} {} {} {}",
-                       context_ptr, syscall_id, arg1, arg2)
+                      context_ptr, syscall_id, arg1, arg2)
     }
 }
 
@@ -399,5 +403,36 @@ fn sys_send(
             thread.return_error(SYSCALL_ERROR_INVALID_HANDLE);
             process::set_current_thread(thread);
         }
+    }
+}
+
+fn sys_open(
+    context_ptr: *mut Context,
+    ptr: *const u8,
+    len: usize) {
+
+    let context = unsafe {&mut (*context_ptr)};
+
+    // Check input length
+    if len == 0 {
+        context.rax = SYSCALL_ERROR_PARAM;
+        return;
+    }
+    // Convert raw pointer to a slice
+    let u8_slice = unsafe {slice::from_raw_parts(ptr, len)};
+
+    if let Ok(path_string) = str::from_utf8(u8_slice) {
+        match process::open_path(context, &path_string) {
+            Ok(handle) => {
+                context.rax = 0; // No error
+                context.rdi = handle; // Return handle
+            }
+            Err(error_code) => {
+                context.rax = error_code;
+            }
+        }
+    } else {
+        // Bad utf8 conversion
+        context.rax = SYSCALL_ERROR_UTF8;
     }
 }

@@ -116,3 +116,161 @@ and the mount point are connected to the same Rendezvous (=pci_input=):
 #+end_src
 
 
+** Open system call
+
+The =sys_open= syscall will (for now) just send a string, as
+=write_str()= in =euralios_std/src/debug.rs= does. In =euralios_std/src/syscalls.rs=
+we can add an =open= function which is very similar to =write_str()=
+but puts syscall number 6 in =rax=, and gets an error code
+and handle as return arguments:
+#+begin_src rust
+/// Returns a handle on success, or an error code
+pub fn open(path: &str) -> Result<u32, u64> {
+    let error: u64;
+    let handle: u32;
+    unsafe {
+        asm!("mov rax, 6", // syscall function
+             "syscall",
+             in("rdi") path.as_ptr(), // First argument
+             in("rsi") path.len(), // Second argument
+             out("rax") error,
+             lateout("rdi") handle,
+             out("rcx") _,
+             out("r11") _);
+    }
+    if error == 0 {
+        Ok(handle)
+    } else {
+        Err(error)
+    }
+}
+#+end_src
+
+This new syscall will be handled in =kernel/src/syscalls.rs=.
+The =dispatch_syscall()= function needs to match syscall 6:
+#+begin_src rust
+  6 => sys_open(context_ptr, arg1 as *const u8, arg2 as usize),
+#+end_src
+
+The =sys_open()= function starts almost the same as =sys_write()=
+except we've added some error code returns in =rax=:
+#+begin_src rust
+  const SYSCALL_ERROR_PARAM: usize = 5; // Invalid parameter
+  const SYSCALL_ERROR_UTF8: usize = 6; // UTF8 conversion error
+
+  fn sys_open(
+      context_ptr: *mut Context,
+      ptr: *const u8,
+      len: usize) {
+
+      let context = unsafe {&mut (*context_ptr)};
+
+      // Check input length
+      if len == 0 {
+          context.rax = SYSCALL_ERROR_PARAM;
+          return;
+      }
+      // Convert raw pointer to a slice
+      let u8_slice = unsafe {slice::from_raw_parts(ptr, len)};
+
+      if let Ok(path_string) = str::from_utf8(u8_slice) {
+          // Open path
+      } else {
+          // Bad utf8 conversion
+          context.rax = SYSCALL_ERROR_UTF8;
+      }
+  }
+#+end_src
+
+To open the path and get the handle we're going to call a function
+in the =process= module, =open_path()=. That function will either
+return a handle, or an error code:
+#+begin_src rust
+  match process::open_path(context, &path_string) {
+      Ok(handle) => {
+          context.rax = 0; // No error
+          context.rdi = handle; // Return handle
+      }
+      Err(error_code) => {
+          context.rax = error_code;
+      }
+  }
+#+end_src
+
+In =kernel/src/process.rs= the =open_path()= function will do the work
+of resolving paths to resources. We need to get references to the thread and process structs:
+#+begin_src rust
+  pub fn open_path(
+      current_context: &mut Context,
+      path: &str) -> Result<usize, usize> {
+
+      if let Some(current_thread) = CURRENT_THREAD.read().as_ref() {
+          println!("Thread {} opening {}", current_thread.tid, path);
+
+          let mut process = current_thread.process.write();
+
+          // Lookup path, add to handles
+      }
+      Err(0)
+  }
+#+end_src
+Then lookup the Rendezvous corresponding to the path. In future this
+will be more involved but for now it will just do a simple text match,
+and we'll make it more useful in future sections.
+#+begin_src rust
+  let option_rv = if let Some((_mount, rv)) =
+      process.mounts.read().iter().find(
+          |&(mount, _rv)| mount == path) {
+          Some(rv.clone())
+      } else {
+          None
+      };
+#+end_src
+And if a Rendezvous was found, add it to the Vec of handles:
+#+begin_src rust
+  if let Some(rv) = option_rv {
+      let handle = process.add_handle(rv.clone());
+      return Ok(handle);
+  } else {
+      return Err(syscalls::SYSCALL_ERROR_NOTFOUND);
+  }
+#+end_src
+Where we've added a method =Process::add_handle=:
+#+begin_src rust
+impl Process {
+    fn add_handle(&mut self, rv: Arc<RwLock<Rendezvous>>) -> usize {
+        // Find if there is an empty handles slot
+        if let Some(index) = self.handles.iter().position(
+            |handle| handle.is_none()) {
+            self.handles[index] = Some(rv);
+            return index;
+        }
+        // No free slot -> Add one
+        self.handles.push(Some(rv));
+        self.handles.len() - 1
+    }
+}
+#+end_src
+
+To try this out, in =rtl8139/src/main.rs= we can try
+opening the "/pci" path to get a handle, then sending
+a character message:
+#+begin_src rust
+#[no_mangle]
+fn main() {
+    debug_println!("rtl8139");
+
+    let handle = syscalls::open("/pci").expect("Couldn't open");
+    debug_println!("{}", handle);
+
+    syscalls::send(handle,
+                   syscalls::Message::Short(
+                       0, 'X' as u64, 0));
+}
+#+end_src
+This produces the result in figure [[fig-open]], showing character '88' is
+received (ASCII 'X').
+
+#+CAPTION: rtl8139 opening a connection to pci and sending a character message
+#+NAME: fig-open
+[[./img/13-01-open.png]]

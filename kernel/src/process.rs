@@ -87,6 +87,25 @@ impl Drop for Process {
     }
 }
 
+impl Process {
+    /// Add a Rendezvous to this process, returning
+    /// the handle
+    fn add_handle(&mut self, rv: Arc<RwLock<Rendezvous>>) -> usize {
+        // Find if there is an empty handles slot
+        if let Some(index) = self.handles.iter().position(
+            |handle| handle.is_none()) {
+
+            // Use empty slot
+            self.handles[index] = Some(rv);
+            return index;
+        }
+
+        // No free slot -> Add one
+        self.handles.push(Some(rv));
+        self.handles.len() - 1
+    }
+}
+
 /// Per-thread state
 ///
 ///
@@ -659,4 +678,35 @@ pub fn schedule_next(context_addr: usize) -> usize {
         },
         None => 0
     }
+}
+
+/// Open the given path
+/// Returns either a Rendezvous handle, or an error
+pub fn open_path(
+    current_context: &mut Context,
+    path: &str) -> Result<usize, usize> {
+
+    if let Some(current_thread) = CURRENT_THREAD.read().as_ref() {
+        println!("Thread {} opening {}", current_thread.tid, path);
+
+        let mut process = current_thread.process.write();
+
+        let option_rv = if let Some((_mount, rv)) =
+            process.mounts.read().iter().find(
+                |&(mount, _rv)| mount == path) {
+                Some(rv.clone())
+            } else {
+                None
+            };
+
+        if let Some(rv) = option_rv {
+            // Found!
+            let handle = process.add_handle(rv.clone());
+            return Ok(handle);
+        } else {
+            return Err(syscalls::SYSCALL_ERROR_NOTFOUND);
+        }
+    }
+    // No thread(?)
+    Err(0)
 }
