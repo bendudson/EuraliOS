@@ -12,6 +12,7 @@
 //! 2   write(RDI: *const u8, RSI: usize) -> ()
 //! 3   receive
 //! 4   send
+//! 5   sendreceive
 //! 6   open(RDI: *const u8, RSI: usize) -> RAX: errcode, RDI: handle
 //!
 //! Potential future syscalls
@@ -29,6 +30,17 @@
 //!
 //! - send_receive(handle, message)  Ensure reply from same thread
 
+// Syscall numbers
+pub const SYSCALL_MASK: u64 = 0xFF;
+pub const SYSCALL_FORK_THREAD: usize = 0;
+pub const SYSCALL_EXIT_THREAD: usize = 1;
+pub const SYSCALL_DEBUG_WRITE: usize = 2;
+pub const SYSCALL_RECEIVE: usize = 3;
+pub const SYSCALL_SEND: usize = 4;
+pub const SYSCALL_SENDRECEIVE: usize = 5;
+pub const SYSCALL_OPEN: usize = 6;
+
+// Syscall error codes
 pub const SYSCALL_ERROR_SEND_BLOCKING: usize = 1;
 pub const SYSCALL_ERROR_RECV_BLOCKING: usize = 2;
 pub const SYSCALL_ERROR_INVALID_HANDLE: usize = 3;
@@ -37,6 +49,7 @@ pub const SYSCALL_ERROR_PARAM: usize = 5; // Invalid parameter
 pub const SYSCALL_ERROR_UTF8: usize = 6; // UTF8 conversion error
 pub const SYSCALL_ERROR_NOTFOUND: usize = 7;
 
+// Syscall message control bits
 pub const MESSAGE_LONG: u64 = 2 << 8;
 pub const MESSAGE_DATA2_RDV: u64 = 2 << 9;
 const MESSAGE_DATA2_TYPE: u64 = MESSAGE_DATA2_RDV; // Bit mask
@@ -246,12 +259,13 @@ extern "C" fn dispatch_syscall(context_ptr: *mut Context, syscall_id: u64,
     context.cs = code_selector.0 as usize;
     context.ss = data_selector.0 as usize;
 
-    match syscall_id & 0xFF {
+    match syscall_id & SYSCALL_MASK {
         0 => process::fork_current_thread(context),
         1 => process::exit_current_thread(context),
         2 => sys_write(arg1 as *const u8, arg2 as usize),
         3 => sys_receive(context_ptr, arg1),
         4 => sys_send(context_ptr, syscall_id, arg1, arg2, arg3),
+        5 => sys_send(context_ptr, syscall_id, arg1, arg2, arg3), // sys_sendreceive
         6 => sys_open(context_ptr, arg1 as *const u8, arg2 as usize),
         _ => println!("Unknown syscall {:?} {} {} {}",
                       context_ptr, syscall_id, arg1, arg2)
@@ -310,6 +324,59 @@ fn sys_receive(context_ptr: *mut Context, handle: u64) {
     }
 }
 
+
+fn format_message(
+    thread: &mut process::Thread,
+    syscall_id: u64,
+    data1: u64,
+    data2: u64,
+    data3: u64) -> Result<Message, usize> {
+
+    if syscall_id & MESSAGE_LONG == 0 {
+        Ok(Message::Short(data1,
+                          data2,
+                          data3))
+    } else {
+        // Long message
+        let message = Message::Long(
+            data1,
+            if syscall_id & MESSAGE_DATA2_TYPE == MESSAGE_DATA2_RDV {
+                // Moving or copying a handle
+                // First copy, then drop if message is valid
+                if let Some(rdv) = thread.rendezvous(data2) {
+                    MessageData::Rendezvous(rdv)
+                } else {
+                    // Invalid handle
+                    return Err(SYSCALL_ERROR_INVALID_HANDLE);
+                }
+            } else {
+                MessageData::Value(data2)
+            },
+            if syscall_id & MESSAGE_DATA3_TYPE == MESSAGE_DATA3_RDV {
+                if let Some(rdv) = thread.rendezvous(data3) {
+                    MessageData::Rendezvous(rdv)
+                } else {
+                    // Invalid handle.
+                    // If we moved data2 we would have to put it back here
+                    return Err(SYSCALL_ERROR_INVALID_HANDLE);
+                }
+            } else {
+                MessageData::Value(data3)
+            });
+        // Message is valid => Remove handles being moved
+        if (syscall_id & MESSAGE_DATA2_TYPE == MESSAGE_DATA2_RDV) &&
+            (syscall_id & MESSAGE_DATA2_MOVE != 0) {
+                let _ = thread.take_rendezvous(data2);
+            }
+        if (syscall_id & MESSAGE_DATA3_TYPE == MESSAGE_DATA3_RDV) &&
+            (syscall_id & MESSAGE_DATA3_MOVE != 0) {
+                let _ = thread.take_rendezvous(data3);
+            }
+        Ok(message)
+    }
+}
+
+/// This handles both syscall_send and syscall_sendreceive
 fn sys_send(
     context_ptr: *mut Context,
     syscall_id: u64,
@@ -322,81 +389,47 @@ fn sys_send(
         let current_tid = thread.tid();
         thread.set_context(context_ptr);
 
-        // Get the Rendezvous and call
+        // Get the Rendezvous, create Message and call
         if let Some(rdv) = thread.rendezvous(handle) {
+            match format_message(&mut thread, syscall_id, data1, data2, data3) {
+                Ok(message) => {
+                    let (thread1, thread2) = match (syscall_id & SYSCALL_MASK) as usize {
+                        SYSCALL_SEND => rdv.write().send(
+                            Some(thread),
+                            message),
+                        SYSCALL_SENDRECEIVE => rdv.write().send_receive(
+                            thread,
+                            message),
+                        _ => panic!("Internal error")
+                    };
+                    // thread1 should be started asap
+                    // thread2 should be scheduled
 
-            let message = if syscall_id & MESSAGE_LONG == 0 {
-                Message::Short(data1,
-                               data2,
-                               data3)
-            } else {
-                // Long message
-
-                let message = Message::Long(
-                    data1,
-                    if syscall_id & MESSAGE_DATA2_TYPE == MESSAGE_DATA2_RDV {
-                        // Moving or copying a handle
-                        // First copy, then drop if message is valid
-                        if let Some(rdv) = thread.rendezvous(data2) {
-                            MessageData::Rendezvous(rdv)
-                        } else {
-                            // Invalid handle
-                            thread.return_error(SYSCALL_ERROR_INVALID_HANDLE);
-                            process::set_current_thread(thread);
-                            return;
+                    let mut returning = false;
+                    for maybe_thread in [thread2, thread1] {
+                        if let Some(t) = maybe_thread {
+                            if t.tid() == current_tid {
+                                // Same thread -> return
+                                returning = true;
+                                process::set_current_thread(t);
+                            } else {
+                                process::schedule_thread(t);
+                            }
                         }
-                    } else {
-                        MessageData::Value(data2)
-                    },
-                    if syscall_id & MESSAGE_DATA3_TYPE == MESSAGE_DATA3_RDV {
-                        if let Some(rdv) = thread.rendezvous(data3) {
-                            MessageData::Rendezvous(rdv)
-                        } else {
-                            // Invalid handle.
-                            // If we moved data2 we would have to put it back here
-                            thread.return_error(SYSCALL_ERROR_INVALID_HANDLE);
-                            process::set_current_thread(thread);
-                            return;
-                        }
-                    } else {
-                        MessageData::Value(data3)
-                    });
-                // Message is valid => Remove handles being moved
-                if (syscall_id & MESSAGE_DATA2_TYPE == MESSAGE_DATA2_RDV) &&
-                    (syscall_id & MESSAGE_DATA2_MOVE != 0) {
-                        let _ = thread.take_rendezvous(data3);
                     }
-                if (syscall_id & MESSAGE_DATA3_TYPE == MESSAGE_DATA3_RDV) &&
-                    (syscall_id & MESSAGE_DATA3_MOVE != 0) {
-                        let _ = thread.take_rendezvous(data3);
-                    }
-                message
-            };
 
-            let (thread1, thread2) = rdv.write().send(
-                Some(thread),
-                message);
-            // thread1 should be started asap
-            // thread2 should be scheduled
-
-            let mut returning = false;
-            for maybe_thread in [thread2, thread1] {
-                if let Some(t) = maybe_thread {
-                    if t.tid() == current_tid {
-                        // Same thread -> return
-                        process::set_current_thread(t);
-                        returning = true;
-                    } else {
-                        process::schedule_thread(t);
+                    if !returning {
+                        // Original thread is waiting.
+                        // Switch to a different thread
+                        let new_context_addr = process::schedule_next(context_ptr as usize);
+                        interrupts::launch_thread(new_context_addr);
                     }
                 }
-            }
-
-            if !returning {
-                // Original thread is waiting.
-                // Switch to a different thread
-                let new_context_addr = process::schedule_next(context_ptr as usize);
-                interrupts::launch_thread(new_context_addr);
+                Err(error_code) => {
+                    // Message could not be created
+                    thread.return_error(error_code);
+                    process::set_current_thread(thread);
+                }
             }
         } else {
             // Missing handle

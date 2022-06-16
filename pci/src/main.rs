@@ -214,9 +214,9 @@ fn main() {
                     // Find a device with given vendor and device ID
                     // and return a message to the same Rendezvous
                     syscalls::Message::Short(
-                        MESSAGE_PCI_DEVICE, vendor_device, _) => {
-                        let vendor_id = (vendor_device & 0xFFFF) as u16;
-                        let device_id = (vendor_device >> 16) as u16;
+                        MESSAGE_PCI_DEVICE, vendor, device) => {
+                        let vendor_id = (vendor & 0xFFFF) as u16;
+                        let device_id = (device & 0xFFFF) as u16;
 
                         debug_println!("Finding device [{:04X}:{:04X}]",
                                        vendor_id, device_id);

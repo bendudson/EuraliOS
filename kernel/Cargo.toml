@@ -23,6 +23,7 @@ version = "1.0"
 features = ["spin_no_std"]
 
 [package.metadata.bootimage]
+run-args = ["-nic", "user,model=rtl8139"]
 test-args = ["-device", "isa-debug-exit,iobase=0xf4,iosize=0x04", "-serial", "stdio",
              "-display", "none"]
 test-success-exit-code = 33         # (0x10 << 1) | 1

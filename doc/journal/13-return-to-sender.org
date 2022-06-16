@@ -274,3 +274,284 @@ received (ASCII 'X').
 #+CAPTION: rtl8139 opening a connection to pci and sending a character message
 #+NAME: fig-open
 [[./img/13-01-open.png]]
+
+** Rendezvous blocking
+
+If several threads (A, B and C) are sharing a Rendezvous, such as the
+=/pci= mount point, we could have the following situation:
+- Thread A receives, waits for a message;
+- Thread B sends, passes to thread A as intended
+- Thread C is scheduled and sends a message intended for thread A
+- Thread B now runs, calls receive and gets the message sent by thread
+  C rather than the reply from thread A.
+
+To prevent this we need to block the Rendezvous, so that only the recipient
+can send the reply. First we'll modify =Rendezvous= in =kernel/src/rendezvous.rs=
+and make three changes:
+
+1. Modify the =Receiving= state so that it can be restricted to only
+   receiving from one thread.
+2. Add a new state, =SendReceiving= which represents a thread sending
+   a message and expecting a reply back from the same thread that receives
+   the message.
+3. Add a =send_receive= method which puts a =Rendezvous= into the
+   =SendReceive= state.
+
+The =Rendezvous= enum type becomes:
+#+begin_src rust
+  pub enum Rendezvous {
+      Empty,
+      Sending(Option<Box<Thread>>, Message),
+      Receiving(Box<Thread>, Option<u64>), // Added optional thread ID
+      SendReceiving(Box<Thread>, Message), // New
+   }
+#+end_src
+so now the =Receiving= state can optionally block all messages except
+those from a specified thread. The =SendReceiving= state differs
+from =Sending= because it needs to have a thread to return a message
+to, so =Box<Thread>= is not optional.
+
+The functions =send=, =receive=, and =send_receive= (which we're going to add soon)
+handle transitions between states. In =send()= the =Receiving= case needs to now
+include a check of the thread ID:
+#+begin_src rust
+  Rendezvous::Receiving(_, some_tid) => {
+      if let Some(tid) = some_tid {
+          // Restricted to a single thread
+          if let Some(t) = &thread {
+              if t.tid() != *tid {
+                  // Wrong thread ID
+                  t.return_error(syscalls::SYSCALL_ERROR_RECV_BLOCKING);
+                  return (thread, None);
+              }
+          } else {
+              // No sender thread => error
+              return (thread, None);
+          }
+      }
+      ...
+#+end_src
+We also need to handle the case that =send()= is called on a
+=Rendezvous= in the =SendReceiving= state. This just signals
+an error because there can't be two threads sending:
+#+begin_src rust
+  Rendezvous::SendReceiving(_, _) => {
+      if let Some(t) = &thread {
+          t.return_error(syscalls::SYSCALL_ERROR_SEND_BLOCKING);
+      }
+      (thread, None)
+  }
+#+end_src
+
+In the =receive()= method the =Empty= case is slightly
+modified, just adding a =None= argument to indicate that
+messages from any thread can be received:
+#+begin_src rust
+  Rendezvous::Empty => {
+      *self = Rendezvous::Receiving(thread, None); // Added 'None'
+      (None, None)
+  }
+#+end_src
+The =SendReceiving= case is more interesting: We are receiving a
+message from a thread which expects a reply from the receiving
+thread. We therefore move the sending =Thread= object from the
+=SendReceiving= state into a =Receiving= state, along with the ID of
+the receiving thread:
+#+begin_src rust
+  Rendezvous::SendReceiving(_, _) => {
+      // Sending, expecting a reply from the same thread
+      if let Rendezvous::SendReceiving(snd_thread, message) = mem::replace(self, Rendezvous::Empty) {
+          thread.return_message(message);
+          // Wait for a reply from the receiving thread
+          *self = Rendezvous::Receiving(snd_thread, Some(thread.tid()));
+          return (Some(thread), None);
+      }
+      (None, None)
+  }
+#+end_src
+
+The =send_receive()= function can now be defined as:
+#+begin_src rust
+  pub fn send_receive(&mut self, thread: Box<Thread>, message: Message)
+                      -> (Option<Box<Thread>>, Option<Box<Thread>>) {
+      match &*self {
+          Rendezvous::Empty => {
+              ,*self = Rendezvous::SendReceiving(thread, message);
+              (None, None)
+          }
+          Rendezvous::Sending(_, _) => {
+              // Signal error to thread: Can't have two sending threads
+              thread.return_error(syscalls::SYSCALL_ERROR_SEND_BLOCKING);
+              (Some(thread), None)
+          }
+          Rendezvous::Receiving(_, some_tid) => {
+              if let Some(tid) = some_tid {
+                  // Restricted to a single thread
+                  if thread.tid() != *tid {
+                      // Wrong thread ID
+                      thread.return_error(syscalls::SYSCALL_ERROR_RECV_BLOCKING);
+                      return (Some(thread), None);
+                  }
+              }
+
+              // Complete the message transfer
+              if let Rendezvous::Receiving(rec_thread, _) = mem::replace(self, Rendezvous::Empty) {
+                  rec_thread.return_message(message);
+
+                  // Calling thread waits for a reply
+                  *self = Rendezvous::Receiving(thread, Some(rec_thread.tid()));
+
+                  return (Some(rec_thread), None);
+              }
+              (None, None) // This should never be reached
+          }
+          Rendezvous::SendReceiving(_, _) => {
+              // Signal error to thread: Can't have two sending threads
+              thread.return_error(syscalls::SYSCALL_ERROR_SEND_BLOCKING);
+              (Some(thread), None)
+          }
+      }
+  }
+#+end_src
+
+** Send-Receive system call
+
+In =kernel/src/syscalls.rs= the Send-Receive system call can be implemented
+by much of the same code as =sys_send()=. We can
+handle both by passing both in =dispatch_syscall()=:
+#+begin_src rust
+  4 => sys_send(context_ptr, syscall_id, arg1, arg2, arg3), // sys_send
+  5 => sys_send(context_ptr, syscall_id, arg1, arg2, arg3), // sys_sendreceive
+#+end_src
+then in =sys_send= we can again check the value of =syscall_id=:
+#+begin_src rust
+  let (thread1, thread2) = match syscall_id & 0xFF {
+      5 => rdv.write().send(
+          Some(thread),
+          message),
+      6 => rdv.write().send_receive(
+          thread,
+          message),
+      _ => panic!("Internal error")
+  };
+#+end_src
+
+** Standard library implementation
+
+In the standard library =euralios_std/src/syscalls.rs= we can simplify
+the =send=, =receive= and =send_receive= functions by defining methods
+to convert =Message= objects to and from register values. For now
+these still only handle =Short= messages:
+#+begin_src rust
+  impl Message {
+      fn to_values(&self)
+                   -> Result<(u64, u64, u64, u64), u64> {
+          match self {
+              Message::Short(data1, data2, data3) => {
+                  Ok((0, *data1, *data2, *data3))
+              },
+              _ => Err(0)
+          }
+      }
+      fn from_values(_ctrl: u64,
+                     data1: u64, data2: u64, data3: u64)
+                     -> Message {
+          Message::Short(data1, data2, data3)
+      }
+  }
+#+end_src
+The new =send_receive()= function can then be implemented as:
+#+begin_src rust
+pub fn send_receive(
+    handle: u32,
+    message: Message
+) -> Result<Message, u64> {
+
+    // Convert the message to register values
+    let (ctrl, data1, data2, data3) = message.to_values()?;
+
+    // Values to be received
+    let err: u64;
+    let (ret_ctrl, ret_data1, ret_data2, ret_data3): (u64, u64, u64, u64);
+    unsafe {
+        asm!("syscall",
+             in("rax") 5 | ctrl | ((handle as u64) << 32),
+             in("rdi") data1,
+             in("rsi") data2,
+             in("rdx") data3,
+             lateout("rax") ret_ctrl,
+             lateout("rdi") ret_data1,
+             lateout("rsi") ret_data2,
+             lateout("rdx") ret_data3,
+             out("rcx") _,
+             out("r11") _);
+    }
+    let err = ret_ctrl & 0xFF;
+    if err == 0 {
+        return Ok(Message::from_values(ret_ctrl,
+                                       ret_data1, ret_data2, ret_data3));
+    }
+    Err(err)
+}
+#+end_src
+
+** Using Send-Receive
+
+In the =rtl8139= program we can now try using =send_receive()= to find
+a device using the =pci= program. First we open the "/pci" path, then
+send a message requesting a device with vendor =0x10EC= and device ID
+=0x8139= which is the [[https://wiki.osdev.org/RTL8139][RTL8139 network chip]].
+#+begin_src rust
+  let handle = syscalls::open("/pci").expect("Couldn't open pci");
+
+  let reply = syscalls::send_receive(
+      handle,
+      syscalls::Message::Short(
+          MESSAGE_PCI_DEVICE, 0x10EC, 0x8139)).unwrap();
+#+end_src
+
+The reply could be an address (=MESSAGE_PCI_ADDRESS=, 257) if it was
+found, a not-found message (=MESSAGE_PCI_NOTFOUND=, 258), or something
+else:
+#+begin_src rust
+  let address = match reply {
+      syscalls::Message::Short(MESSAGE_PCI_ADDRESS,
+                               address, _) => {
+          debug_println!("rtl8139 found at address: {:08X}", address);
+          address
+      }
+      syscalls::Message::Short(MESSAGE_PCI_NOTFOUND,
+                               _, _) => {
+          debug_println!("rtl8139 not found");
+          return;
+      }
+      _ => {
+          debug_println!("rtl8139 unexpected reply: {:?}", reply);
+          return;
+      }
+  };
+#+end_src
+
+Note that we should also handle the case that the =Rendezvous= is
+blocked, in which case =send_receive()= will return an =Err= and we
+should probably wait and try again.
+
+** Changing network card
+
+The default network card on QEMU is not an =RTL8139= so the =rtl8139=
+driver won't get a PCI address. To configure [[https://wiki.qemu.org/Documentation/Networking][QEMU's networking]] to
+emulate an =RTL8139= network card we need to add args in =kernel/Cargo.toml=:
+#+begin_src toml
+  [package.metadata.bootimage]
+  run-args = ["-nic", "user,model=rtl8139"]  # New
+#+end_src
+
+Running this should produce something like the output in [[fig-address]]
+below:
+
+#+CAPTION: rtl8139 using pci program to find device address
+#+NAME: fig-address
+[[./img/13-02-address.png]]
+
+Now that we have the address of the RTL8139 device, we can start to develop
+the driver for it in the [[./14-network.org][next section]].

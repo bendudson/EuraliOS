@@ -252,7 +252,7 @@ In =syscalls.rs= the flags which will be used in =rax=:
                   // Message is valid => Remove handles being moved
                   if (syscall_id & MESSAGE_DATA2_TYPE == MESSAGE_DATA2_RDV) &&
                       (syscall_id & MESSAGE_DATA2_MOVE != 0) {
-                          let _ = thread.take_rendezvous(data3);
+                          let _ = thread.take_rendezvous(data2);
                       }
                   if (syscall_id & MESSAGE_DATA3_TYPE == MESSAGE_DATA3_RDV) &&
                       (syscall_id & MESSAGE_DATA3_MOVE != 0) {
