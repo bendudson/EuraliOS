@@ -68,7 +68,7 @@ to =pci=:
   let bar0 = match syscalls::send_receive(
       handle,
       syscalls::Message::Short(
-          pci::READ_BAR, address as u64, 0)).unwrap() {
+          pci::READ_BAR, address, 0)).unwrap() {
       syscalls::Message::Short(pci::BAR,
                                bar_value, _) => bar_value,
       _ => panic!("rtl8139 unexpected reply: {:?}", reply)
@@ -296,4 +296,34 @@ I've tidied up some of the output which isn't really needed now
 (like the ELF segments), and started putting the name of the
 program at the start of the line (e.g =[rtl8139]= or =[pci]=)
 because their outputs may be interleaved.
+
+** Receive buffers
+
+When data is received the network card is going to write data to memory,
+so we need to give it a physical memory address to write to. This is a
+problem because our driver is a user space program which doesn't have
+access to page tables.
+
+It is recommended that the receive buffer be 8k + 16 bytes long, just
+over 2 pages long, so we need three consecutive pages. The address is
+32 bits, so all of this memory must be in physical memory below 4Gb.
+
+We'll therefore add a system call =malloc= to allocate chunks of
+memory. As discussed in [[./06-user-memory.org][section 6]], the Linux =mmap()= syscall does
+something like this, allocating pages which can be free'd back to the
+operating system.  We also need to be able to allocate and pass around
+chunks of memory for large messages where we want to transfer more
+than a few registers between processes (see [[./11-messages.org][section 11]]), so now seems
+like a good time to do this.
+
+The =malloc= system call will need:
+- The number of pages to allocate
+- Whether the frames need to be consecutive
+- Whether they must be in 32-bit address space
+
+For simple memory allocation where the frames don't need to be
+consecutive a lazy on-demand allocation can be used. Where frames
+must be consecutive then we need to add functionality to the
+frame allocator to find consecutive frames.
+
 
