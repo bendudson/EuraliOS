@@ -475,10 +475,15 @@ types, so we can leave low numbers for those, and use numbers above
 256 (for example) for types specific to particular programs.
 
 When =pci= receives a message we can now match the type of the message.
-We can add a =MESSAGE_PCI_DEVICE= message type, which other programs
-can send to find a device:
+We can add a =FIND_DEVICE= message type to the standard library in =euralios_std/src/message.rs=
 #+begin_src rust
-  const MESSAGE_PCI_DEVICE: u64 = 256;
+  pub mod pci {
+      pub const FIND_DEVICE: u64 = 256;
+  }
+#+end_src
+which other programs can send to find a device:
+#+begin_src rust
+  use euralios_std::message::pci;
 
   fn main() {
       ...
@@ -490,7 +495,7 @@ can send to find a device:
             debug_println!("Character: {}", ch);
         }
         syscalls::Message::Short(
-            MESSAGE_PCI_DEVICE, vendor, device) => {
+            pci::FIND_DEVICE, vendor, device) => {
             // Find a device with given vendor and device ID
 
             let vendor_id = (vendor & 0xFFFF) as u16;
@@ -505,15 +510,18 @@ can send to find a device:
 
 ** Returning device information
 
-When the =pci= program receives a =MESSAGE_PCI_DEVICE= message, it
+When the =pci= program receives a =FIND_DEVICE= message, it
 should look for the device, and return a message back to the
 sender. The easiest way to do that is to send a message back to the
 same rendezvous (handle 0 in this case). We need two message types: A
 message containing a PCI location address (bus, slot, function), and
 one for "device not found":
 #+begin_src rust
-const MESSAGE_PCI_ADDRESS: u64 = 257;
-const MESSAGE_PCI_NOTFOUND: u64 = 258;
+pub mod pci {
+    pub const FIND_DEVICE: u64 = 256;
+    pub const ADDRESS: u64 = 384;   // New
+    pub const NOTFOUND: u64 = 385;  // New
+}
 #+end_src
 
 We can find the device by iterating over the =devices= vector with
@@ -532,7 +540,7 @@ If the device is found then we can send the PCI location address back:
 #+begin_src rust
   syscalls::send(0,
                  syscalls::Message::Short(
-                     MESSAGE_PCI_ADDRESS,
+                     pci::ADDRESS,
                      device.location.address() as u64,
                      0));
 #+end_src
@@ -540,26 +548,25 @@ while if it's not found then we send a different message:
 #+begin_src rust
   syscalls::send(0,
                  syscalls::Message::Short(
-                     MESSAGE_PCI_NOTFOUND,
+                     pci::NOTFOUND,
                      0xFFFF_FFFF_FFFF_FFFF, 0));
 #+end_src
 
-To use this interface, another task sends a =MESSAGE_PCI_DEVICE=
-message to the rendezvous corresponding to the =pci= program's input,
-and then waits for a =MESSAGE_PCI_ADDRESS= or =MESSAGE_PCI_NOTFOUND=
-message back i.e something like:
+To use this interface, another task sends a =FIND_DEVICE= message to
+the rendezvous corresponding to the =pci= program's input, and then
+waits for a =ADDRESS= or =NOTFOUND= message back i.e something like:
 #+begin_src rust
   syscalls::send(handle,
                  syscalls::Message::Short(
-                     MESSAGE_PCI_DEVICE,
+                     pci::FIND_DEVICE,
                      0x8086_100E as u64, 0));
   match syscalls::receive(handle) {
       syscalls::Message::Short(
-          MESSAGE_PCI_ADDRESS, address, _) => {
+          pci::ADDRESS, address, _) => {
           // Do something with address
       },
       syscalls::Message::Short(
-          MESSAGE_PCI_NOTFOUND, _, _) => {
+          pci::NOTFOUND, _, _) => {
           // Device not found
       },
       _ => {}
@@ -573,7 +580,7 @@ try to address in the [[./13-return-to-sender.org][next section]]:
    that sent the request: In between process A calling =send= and the
    =pci= process sending a reply, another process (B) may be scheduled
    which also sends a message to the =pci= process. We need a
-   =sendreceive= syscall which only allows the process which received
+   =send_receive= syscall which only allows the process which received
    a message to send the next message, preventing another process from
    jumping in.
 

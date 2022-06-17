@@ -441,10 +441,10 @@ then in =sys_send= we can again check the value of =syscall_id=:
 In the standard library =euralios_std/src/syscalls.rs= we can simplify
 the =send=, =receive= and =send_receive= functions by defining methods
 to convert =Message= objects to and from register values. For now
-these still only handle =Short= messages:
+these still only handle =Short= messages. In =euralios_std/src/message.rs=:
 #+begin_src rust
   impl Message {
-      fn to_values(&self)
+      pub fn to_values(&self)
                    -> Result<(u64, u64, u64, u64), u64> {
           match self {
               Message::Short(data1, data2, data3) => {
@@ -453,7 +453,7 @@ these still only handle =Short= messages:
               _ => Err(0)
           }
       }
-      fn from_values(_ctrl: u64,
+      pub fn from_values(_ctrl: u64,
                      data1: u64, data2: u64, data3: u64)
                      -> Message {
           Message::Short(data1, data2, data3)
@@ -507,20 +507,20 @@ send a message requesting a device with vendor =0x10EC= and device ID
   let reply = syscalls::send_receive(
       handle,
       syscalls::Message::Short(
-          MESSAGE_PCI_DEVICE, 0x10EC, 0x8139)).unwrap();
+          pci::FIND_DEVICE, 0x10EC, 0x8139)).unwrap();
 #+end_src
 
-The reply could be an address (=MESSAGE_PCI_ADDRESS=, 257) if it was
-found, a not-found message (=MESSAGE_PCI_NOTFOUND=, 258), or something
+The reply could be an address (=ADDRESS=, 257) if it was
+found, a not-found message (=NOTFOUND=, 258), or something
 else:
 #+begin_src rust
   let address = match reply {
-      syscalls::Message::Short(MESSAGE_PCI_ADDRESS,
+      syscalls::Message::Short(pci::ADDRESS,
                                address, _) => {
           debug_println!("rtl8139 found at address: {:08X}", address);
           address
       }
-      syscalls::Message::Short(MESSAGE_PCI_NOTFOUND,
+      syscalls::Message::Short(pci::NOTFOUND,
                                _, _) => {
           debug_println!("rtl8139 not found");
           return;

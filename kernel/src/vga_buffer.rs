@@ -162,7 +162,7 @@ use alloc::vec::Vec;
 use core::arch::asm;
 
 use crate::process;
-use crate::rendezvous::{Rendezvous, Message};
+use crate::rendezvous::Rendezvous;
 
 ///
 fn listener() {

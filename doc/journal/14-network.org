@@ -1,9 +1,299 @@
-* Network adapter
+* RTL8139 network card
 
 In [[./12-devices.org][section 12]] we wrote a basic =pci= program, which scans the
 PCI bus for devices and makes it available to other processes.
 Then in the [[./13-return-to-sender.org][last section]] we worked on enabling programs to open
 connections, and ensuring that return messages go to the right
 program. In this section we'll start adding device drivers,
-starting with a network adapter.
+beginning with a network interface card, the [[https://wiki.osdev.org/RTL8139][RTL8139]].
+
+In addition to the [[https://wiki.osdev.org/RTL8139][OSDev page]], the [[https://github.com/vinc/moros/blob/trunk/src/sys/net/rtl8139.rs][MOROS source code]] was very useful
+while developing this.
+
+** Getting the I/O address
+
+There are two ways to read and write data to PCI cards: via
+I/O ports and by direct memory access (DMA). The addresses
+are stored in Base Address Registers (BARs) in the configuration
+registers, and are explained in this [[https://wiki.osdev.org/PCI][OSDev wiki page]].
+
+Reading the BAR involves writing to the =CONFIG_ADDRESS= port, then
+reading from =CONFIG_DATA= (see [[./12-devices.org][section 12]]). If multiple device
+drivers try to do this simultaneously then they may be unlucky and
+be interrupted in between writing the address and reading the value,
+with undefined consequences. To prevent this we'll only access
+the configuration registers via the =pci= program.
+
+In =pci/src/main.rs= we need to add a message handler for a new =pci::READ_BAR=
+message type:
+#+begin_src rust
+  syscalls::Message::Short(
+      pci::READ_BAR, address, bar_id) => {
+
+      if address > 0xFFFF_FFFF || bar_id > 5 {
+          // Out of range
+          syscalls::send(0,
+                         syscalls::Message::Short(
+                             pci::NOTFOUND,
+                             0xFFFF_FFFF_FFFF_FFFF, 0));
+          continue;
+      }
+
+      let bar_value =
+          PciLocation::from_address(address as u32)
+          .read_register(4 + bar_id as u8);
+
+      syscalls::send(0,
+                     syscalls::Message::Short(
+                         pci::BAR,
+                         bar_value as u64, bar_id));
+  }
+#+end_src
+This either returns =pci::NOTFOUND=, or a =pci::BAR= message
+type containing the value. The new message types are added to
+=euralios_std/src/message.rs=:
+#+begin_src rust
+  pub mod pci {
+      pub const FIND_DEVICE: u64 = 256;
+      pub const READ_BAR: u64 = 257;   // New
+      pub const ADDRESS: u64 = 384;
+      pub const NOTFOUND: u64 = 385;
+      pub const BAR: u64 = 386;        // New
+  }
+#+end_src
+
+We can now read and print BAR0 in =rtl8139= by sending a message
+to =pci=:
+#+begin_src rust
+  let bar0 = match syscalls::send_receive(
+      handle,
+      syscalls::Message::Short(
+          pci::READ_BAR, address as u64, 0)).unwrap() {
+      syscalls::Message::Short(pci::BAR,
+                               bar_value, _) => bar_value,
+      _ => panic!("rtl8139 unexpected reply: {:?}", reply)
+  };
+  debug_println!("BAR0: {:08X}", bar0);
+#+end_src
+which prints =BAR0: 0000C001=. The final bit is =1= so this is
+an I/O space BAR. To get the 16-bit I/O address we need
+=BAR0 & 0xFFFC= to mask the lowest two bits.
+
+** Remote call (rcall) function
+
+We're going to often have to use =send_receive= to send
+messages to another process and wait for a reply, a kind of
+Remote Procedure Call (RPC). The code above to read the BAR
+has quite a bit of boilerplate, and doesn't even handle the
+case that the Rendezvous is busy and we need to wait and retry.
+
+To wrap this up we can add a function =rcall()= in
+=euralios_std/src/message.rs=
+#+begin_src rust
+  pub fn rcall(
+      handle: u32,
+      data1: u64,
+      data2: u64,
+      data3: u64,
+      expect_rdata1: Option<u64>
+  ) -> Result<(u64, u64, u64), u64> {
+      ...
+  }
+#+end_src
+The idea is that a user passes in the handle and message data, and can
+optionally specify the value expected in the return data1 part of the
+message. The code calls =send_receive()= in a loop; if the Rendezvous
+is blocked then it waits and retries up to a maximum number of times.
+If successful then it returns the three data values; if not then an
+error code.
+
+The =rtl8139= program can now be simplified to:
+#+begin_src rust
+  #[no_mangle]
+  fn main() {
+      debug_println!("[rtl8139] Starting driver");
+
+      let handle = syscalls::open("/pci").expect("Couldn't open pci");
+
+      // Use PCI program to look for device
+      let (msg_type, address, _) = rcall(handle, pci::FIND_DEVICE,
+                                         0x10EC, 0x8139,
+                                         None).unwrap();
+      if msg_type != pci::ADDRESS {
+          debug_println!("[rtl8139] Device not found. Exiting.");
+          return;
+      }
+      debug_println!("[rtl8139] Found at address: {:08X}", address);
+
+      // Read BAR0 to get the I/O address
+      let (_, bar0, _) = rcall(handle, pci::READ_BAR,
+                               address, 0,
+                               Some(pci::BAR)).unwrap();
+      let ioaddr = (bar0 & 0xFFFC) as u16;
+      debug_println!("[rtl8139] BAR0: {:08X}. I/O addr: {:04X}", bar0, ioaddr);
+  }
+#+end_src
+
+** Resetting the device
+
+Following the [[https://wiki.osdev.org/RTL8139][OSDev page]] and [[https://github.com/vinc/moros/blob/trunk/src/sys/net/rtl8139.rs][MOROS source code]], we first need to
+reset the network card:
+#+begin_src rust
+  struct Device {
+      ioaddr: u16,
+  }
+
+  impl Device {
+      fn reset(&mut self) -> Result<(), &'static str> {
+          ...
+          Ok(())
+      }
+  }
+#+end_src
+
+We'll need to read and write to ports quite often,
+so can define some functions to help:
+#+begin_src rust
+fn outportb(ioaddr: u16, value: u8) {
+    unsafe {
+        asm!("out dx, al",
+             in("dx") ioaddr,
+             in("al") value,
+             options(nomem, nostack));
+    }
+}
+
+fn inb(ioaddr: u16) -> u8 {
+    let value: u8;
+    unsafe {
+        asm!("in al, dx",
+             in("dx") ioaddr,
+             lateout("al") value,
+             options(nomem, nostack));
+    }
+    value
+}
+#+end_src
+
+Resetting consists of powering on:
+#+begin_src rust
+outportb(self.ioaddr + 0x52, 0);
+#+end_src
+starting a software reset:
+#+begin_src rust
+outportb(self.ioaddr + 0x37, 0x10);
+#+end_src
+and then waiting for the reset bit to be cleared:
+#+begin_src rust
+  const MAX_ATTEMPTS: usize = 1000;
+  let mut retry = 0;
+  while (inb(self.ioaddr + 0x37) & 0x10) != 0 {
+      retry += 1;
+      if retry > MAX_ATTEMPTS {
+          return Err("Timeout");
+      }
+      // Wait for a bit
+      for _i in 0..100000 {
+          unsafe{ asm!("nop"); }
+      }
+  }
+#+end_src
+It would be nice if we had a =sleep= or =yield= syscall
+so that we might do something useful while waiting. For now
+we just call =nop= many times.
+
+** Reading the MAC address
+
+The [[https://en.wikipedia.org/wiki/MAC_address][Media Access Control]] address is used to uniquely identify a
+network interface on a local network. It is the low-level address
+which is needed to actually deliver a packet of data to the specific
+intended recipient device.
+
+We are probably going to need MAC addresses quite often, so will add
+it to the standard library in a new file, =euralios_std/src/net.rs=:
+#+begin_src rust
+pub struct MacAddress {
+    octet: [u8; 6]
+}
+#+end_src
+along with some methods to convert to and from arrays,
+intended to be the same as the [[https://docs.rs/mac_address/latest/mac_address/struct.MacAddress.html][mac_address]] crate:
+#+begin_src rust
+impl MacAddress {
+    /// Create a new MacAddress from bytes
+    pub fn new(octet: [u8; 6]) -> MacAddress {
+        MacAddress{octet}
+    }
+
+    /// Return the address as an array of bytes
+    pub fn bytes(&self) -> [u8; 6] {
+        self.octet
+    }
+}
+#+end_src
+and a =Display= trait for pretty printing:
+#+begin_src rust
+  use core::fmt;
+  impl fmt::Display for MacAddress {
+      fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+          for i in 0..5 {
+              write!(f, "{:02X}:", self.octet[i])?;
+          }
+          write!(f, "{:02X}", self.octet[5])
+      }
+  }
+#+end_src
+
+Now adapting the [[https://github.com/vinc/moros/blob/trunk/src/sys/net/rtl8139.rs#L92][MOROS code]] we can write a method to read the MAC
+address from the RTL8139 I/O address in =rtl8139/src/main.rs=:
+#+begin_src rust
+  impl Device {
+      fn reset(&mut self) -> Result<(), &'static str> {
+          ...
+      }
+
+      fn mac_address(&self) -> MacAddress { // New
+          let mut octet: [u8; 6] = [0; 6];
+          for ind in 0..octet.len() {
+              octet[ind] = inb(self.ioaddr + ind as u16);
+          }
+          MacAddress::new(octet)
+      }
+  }
+#+end_src
+
+After getting the =ioaddr=, the =main()= function can now
+reset the network card and read the MAC address:
+#+begin_src rust
+  let mut device = Device{ioaddr};
+
+  match device.reset() {
+      Ok(()) => debug_println!("[rtl8139] Device reset OK"),
+      Err(message) => {
+          debug_println!("[rtl8139] Device failed to reset: {}", message);
+          return;
+      }
+  }
+
+  debug_println!("[rtl8139] MAC address {}", device.mac_address());
+#+end_src
+
+To check that this produces the result we expect, we can try
+changing the MAC address that QEMU assigns to the network card.
+In =kernel/Cargo.toml= we can choose the MAC address e.g.
+#+begin_src rust
+[package.metadata.bootimage]
+run-args = ["-nic", "user,model=rtl8139,mac=00:11:22:33:44:55"]
+#+end_src
+sets the MAC address to =00:11:22:33:44:55=. Running the code
+produces something like figure [[fig-reset]]:
+
+#+CAPTION: rtl8139 resetting and reading MAC address
+#+NAME: fig-reset
+[[./img/14-01-rtl8139-reset.png]]
+
+I've tidied up some of the output which isn't really needed now
+(like the ELF segments), and started putting the name of the
+program at the start of the line (e.g =[rtl8139]= or =[pci]=)
+because their outputs may be interleaved.
 

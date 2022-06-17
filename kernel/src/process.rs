@@ -446,13 +446,9 @@ pub fn new_user_thread(
         return with_pagetable(user_page_table_physaddr, || {
 
             let entry_point = obj.entry();
-            println!("Entry point: {:#016X}", entry_point);
 
             for segment in obj.segments() {
                 let segment_address = segment.address() as u64;
-
-                println!("Section {:?} : {:#016X} size {}",
-                         segment.name(), segment_address, segment.size());
 
                 let start_address = VirtAddr::new(segment_address);
                 let end_address = start_address + segment.size() as u64;
@@ -475,7 +471,6 @@ pub fn new_user_thread(
                 memory::switch_to_pagetable(user_page_table_physaddr);
 
                 if let Ok(data) = segment.data() {
-                    println!(" data len : {}", data.len());
                     if data.len() > segment.size() as usize {
                         return Err("ELF data length > segment size");
                     } else if data.len() > 0 {

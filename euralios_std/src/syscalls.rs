@@ -1,5 +1,7 @@
 use core::arch::asm;
 
+pub use crate::message::Message;
+
 /// Spawn a new thread with a given entry point
 ///
 /// # Returns
@@ -40,29 +42,6 @@ pub fn thread_exit() -> ! {
         asm!("mov rax, 1", // exit_current_thread syscall
              "syscall",
              options(noreturn));
-    }
-}
-
-#[derive(Debug)]
-pub enum Message {
-    Short(u64, u64, u64),
-    Long
-}
-
-impl Message {
-    fn to_values(&self)
-                 -> Result<(u64, u64, u64, u64), u64> {
-        match self {
-            Message::Short(data1, data2, data3) => {
-                Ok((0, *data1, *data2, *data3))
-            },
-            _ => Err(0)
-        }
-    }
-    fn from_values(_ctrl: u64,
-                   data1: u64, data2: u64, data3: u64)
-                   -> Message {
-        Message::Short(data1, data2, data3)
     }
 }
 
@@ -123,7 +102,6 @@ pub fn send_receive(
     let (ctrl, data1, data2, data3) = message.to_values()?;
 
     // Values to be received
-    let err: u64;
     let (ret_ctrl, ret_data1, ret_data2, ret_data3): (u64, u64, u64, u64);
     unsafe {
         asm!("syscall",
@@ -166,6 +144,26 @@ pub fn open(path: &str) -> Result<u32, u64> {
         Err(error)
     }
 }
+
+// Syscall numbers
+pub const SYSCALL_MASK: u64 = 0xFF;
+pub const SYSCALL_FORK_THREAD: u64 = 0;
+pub const SYSCALL_EXIT_THREAD: u64 = 1;
+pub const SYSCALL_DEBUG_WRITE: u64 = 2;
+pub const SYSCALL_RECEIVE: u64 = 3;
+pub const SYSCALL_SEND: u64 = 4;
+pub const SYSCALL_SENDRECEIVE: u64 = 5;
+pub const SYSCALL_OPEN: u64 = 6;
+
+// Syscall error codes
+pub const SYSCALL_ERROR_SEND_BLOCKING: u64 = 1;
+pub const SYSCALL_ERROR_RECV_BLOCKING: u64 = 2;
+pub const SYSCALL_ERROR_INVALID_HANDLE: u64 = 3;
+pub const SYSCALL_ERROR_MEMALLOC: u64 = 4; // Memory allocation error
+pub const SYSCALL_ERROR_PARAM: u64 = 5; // Invalid parameter
+pub const SYSCALL_ERROR_UTF8: u64 = 6; // UTF8 conversion error
+pub const SYSCALL_ERROR_NOTFOUND: u64 = 7;
+
 
 // Standard message types
 pub const MESSAGE_TYPE_CHAR: u64 = 0;

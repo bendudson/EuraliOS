@@ -11,7 +11,7 @@
 #![no_main]
 
 use core::arch::asm;
-use euralios_std::{debug_println, syscalls};
+use euralios_std::{debug_println, syscalls, message::pci};
 use core::fmt;
 
 extern crate alloc;
@@ -29,12 +29,20 @@ struct PciLocation {
 
 impl fmt::Display for PciLocation {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-           write!(f, "PCI {:04X}:{:02X}:{:02X}",
+           write!(f, "{:04X}:{:02X}:{:02X}",
                   self.bus, self.slot, self.function)
     }
 }
 
 impl PciLocation {
+    fn from_address(address: u32) -> PciLocation {
+        PciLocation{
+            function:((address >> 8) & 0b111) as u16,
+            slot:((address >> 11) & 0b1_1111) as u16,
+            bus:((address >> 16) & 0xFF) as u16
+        }
+    }
+
     /// Return PCI bus address
     fn address(&self) -> u32 {
         0x8000_0000
@@ -178,10 +186,6 @@ impl fmt::Display for Device {
     }
 }
 
-const MESSAGE_PCI_DEVICE: u64 = 256;
-const MESSAGE_PCI_ADDRESS: u64 = 257; // The bus/slot/function address
-const MESSAGE_PCI_NOTFOUND: u64 = 258;
-
 #[no_mangle]
 fn main() {
 
@@ -194,7 +198,7 @@ fn main() {
                 PciLocation{bus,
                             slot,
                             function:0}).get_device() {
-                debug_println!("Device {}", device);
+                debug_println!("[pci] Device {}", device);
                 devices.push(device);
             }
         }
@@ -204,21 +208,21 @@ fn main() {
     loop {
         match syscalls::receive(0) {
             Ok(message) => {
-                debug_println!("Received message");
                 match message {
                     // A character e.g. from keyboard
                     syscalls::Message::Short(
                         syscalls::MESSAGE_TYPE_CHAR, ch, _) => {
-                        debug_println!("Character: {}", ch);
+                        debug_println!("[pci] Character: {}", ch);
                     }
+
                     // Find a device with given vendor and device ID
                     // and return a message to the same Rendezvous
                     syscalls::Message::Short(
-                        MESSAGE_PCI_DEVICE, vendor, device) => {
+                        pci::FIND_DEVICE, vendor, device) => {
                         let vendor_id = (vendor & 0xFFFF) as u16;
                         let device_id = (device & 0xFFFF) as u16;
 
-                        debug_println!("Finding device [{:04X}:{:04X}]",
+                        debug_println!("[pci] Finding device [{:04X}:{:04X}]",
                                        vendor_id, device_id);
 
                         if let Some(device) = devices.iter().find(
@@ -227,22 +231,61 @@ fn main() {
 
                             syscalls::send(0,
                                            syscalls::Message::Short(
-                                               MESSAGE_PCI_ADDRESS,
+                                               pci::ADDRESS,
                                                device.location.address() as u64,
                                                0));
                         } else {
                             // Not found
                             syscalls::send(0,
                                            syscalls::Message::Short(
-                                               MESSAGE_PCI_NOTFOUND,
+                                               pci::NOTFOUND,
                                                0xFFFF_FFFF_FFFF_FFFF, 0));
                         }
+                    }
+
+                    // Read Base Address Register
+                    syscalls::Message::Short(
+                        pci::READ_BAR, address, bar_id) => {
+
+                        if address > 0xFFFF_FFFF || bar_id > 5 {
+                            // Out of range
+                            syscalls::send(0,
+                                           syscalls::Message::Short(
+                                               pci::NOTFOUND,
+                                               0xFFFF_FFFF_FFFF_FFFF, 0));
+                            continue;
+                        }
+
+                        let bar_value =
+                            PciLocation::from_address(address as u32)
+                            .read_register(4 + bar_id as u8);
+
+                        syscalls::send(0,
+                                       syscalls::Message::Short(
+                                           pci::BAR,
+                                           bar_value as u64, bar_id));
                     }
                     _ => {}
                 }
             },
+            Err(syscalls::SYSCALL_ERROR_RECV_BLOCKING) => {
+                // Waiting for a message
+                // => Send an error message
+                syscalls::send(0,
+                               syscalls::Message::Short(
+                                   pci::NOTFOUND,
+                                   0, 0));
+                // Wait and try again
+                for _i in 0..10000 {
+                    unsafe{asm!("nop")};
+                }
+            },
             Err(code) => {
-                debug_println!("Receive error {}", code);
+                debug_println!("[pci] Receive error {}", code);
+                // Wait and try again
+                for _i in 0..10000 {
+                    unsafe{asm!("nop")};
+                }
             }
         }
     }

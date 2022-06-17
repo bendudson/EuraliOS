@@ -25,8 +25,6 @@ entry_point!(kernel_entry);
 /// which is started once basic kernel functions have
 /// been initialised in kernel_entry
 fn kernel_thread_main() {
-    println!("Kernel thread start");
-
     let pci_input = interrupts::keyboard_rendezvous();
     let vga_rz = vga_buffer::start_listener();
 

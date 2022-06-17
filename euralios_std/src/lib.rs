@@ -5,6 +5,8 @@ use core::arch::asm;
 pub mod syscalls;
 pub mod debug;
 pub mod memory;
+pub mod net;
+pub mod message;
 
 use core::panic::PanicInfo;
 #[panic_handler]

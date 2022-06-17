@@ -39,8 +39,9 @@ type larger in =kernel/src/rendezvous.rs=:
   }
 #+end_src
 
-We can also define =Message= in the library code
-=euralios_std/src/syscalls.rs= with the same code. We'll keep the
+We can also define =Message= in the user library in a new file
+=euralios_std/src/message.rs= with the same code, and add
+=pub mod message;= to =euralios_std/src/lib.rs=. We'll keep the
 definitions separate because the storage of messages in the kernel and
 user code will probably be different in general.
 
@@ -48,7 +49,7 @@ The library code (=euralios_std/src/syscalls.rs=) is now going to put
 the syscall number and handle into =rax=, and the three values into
 =rdi=, =rsi= and =rdx=.
 #+begin_src rust
-  use crate::rendezvous::{Message, MessageData};
+  use crate::message::Message;
   pub fn send(
       handle: u32,
       message: Message

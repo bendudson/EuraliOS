@@ -97,8 +97,10 @@ direction...
 - [[file:doc/journal/11-messages.org][11. More messages]]
 - [[file:doc/journal/12-devices.org][12. PCI devices]] where we start working on input/output to PCI
   devices.
-- [[file:doc/journal/13-return-to-sender.org][13. Return to sender]]
-- [[file:doc/journal/14-network.org][14. Networking]]
+- [[file:doc/journal/13-return-to-sender.org][13. Return to sender]] where we add the =send_receive= syscall to make
+  remote procedure calls more reliable, and start to develop a Virtual
+  File System (VFS) with a new =open= syscall.
+- [[file:doc/journal/14-network.org][14. RTL8139 network card]]
 
 ** Bibliography
 
