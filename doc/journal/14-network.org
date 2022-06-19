@@ -305,8 +305,9 @@ problem because our driver is a user space program which doesn't have
 access to page tables.
 
 It is recommended that the receive buffer be 8k + 16 bytes long, just
-over 2 pages long, so we need three consecutive pages. The address is
-32 bits, so all of this memory must be in physical memory below 4Gb.
+over 2 pages long, so we need three consecutive pages mapped to three
+consecutive frames. The address is 32 bits, so all of this memory must
+be in physical memory below 4Gb.
 
 We'll therefore add a system call =malloc= to allocate chunks of
 memory. As discussed in [[./06-user-memory.org][section 6]], the Linux =mmap()= syscall does
@@ -326,4 +327,365 @@ consecutive a lazy on-demand allocation can be used. Where frames
 must be consecutive then we need to add functionality to the
 frame allocator to find consecutive frames.
 
+** Allocating consecutive frames
+
+We need to quickly find a set of pages to allocate to put in
+our frames. Fortunately the 64-bit address space is
+extravagantly large so finding space is fairly straightforward.
+
+As in [[./03-memory.org][section 3]] and [[./06-user-memory.org][section 6]] we can use the the =page_table_address=
+function to work out addresses:
+- The user stack pages are (5,0,0,0,0) to (5,0,1,0,0) i.e. addresses
+0x28000000000 to 0x28000200000, 2Mb in total.
+- The user heap is (5,0,3,0,0) to (5,0,23,0,0), addresses
+0x28000600000 to 0x28002e00000, a total of 0x2800000 bytes or 40Mb.
+
+To keep this simple we could use (5,1,0,0,0) to (6,0,0,0,0) for memory
+chunks. Each chunk will be an entry in the L3 table, so
+(5,1,*,*,*) is one chunk, (5,2,*,*,*) is another. This means:
+- Each chunk is limited to 1Gb maximum
+- Each process can have up to 511 chunks (because index 0 is already used)
+- Moving a memory chunk from one process to another just requires
+  moving one L3 table entry.
+
+In =kernel/src/memory.rs= we need to add a method to the frame
+allocator, which will search for consecutive frames. This is not going
+to be very efficient, but this isn't an operation which will be needed
+often; only device drivers will really care if their frames are
+consecutive or if they are 32-bit addressable. The outline of the
+function is below; many details are similar to what was done in
+[[./05-memory-returns.org][section 5]] or can be found in the EuraliOS repository.
+#+begin_src rust
+  impl MultilevelBitmapFrameAllocator {
+      fn consecutive_frames(
+          &mut self,
+          needed_frames: u64,
+          max_address: u64
+      ) -> Option<u64> {
+          // Restrict frame range to those with physical address below max_address
+          for frame in range {
+              if frame is available {
+                  count += 1;
+                  if count == needed_frames {
+                      // Found run of frames
+                      // Mark frames as taken and return
+                  }
+              } else {
+                  count = 0; // Run ended
+              }
+          }
+      }
+  }
+#+end_src
+Like before, we can also write a small wrapper to convert
+to PhysFrame:
+#+begin_src rust
+  fn allocate_consecutive_frames(
+      &mut self,
+      needed_frames: u64,
+      max_address: u64
+  ) -> Option<PhysFrame> {
+      if let Some(frame_number) = self.consecutive_frames(needed_frames, max_address) {
+          // Convert from frame number to physical address
+          return PhysFrame::from_start_address(
+              self.frame_phys_addr + frame_number * 4096).ok();
+      }
+      None
+  }
+#+end_src
+Then we need a function which will create the page table
+entries, starting at a given virtual address:
+#+begin_src rust
+  pub fn create_consecutive_pages(
+      level_4_physaddr: u64,
+      start_addr: VirtAddr,
+      num_frames: u64,
+      max_physaddr: u64)
+      -> Result<PhysAddr, MapToError<Size4KiB>> {
+
+      let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+      let frame_allocator = &mut memory_info.frame_allocator;
+
+      // Try to allocate a consecutive set of frames
+      let start_frame = frame_allocator
+          .allocate_consecutive_frames(num_frames, max_physaddr)
+          .ok_or(MapToError::FrameAllocationFailed)?;
+
+      let frame_range = PhysFrame::range(start_frame, start_frame + num_frames);
+
+      let page_range = {
+          let start_page = Page::containing_address(start_addr);
+          Page::range(start_page, start_page + num_frames)
+      };
+
+      let l4_table: &mut PageTable = unsafe {
+          &mut *(memory_info.physical_memory_offset
+                 + level_4_physaddr).as_mut_ptr()};
+
+      let mut mapper = unsafe {
+          OffsetPageTable::new(l4_table,
+                               memory_info.physical_memory_offset)};
+
+      for (page, frame) in page_range.zip(frame_range) {
+          println!("Page: {:?} -> Frame: {:?}", page, frame);
+
+          unsafe {
+              mapper.map_to_with_table_flags(page,
+                                             frame,
+                                             // Writeable by user
+                                             PageTableFlags::PRESENT |
+                                             PageTableFlags::WRITABLE |
+                                             PageTableFlags::USER_ACCESSIBLE,
+                                             // Parent table flags include writable
+                                             PageTableFlags::PRESENT |
+                                             PageTableFlags::WRITABLE |
+                                             PageTableFlags::USER_ACCESSIBLE,
+                                             frame_allocator)?.flush()
+          };
+      }
+      Ok(start_frame.start_address())
+  }
+#+end_src
+
+That function needs the starting virtual address of the page range to be used.
+We'll need a function to find an empty page table entry which can be used:
+#+begin_src rust
+const MEMORY_CHUNK_L4_ENTRY: usize = 5;
+const MEMORY_CHUNK_L3_FIRST: usize = 1;
+const MEMORY_CHUNK_L3_LAST: usize = 511;
+
+pub fn find_available_page_chunk(
+    level_4_physaddr: u64
+) -> Option<VirtAddr> {
+
+    let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+
+    let l4_table: &mut PageTable = unsafe {
+        &mut *(memory_info.physical_memory_offset
+               + level_4_physaddr).as_mut_ptr()};
+    let l4_entry = &mut l4_table[MEMORY_CHUNK_L4_ENTRY];
+
+    if l4_entry.is_unused() {
+        // L3 table not allocated -> Create
+        let (_new_table_ptr, new_table_physaddr) = create_empty_pagetable();
+        l4_entry.set_addr(PhysAddr::new(new_table_physaddr),
+                          PageTableFlags::PRESENT |
+                          PageTableFlags::WRITABLE |
+                          PageTableFlags::USER_ACCESSIBLE);
+    }
+    let l3_table: &PageTable = unsafe {
+        & *(memory_info.physical_memory_offset
+            + l4_entry.addr().as_u64()).as_ptr()};
+
+    for ind in MEMORY_CHUNK_L3_FIRST..=MEMORY_CHUNK_L3_LAST {
+        let entry = &l3_table[ind];
+        if entry.is_unused() {
+            return Some(VirtAddr::new(((MEMORY_CHUNK_L4_ENTRY as u64) << 39) |
+                                      (ind << 30) as u64));
+        }
+    }
+    None
+}
+#+end_src
+
+Bringing these pieces together, we can write a function in
+=kernel/src/process.rs= which will find an available chunk of pages
+and allocate frames, either a consecutive set or on-demand:
+#+begin_src rust
+pub fn new_memory_chunk(
+    num_pages: u64,
+    max_physaddr: u64
+) -> Result<(VirtAddr, PhysAddr), usize> {
+    // Get the current thread
+    if let Some(thread) = CURRENT_THREAD.read().as_ref() {
+        println!("Thread {} new chunk {} pages",
+                 thread.tid(), num_pages);
+
+        // Virtual address of the available page chunk
+        let start_addr = match memory::find_available_page_chunk(
+            thread.page_table_physaddr) {
+            Some(values) => values,
+            None => return Err(syscalls::SYSCALL_ERROR_MEMORY)
+        };
+
+        if max_physaddr != 0 {
+            // Allocate a consecutive set of frames
+            let physaddr = match memory::create_consecutive_pages(
+                thread.page_table_physaddr,
+                start_addr,
+                num_pages,
+                max_physaddr) {
+                Ok(physaddr) => physaddr,
+                Err(_) => return Err(syscalls::SYSCALL_ERROR_MEMORY)
+            };
+
+            return Ok((start_addr, physaddr));
+        } else {
+            // User doesn't need frames to be consecutive
+            // -> Allocate frames only when actually used
+            if memory::create_user_ondemand_pages(
+                thread.page_table_physaddr,
+                start_addr,
+                num_pages).is_err() {
+                return Err(syscalls::SYSCALL_ERROR_MEMORY);
+            }
+
+            // Note: physical address not returned because
+            //       the frames are not guaranteed to be
+            //       consecutive in physical address.
+            return Ok((start_addr, PhysAddr::new(0)));
+        }
+    }
+    Err(syscalls::SYSCALL_ERROR_THREAD)
+}
+#+end_src
+
+Now we can write the syscall interface to use the
+=create_consecutive_pages= function to allocate memory chunks.
+
+** Memory handles
+
+In the library code =euralios_std/src/syscalls.rs= we can define a
+handle type
+#+begin_src rust
+  #[derive(Debug)]
+  pub struct MemoryHandle(u64);
+#+end_src
+To try and make a safe interface for users, this handle can't be copied
+but refers to a unique region of memory. User code will be able to pass
+it to other processes, and the memory will be free'd when the
+handle is dropped. To access the memory users can get a reference:
+#+begin_src rust
+  impl MemoryHandle {
+      /// Get a reference with lifetime tied to MemoryHandle
+      pub unsafe fn as_ref<T>(&self) -> &T {
+          & *(self.0 as *const T)
+      }
+
+      /// Get a mutable reference with lifetime tied to MemoryHandle
+      pub unsafe fn as_mut_ref<T>(&mut self) -> &mut T {
+          &mut *(self.0 as *mut T)
+      }
+  }
+#+end_src
+Those references will have the same lifetime as the handle, enabling
+user code to avoid using the memory region after it is free'd.
+
+** Syscall errors
+
+Rather than just returning a number, we can make errors a bit more ergonomic
+#+begin_src rust
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct SyscallError(u64);
+#+end_src
+This will allow us to print error messages, and by deriving
+=PartialEq= and =Eq= traits we can match on particular errors.
+
+** Communication handles
+
+While we're adding handles for memory regions, we can make one for
+communication handles. They also represent unique resources which can
+be made (by the =open= syscall), and sent between processes.
+#+begin_src rust
+#[derive(Debug)]
+pub struct CommHandle(u32);
+#+end_src
+We can define a couple of handles for input and output:
+#+begin_src rust
+pub const STDIN:CommHandle = CommHandle(0);
+pub const STDOUT:CommHandle = CommHandle(1);
+#+end_src
+Note that these work a bit differently from Unix stdin and stdout: In
+EuraliOS programs can send messages to stdin, and receive them from
+stdout.
+
+Now the =receive()= function can take a reference to a =CommHandle=:
+#+begin_src rust
+  pub fn receive(
+      handle: &CommHandle
+  ) -> Result<Message, SyscallError> {
+      ...
+  }
+#+end_src
+and similarly for the =send()=, =send_receive()=, =open()= and
+=rcall()= functions. In the =pci/src/main.rs= code we can now replace
+handle =0= with =&STDIN= which is longer but (perhaps) more
+descriptive, and in the =rtl8139/src/main.rs= code we now pass
+references to =handle= to the =rcall()= function.
+
+** Malloc syscall
+
+We can now write a syscall to allocate a region of memory, optionally
+specifying an upper limit on the address:
+#+begin_src rust
+pub fn malloc(
+    num_bytes: u64,
+    max_physaddr: u64
+) -> Result<(MemoryHandle, u64), SyscallError> {
+
+    let num_pages = (num_bytes >> 12) +
+        if (num_bytes & 4095) != 0 {1} else {0};
+
+    let error: u64;
+    let handle: u16;
+    let virtaddr: u64;
+    let physaddr: u64;
+    unsafe {
+        asm!("mov rax, 7", // syscall function
+             "syscall",
+             in("rdi") num_pages, // First argument
+             in("rsi") max_physaddr, // Second argument
+             out("rax") error,
+             lateout("rdi") virtaddr,
+             lateout("rsi") physaddr,
+             out("rcx") _,
+             out("r11") _);
+    }
+    if error == 0 {
+        Ok((MemoryHandle(virtaddr), physaddr))
+    } else {
+        Err(SyscallError(error))
+    }
+}
+#+end_src
+The inputs are the number of bytes needed (which is rounded up to
+calculate the number of pages), and a second argument which is the
+maximum physical memory address (=max_physaddr=). If that is zero then
+frames will be allocated on demand; if non-zero then consecutive
+frames will be allocated before returning. The return values are the
+memory handle and starting physical address (if consecutive).
+
+In =kernel/src/syscalls.rs= we'll dispatch syscall 7 to =sys_malloc()=:
+#+begin_src rust
+fn sys_malloc(
+    context_ptr: *mut Context,
+    num_pages: u64,
+    max_physaddr: u64
+) {
+    let context = unsafe {&mut (*context_ptr)};
+
+    match process::new_memory_chunk(
+        num_pages,
+        max_physaddr) {
+        Ok((virtaddr, physaddr)) => {
+            context.rax = 0; // No error
+            context.rdi = virtaddr.as_u64() as usize;
+            context.rsi = physaddr.as_u64() as usize;
+        }
+        Err(code) => {
+            context.rax = code;
+            context.rdi = 0;
+            context.rsi = 0;
+            context.rdx = 0;
+        }
+    }
+}
+#+end_src
+which calls the =new_memory_chunk()= function in =process.rs=
+
+Trying this out in =rtl8139= with:
+#+begin_src rust
+  let result = syscalls::malloc(8192 + 16, 0xFFFF_FFFF);
+  debug_println!("Received: {:?}", result);
+#+end_src
 

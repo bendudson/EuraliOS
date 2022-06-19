@@ -2,7 +2,6 @@
 
 members = [
     "kernel",
-    "hello",
     "euralios_std",
     "pci",
     "rtl8139"

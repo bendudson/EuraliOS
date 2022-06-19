@@ -45,55 +45,60 @@ different range e.g (5,0,3,0,0) to (5,0,23,0,0), addresses
 ** Allocating pages
 
 #+begin_src rust
-pub fn create_user_ondemand_pages(
-    level_4_table: *mut PageTable,
-    start_addr: VirtAddr,
-    size: u64)
-    -> Result<(), MapToError<Size4KiB>> {
+  pub fn create_user_ondemand_pages(
+      level_4_physaddr: u64,
+      start_addr: VirtAddr,
+      size: u64)
+      -> Result<(), MapToError<Size4KiB>> {
 
-    let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
-    let frame_allocator = &mut memory_info.frame_allocator;
-    let mut mapper = unsafe {
-        OffsetPageTable::new(&mut *level_4_table,
-                             memory_info.physical_memory_offset)};
+      let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+      let frame_allocator = &mut memory_info.frame_allocator;
 
-    let page_range = {
-        let end_addr = start_addr + size - 1u64;
-        let start_page = Page::containing_address(start_addr);
-        let end_page = Page::containing_address(end_addr);
-        Page::range_inclusive(start_page, end_page)
-    };
+      let l4_table: &mut PageTable = unsafe {
+                  &mut *(memory_info.physical_memory_offset
+                         + level_4_physaddr).as_mut_ptr()};
 
-    // Only allocating one frame
-    let frame = frame_allocator
-        .allocate_frame()
-        .ok_or(MapToError::FrameAllocationFailed)?;
+      let mut mapper = unsafe {
+          OffsetPageTable::new(l4_table,
+                               memory_info.physical_memory_offset)};
 
-    for page in page_range {
-        unsafe {
-            mapper.map_to_with_table_flags(page,
-                                           frame,
-                                           // Page not writable
-                                           PageTableFlags::PRESENT |
-                                           PageTableFlags::USER_ACCESSIBLE,
-                                           // Parent table flags include writable
-                                           PageTableFlags::PRESENT |
-                                           PageTableFlags::WRITABLE |
-                                           PageTableFlags::USER_ACCESSIBLE,
-                                           frame_allocator)?.flush()
-        };
-    }
+      let page_range = {
+          let end_addr = start_addr + size - 1u64;
+          let start_page = Page::containing_address(start_addr);
+          let end_page = Page::containing_address(end_addr);
+          Page::range_inclusive(start_page, end_page)
+      };
 
-    // Make one page writable, so this 'owns' the frame
-    unsafe {
-        mapper.update_flags(page_range.start,
-                            PageTableFlags::PRESENT |
-                            PageTableFlags::WRITABLE |
-                            PageTableFlags::USER_ACCESSIBLE);
-    }
+      // Only allocating one frame
+      let frame = frame_allocator
+          .allocate_frame()
+          .ok_or(MapToError::FrameAllocationFailed)?;
 
-    Ok(())
-}
+      for page in page_range {
+          unsafe {
+              mapper.map_to_with_table_flags(page,
+                                             frame,
+                                             // Page not writable
+                                             PageTableFlags::PRESENT |
+                                             PageTableFlags::USER_ACCESSIBLE,
+                                             // Parent table flags include writable
+                                             PageTableFlags::PRESENT |
+                                             PageTableFlags::WRITABLE |
+                                             PageTableFlags::USER_ACCESSIBLE,
+                                             frame_allocator)?.flush()
+          };
+      }
+
+      // Make one page writable, so this 'owns' the frame
+      unsafe {
+          mapper.update_flags(page_range.start,
+                              PageTableFlags::PRESENT |
+                              PageTableFlags::WRITABLE |
+                              PageTableFlags::USER_ACCESSIBLE);
+      }
+
+      Ok(())
+  }
 #+end_src
 
 

@@ -15,7 +15,7 @@ fn main() {
     let handle = syscalls::open("/pci").expect("Couldn't open pci");
 
     // Use PCI program to look for device
-    let (msg_type, address, _) = rcall(handle, pci::FIND_DEVICE,
+    let (msg_type, address, _) = rcall(&handle, pci::FIND_DEVICE,
                                        0x10EC, 0x8139,
                                        None).unwrap();
     if msg_type != pci::ADDRESS {
@@ -25,7 +25,7 @@ fn main() {
     debug_println!("[rtl8139] Found at address: {:08X}", address);
 
     // Read BAR0 to get the I/O address
-    let (_, bar0, _) = rcall(handle, pci::READ_BAR,
+    let (_, bar0, _) = rcall(&handle, pci::READ_BAR,
                              address, 0,
                              Some(pci::BAR)).unwrap();
     let ioaddr = (bar0 & 0xFFFC) as u16;
@@ -41,6 +41,9 @@ fn main() {
     }
 
     debug_println!("[rtl8139] MAC address {}", device.mac_address());
+
+    let result = syscalls::malloc(8192 + 16, 0xFFFF_FFFF);
+    debug_println!("Received: {:?}", result);
 }
 
 fn outportb(ioaddr: u16, value: u8) {

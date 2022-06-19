@@ -100,7 +100,11 @@ direction...
 - [[file:doc/journal/13-return-to-sender.org][13. Return to sender]] where we add the =send_receive= syscall to make
   remote procedure calls more reliable, and start to develop a Virtual
   File System (VFS) with a new =open= syscall.
-- [[file:doc/journal/14-network.org][14. RTL8139 network card]]
+- [[file:doc/journal/14-network.org][14. RTL8139 network card]] where we develop a basic driver for the
+  [[https://wiki.osdev.org/RTL8139][RTL8139]] card, adapting [[https://github.com/vinc/moros/blob/trunk/src/sys/net/rtl8139.rs][the MOROS driver]]. In the process we wrap the
+  =send_receive= system call into an =rcall= remote procedure call,
+  and add frame allocation of consecutive frames for direct memory
+  access.
 
 ** Bibliography
 

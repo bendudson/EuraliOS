@@ -11,7 +11,8 @@
 #![no_main]
 
 use core::arch::asm;
-use euralios_std::{debug_println, syscalls, message::pci};
+use euralios_std::{debug_println, syscalls, message::pci,
+                   syscalls::STDIN};
 use core::fmt;
 
 extern crate alloc;
@@ -206,7 +207,7 @@ fn main() {
 
     // Enter loop waiting for messages
     loop {
-        match syscalls::receive(0) {
+        match syscalls::receive(&STDIN) {
             Ok(message) => {
                 match message {
                     // A character e.g. from keyboard
@@ -229,14 +230,14 @@ fn main() {
                             |&d| d.vendor_id == vendor_id &&
                                 d.device_id == device_id) {
 
-                            syscalls::send(0,
+                            syscalls::send(&STDIN,
                                            syscalls::Message::Short(
                                                pci::ADDRESS,
                                                device.location.address() as u64,
                                                0));
                         } else {
                             // Not found
-                            syscalls::send(0,
+                            syscalls::send(&STDIN,
                                            syscalls::Message::Short(
                                                pci::NOTFOUND,
                                                0xFFFF_FFFF_FFFF_FFFF, 0));
@@ -249,7 +250,7 @@ fn main() {
 
                         if address > 0xFFFF_FFFF || bar_id > 5 {
                             // Out of range
-                            syscalls::send(0,
+                            syscalls::send(&STDIN,
                                            syscalls::Message::Short(
                                                pci::NOTFOUND,
                                                0xFFFF_FFFF_FFFF_FFFF, 0));
@@ -260,7 +261,7 @@ fn main() {
                             PciLocation::from_address(address as u32)
                             .read_register(4 + bar_id as u8);
 
-                        syscalls::send(0,
+                        syscalls::send(&STDIN,
                                        syscalls::Message::Short(
                                            pci::BAR,
                                            bar_value as u64, bar_id));
@@ -271,7 +272,7 @@ fn main() {
             Err(syscalls::SYSCALL_ERROR_RECV_BLOCKING) => {
                 // Waiting for a message
                 // => Send an error message
-                syscalls::send(0,
+                syscalls::send(&STDIN,
                                syscalls::Message::Short(
                                    pci::NOTFOUND,
                                    0, 0));

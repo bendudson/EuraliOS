@@ -1,6 +1,8 @@
 
 use x86_64::{
-    structures::paging::{Page, PageTable, PhysFrame, Size4KiB, FrameAllocator, OffsetPageTable, mapper::MapToError, PageTableFlags, Mapper
+    structures::paging::{Page, PageTable, PhysFrame,
+                         Size4KiB, FrameAllocator, OffsetPageTable,
+                         mapper::MapToError, PageTableFlags, Mapper
     },
     PhysAddr, VirtAddr
 };
@@ -295,15 +297,20 @@ pub fn allocate_active_pages(
 ///
 /// This allows large user heaps to be created without using a lot of memory.
 pub fn create_user_ondemand_pages(
-    level_4_table: *mut PageTable,
+    level_4_physaddr: u64,
     start_addr: VirtAddr,
     size: u64)
     -> Result<(), MapToError<Size4KiB>> {
 
     let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
     let frame_allocator = &mut memory_info.frame_allocator;
+
+    let l4_table: &mut PageTable = unsafe {
+        &mut *(memory_info.physical_memory_offset
+               + level_4_physaddr).as_mut_ptr()};
+
     let mut mapper = unsafe {
-        OffsetPageTable::new(&mut *level_4_table,
+        OffsetPageTable::new(l4_table,
                              memory_info.physical_memory_offset)};
 
     let page_range = {
@@ -319,7 +326,6 @@ pub fn create_user_ondemand_pages(
         .ok_or(MapToError::FrameAllocationFailed)?;
 
     for page in page_range {
-        //println!("Mapping {:?} (going to {:?})", page.start_address(), page_range.end.start_address());
         unsafe {
             mapper.map_to_with_table_flags(page,
                                            frame,
@@ -343,6 +349,109 @@ pub fn create_user_ondemand_pages(
     }
 
     Ok(())
+}
+
+/// Allocates a consecutive set of frames
+///
+/// start_addr      Starting virtual address in page table
+/// num_frames      Number of consecutive frames
+/// max_physaddr    Maximum physical address
+///                 e.g 32-bit addressable 0xFFFF_FFFF
+pub fn create_consecutive_pages(
+    level_4_physaddr: u64,
+    start_addr: VirtAddr,
+    num_frames: u64,
+    max_physaddr: u64)
+    -> Result<PhysAddr, MapToError<Size4KiB>> {
+
+    let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+    let frame_allocator = &mut memory_info.frame_allocator;
+
+    // Try to allocate a consecutive set of frames
+    let start_frame = frame_allocator
+        .allocate_consecutive_frames(num_frames, max_physaddr)
+        .ok_or(MapToError::FrameAllocationFailed)?;
+
+    let frame_range = PhysFrame::range(start_frame, start_frame + num_frames);
+
+    let page_range = {
+        let start_page = Page::containing_address(start_addr);
+        Page::range(start_page, start_page + num_frames)
+    };
+
+    let l4_table: &mut PageTable = unsafe {
+        &mut *(memory_info.physical_memory_offset
+               + level_4_physaddr).as_mut_ptr()};
+
+    let mut mapper = unsafe {
+        OffsetPageTable::new(l4_table,
+                             memory_info.physical_memory_offset)};
+
+    for (page, frame) in page_range.zip(frame_range) {
+        println!("Page: {:?} -> Frame: {:?}", page, frame);
+
+        unsafe {
+            mapper.map_to_with_table_flags(page,
+                                           frame,
+                                           // Writeable by user
+                                           PageTableFlags::PRESENT |
+                                           PageTableFlags::WRITABLE |
+                                           PageTableFlags::USER_ACCESSIBLE,
+                                           // Parent table flags include writable
+                                           PageTableFlags::PRESENT |
+                                           PageTableFlags::WRITABLE |
+                                           PageTableFlags::USER_ACCESSIBLE,
+                                           frame_allocator)?.flush()
+        };
+    }
+    Ok(start_frame.start_address())
+}
+
+///////////////////////////////////////////////////////////////////////
+
+const MEMORY_CHUNK_L4_ENTRY: usize = 5;
+const MEMORY_CHUNK_L3_FIRST: usize = 1;
+const MEMORY_CHUNK_L3_LAST: usize = 511;
+
+/// Find the starting address of an available chunk of pages
+///
+/// Returns the index and virtual address of the start of the chunk
+/// or None if no chunks available
+pub fn find_available_page_chunk(
+    level_4_physaddr: u64
+) -> Option<VirtAddr> {
+
+    let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+
+    let l4_table: &mut PageTable = unsafe {
+        &mut *(memory_info.physical_memory_offset
+               + level_4_physaddr).as_mut_ptr()};
+    let l4_entry = &mut l4_table[MEMORY_CHUNK_L4_ENTRY];
+
+    if l4_entry.is_unused() {
+        // L3 table not allocated -> Create
+        let (_new_table_ptr, new_table_physaddr) = create_empty_pagetable();
+        l4_entry.set_addr(PhysAddr::new(new_table_physaddr),
+                          PageTableFlags::PRESENT |
+                          PageTableFlags::WRITABLE |
+                          PageTableFlags::USER_ACCESSIBLE);
+    }
+    let l3_table: &PageTable = unsafe {
+        & *(memory_info.physical_memory_offset
+            + l4_entry.addr().as_u64()).as_ptr()};
+
+    // Each entry in l3_table from FIRST to LAST inclusive
+    // is a separate chunk
+    for ind in MEMORY_CHUNK_L3_FIRST..=MEMORY_CHUNK_L3_LAST {
+        let entry = &l3_table[ind];
+        if entry.is_unused() {
+            // Found an empty chunk
+            // Convert L4 and L3 index into virtual address
+            return Some(VirtAddr::new(((MEMORY_CHUNK_L4_ENTRY as u64) << 39) |
+                                      (ind << 30) as u64));
+        }
+    }
+    None
 }
 
 ///////////////////////////////////////////////////////////////////////
@@ -638,6 +747,9 @@ pub struct MultilevelBitmapFrameAllocator {
     /// Each entry is 32 bits long, one bit per level-1 entry
     bitmap_virt_addr: [VirtAddr; FRAME_ALLOCATOR_MAX_LEVELS],
 
+    /// Number of frames
+    nframes: u64,
+
     /// Number of levels
     nlevels: usize,
 
@@ -735,6 +847,7 @@ impl MultilevelBitmapFrameAllocator {
 
         MultilevelBitmapFrameAllocator {
             bitmap_virt_addr,
+            nframes,
             nlevels,
             frame_phys_addr: PhysAddr::new(start_addr),
             frame_stack: [0; FRAME_ALLOCATOR_STACK_SIZE],
@@ -791,7 +904,6 @@ impl MultilevelBitmapFrameAllocator {
                     // This chunk still has frames => stop clearing
                     break;
                 }
-
             }
         }
         if self.frame_stack_number == 0 {
@@ -836,6 +948,100 @@ impl MultilevelBitmapFrameAllocator {
     fn deallocate_frame(&mut self, frame: PhysFrame) {
         let frame_number = (frame.start_address() - self.frame_phys_addr) / 4096;
         self.return_frame(frame_number);
+    }
+
+    /// Allocate a consecutive set of frames
+    ///
+    /// num_frames    The number of frames required
+    /// max_address   The maximum physical address in the set
+    ///               e.g. for 32-bit addresses 0xFFFF_FFFF
+    ///
+    /// Returns the number of the first frame, or None
+    /// if a set could not be found.
+    ///
+    /// Brute force search of lowest level bitmap. This is not
+    /// very efficient, and is not intended to be called in
+    /// performance-critical code.
+    fn consecutive_frames(
+        &mut self,
+        needed_frames: u64,
+        max_address: u64
+    ) -> Option<u64> {
+        // Ensure that there is at least one frame in range
+        if max_address < (self.frame_phys_addr.as_u64() + 4095) {
+            return None;
+        }
+
+        // Restrict the number of frames to those under the address limit
+        let max_frames = (max_address + 1 - self.frame_phys_addr.as_u64()) >> 12;
+        let nframes = if max_frames < self.nframes {max_frames} else {self.nframes};
+
+        // Number of 32-bit chunks to search
+        let nchunks = (self.nframes >> 5) + if self.nframes & 31 != 0 {1} else {0};
+
+        // Pointer to lowest level frame bitmap
+        let ptr = self.bitmap_virt_addr[0].as_mut_ptr() as *mut u32;
+
+        let mut count = 0; // How many consecutive frames found so far?
+        for chunk in 0..nchunks {
+            let bitmap = unsafe{*ptr.offset(chunk as isize)};
+
+            for pos in 0..32 {
+                if bitmap & (1 << pos) == 0 {
+                    // Not available
+                    count = 0;
+                } else {
+                    // Available frame
+                    count += 1;
+                    if count == needed_frames {
+                        // Found a consecutive set of frames
+                        let start_frame = (chunk << 5) + pos + 1 - count;
+
+                        // Mark each frame as taken
+                        for frame in start_frame..(start_frame + needed_frames) {
+                            let mut chunk_number = frame;
+
+                            // Clear higher bitmaps if the chunk is empty
+                            for level in 1..self.nlevels {
+                                // Low 5 bits of the chunk at the lower level are the index at this level
+                                let index = chunk_number & 31;
+                                // High bits are the chunk at this level
+                                chunk_number = chunk_number >> 5;
+
+                                let ptr = unsafe{(self.bitmap_virt_addr[level].as_mut_ptr() as *mut u32)
+                                                 .offset(chunk_number as isize)};
+                                let mut bitmap = unsafe{*ptr};
+
+                                bitmap &= !(1 << index); // clear bit
+                                unsafe {core::ptr::write(ptr, bitmap)};
+
+                                if bitmap != 0 {
+                                    // This chunk still has frames => stop clearing
+                                    break;
+                                }
+                            }
+                        }
+                        return Some(start_frame);
+                    }
+                }
+            }
+        }
+        // Not found
+        None
+    }
+
+    /// Allocate a set of consecutive frames
+    fn allocate_consecutive_frames(
+        &mut self,
+        needed_frames: u64,
+        max_address: u64
+    ) -> Option<PhysFrame> {
+        if let Some(frame_number) = self.consecutive_frames(needed_frames, max_address) {
+            // Convert from frame number to physical address
+            return PhysFrame::from_start_address(
+                self.frame_phys_addr + frame_number * 4096).ok();
+        }
+        None
     }
 }
 

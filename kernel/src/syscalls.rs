@@ -32,13 +32,14 @@
 
 // Syscall numbers
 pub const SYSCALL_MASK: u64 = 0xFF;
-pub const SYSCALL_FORK_THREAD: usize = 0;
-pub const SYSCALL_EXIT_THREAD: usize = 1;
-pub const SYSCALL_DEBUG_WRITE: usize = 2;
-pub const SYSCALL_RECEIVE: usize = 3;
-pub const SYSCALL_SEND: usize = 4;
-pub const SYSCALL_SENDRECEIVE: usize = 5;
-pub const SYSCALL_OPEN: usize = 6;
+pub const SYSCALL_FORK_THREAD: u64 = 0;
+pub const SYSCALL_EXIT_THREAD: u64 = 1;
+pub const SYSCALL_DEBUG_WRITE: u64 = 2;
+pub const SYSCALL_RECEIVE: u64 = 3;
+pub const SYSCALL_SEND: u64 = 4;
+pub const SYSCALL_SENDRECEIVE: u64 = 5;
+pub const SYSCALL_OPEN: u64 = 6;
+pub const SYSCALL_MALLOC: u64 = 7;
 
 // Syscall error codes
 pub const SYSCALL_ERROR_SEND_BLOCKING: usize = 1;
@@ -48,6 +49,8 @@ pub const SYSCALL_ERROR_MEMALLOC: usize = 4; // Memory allocation error
 pub const SYSCALL_ERROR_PARAM: usize = 5; // Invalid parameter
 pub const SYSCALL_ERROR_UTF8: usize = 6; // UTF8 conversion error
 pub const SYSCALL_ERROR_NOTFOUND: usize = 7;
+pub const SYSCALL_ERROR_THREAD: usize = 8;
+pub const SYSCALL_ERROR_MEMORY: usize = 9;
 
 // Syscall message control bits
 pub const MESSAGE_LONG: u64 = 2 << 8;
@@ -260,13 +263,14 @@ extern "C" fn dispatch_syscall(context_ptr: *mut Context, syscall_id: u64,
     context.ss = data_selector.0 as usize;
 
     match syscall_id & SYSCALL_MASK {
-        0 => process::fork_current_thread(context),
-        1 => process::exit_current_thread(context),
-        2 => sys_write(arg1 as *const u8, arg2 as usize),
-        3 => sys_receive(context_ptr, arg1),
-        4 => sys_send(context_ptr, syscall_id, arg1, arg2, arg3),
-        5 => sys_send(context_ptr, syscall_id, arg1, arg2, arg3), // sys_sendreceive
-        6 => sys_open(context_ptr, arg1 as *const u8, arg2 as usize),
+        SYSCALL_FORK_THREAD => process::fork_current_thread(context),
+        SYSCALL_EXIT_THREAD => process::exit_current_thread(context),
+        SYSCALL_DEBUG_WRITE => sys_write(arg1 as *const u8, arg2 as usize),
+        SYSCALL_RECEIVE => sys_receive(context_ptr, arg1),
+        SYSCALL_SEND => sys_send(context_ptr, syscall_id, arg1, arg2, arg3),
+        SYSCALL_SENDRECEIVE => sys_send(context_ptr, syscall_id, arg1, arg2, arg3), // sys_sendreceive
+        SYSCALL_OPEN => sys_open(context_ptr, arg1 as *const u8, arg2 as usize),
+        SYSCALL_MALLOC => sys_malloc(context_ptr, arg1, arg2),
         _ => println!("Unknown syscall {:?} {} {} {}",
                       context_ptr, syscall_id, arg1, arg2)
     }
@@ -393,7 +397,7 @@ fn sys_send(
         if let Some(rdv) = thread.rendezvous(handle) {
             match format_message(&mut thread, syscall_id, data1, data2, data3) {
                 Ok(message) => {
-                    let (thread1, thread2) = match (syscall_id & SYSCALL_MASK) as usize {
+                    let (thread1, thread2) = match syscall_id & SYSCALL_MASK {
                         SYSCALL_SEND => rdv.write().send(
                             Some(thread),
                             message),
@@ -467,5 +471,35 @@ fn sys_open(
     } else {
         // Bad utf8 conversion
         context.rax = SYSCALL_ERROR_UTF8;
+    }
+}
+
+/// Allocates a chunk of memory
+///
+/// Returns
+///  - handle in RDI
+///  - starting virtual address in RSI
+///  - starting physical address in RDX
+fn sys_malloc(
+    context_ptr: *mut Context,
+    num_pages: u64,
+    max_physaddr: u64
+) {
+    let context = unsafe {&mut (*context_ptr)};
+
+    match process::new_memory_chunk(
+        num_pages,
+        max_physaddr) {
+        Ok((virtaddr, physaddr)) => {
+            context.rax = 0; // No error
+            context.rdi = virtaddr.as_u64() as usize;
+            context.rsi = physaddr.as_u64() as usize;
+        }
+        Err(code) => {
+            context.rax = code;
+            context.rdi = 0;
+            context.rsi = 0;
+            context.rdx = 0;
+        }
     }
 }

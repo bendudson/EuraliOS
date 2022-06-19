@@ -1,6 +1,6 @@
 use core::arch::asm;
 
-use crate::syscalls;
+use crate::syscalls::{self, CommHandle, SyscallError};
 
 #[derive(Debug)]
 pub enum Message {
@@ -10,12 +10,12 @@ pub enum Message {
 
 impl Message {
     pub fn to_values(&self)
-                 -> Result<(u64, u64, u64, u64), u64> {
+                 -> Result<(u64, u64, u64, u64), SyscallError> {
         match self {
             Message::Short(data1, data2, data3) => {
                 Ok((0, *data1, *data2, *data3))
             },
-            _ => Err(0)
+            _ => Err(SyscallError::new(0))
         }
     }
     pub fn from_values(_ctrl: u64,
@@ -28,12 +28,12 @@ impl Message {
 /// Remote call.
 /// Wrapper around send_receive syscall
 pub fn rcall(
-    handle: u32,
+    handle: &CommHandle,
     data1: u64,
     data2: u64,
     data3: u64,
     expect_rdata1: Option<u64>
-) -> Result<(u64, u64, u64), u64> {
+) -> Result<(u64, u64, u64), SyscallError> {
 
     const MAX_RETRIES: usize = 100;
 
@@ -52,7 +52,7 @@ pub fn rcall(
                 retry += 1;
                 if retry > MAX_RETRIES {
                     // Give up
-                    return Err(syscalls::SYSCALL_ERROR_SEND_BLOCKING as u64);
+                    return Err(syscalls::SYSCALL_ERROR_SEND_BLOCKING);
                 }
 
                 // Delay. Should have a syscall for short delay
@@ -65,12 +65,12 @@ pub fn rcall(
                 if let Some(rd1) = expect_rdata1 {
                     // Filter on first argument
                     if rdata1 != rd1 {
-                        return Err(rdata1);
+                        return Err(SyscallError::new(0));
                     }
                 }
                 return Ok((rdata1, rdata2, rdata3));
             }
-            _ => return Err(0),
+            _ => return Err(SyscallError::new(0)),
         }
     }
 }

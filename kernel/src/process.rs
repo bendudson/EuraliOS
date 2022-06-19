@@ -3,7 +3,7 @@
 //! Create processes, and determine which one to run next
 //!
 
-use x86_64::VirtAddr;
+use x86_64::{VirtAddr, PhysAddr};
 use x86_64::instructions::interrupts;
 use x86_64::structures::paging::PageTableFlags;
 
@@ -437,7 +437,7 @@ pub fn new_user_thread(
 
         // Allocate user heap
         if memory::create_user_ondemand_pages(
-            user_page_table_ptr,
+            user_page_table_physaddr,
             VirtAddr::new(USER_HEAP_START),
             USER_HEAP_SIZE).is_err() {
             return Err("Couldn't allocate on-demand pages");
@@ -704,4 +704,59 @@ pub fn open_path(
     }
     // No thread(?)
     Err(0)
+}
+
+/// Create a new memory chunk
+///
+/// num_pages    - Size of the memory chunk
+/// max_physaddr - If Some() then consecutive frames
+///                are allocated which are all below the
+///                maximum physical address.
+///
+/// Returns either (handle, physaddr) or error code
+pub fn new_memory_chunk(
+    num_pages: u64,
+    max_physaddr: u64
+) -> Result<(VirtAddr, PhysAddr), usize> {
+    // Get the current thread
+    if let Some(thread) = CURRENT_THREAD.read().as_ref() {
+        println!("Thread {} new chunk {} pages",
+                 thread.tid(), num_pages);
+
+        // Virtual address of the available page chunk
+        let start_addr = match memory::find_available_page_chunk(
+            thread.page_table_physaddr) {
+            Some(values) => values,
+            None => return Err(syscalls::SYSCALL_ERROR_MEMORY)
+        };
+
+        if max_physaddr != 0 {
+            // Allocate a consecutive set of frames
+            let physaddr = match memory::create_consecutive_pages(
+                thread.page_table_physaddr,
+                start_addr,
+                num_pages,
+                max_physaddr) {
+                Ok(physaddr) => physaddr,
+                Err(_) => return Err(syscalls::SYSCALL_ERROR_MEMORY)
+            };
+
+            return Ok((start_addr, physaddr));
+        } else {
+            // User doesn't need frames to be consecutive
+            // -> Allocate frames only when actually used
+            if memory::create_user_ondemand_pages(
+                thread.page_table_physaddr,
+                start_addr,
+                num_pages).is_err() {
+                return Err(syscalls::SYSCALL_ERROR_MEMORY);
+            }
+
+            // Note: physical address not returned because
+            //       the frames are not guaranteed to be
+            //       consecutive in physical address.
+            return Ok((start_addr, PhysAddr::new(0)));
+        }
+    }
+    Err(syscalls::SYSCALL_ERROR_THREAD)
 }
