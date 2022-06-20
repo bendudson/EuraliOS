@@ -689,3 +689,62 @@ Trying this out in =rtl8139= with:
   debug_println!("Received: {:?}", result);
 #+end_src
 
+We can now pass this physical address to the Device struct:
+#+begin_src rust
+  let (rx_buffer, rx_buffer_physaddr) =
+    syscalls::malloc(8192 + 16, 0xFFFF_FFFF).unwrap();
+
+  let mut device = Device{ioaddr,
+                          rx_buffer_physaddr:(rx_buffer_physaddr as u32)};
+#+end_src
+
+then in =Device::reset()=:
+#+begin_src rust
+  // Set the receive buffer
+  outportd(self.ioaddr + REG_RX_ADDR, self.rx_buffer_physaddr);
+  // Configure receive buffer
+  outportd(self.ioaddr + REG_RX_CONFIG, 0xf);
+  // Enable receive and transmitter
+  outportb(self.ioaddr + REG_CMD, 0x0C);
+#+end_src
+where we have defined some constants for the registers:
+#+begin_src rust
+  const REG_RX_ADDR: u16 = 0x30;
+  const REG_CMD: u16 = 0x37;
+  const REG_RX_CONFIG: u16 = 0x44;
+#+end_src
+
+Like [[https://github.com/vinc/moros/blob/trunk/src/sys/net/rtl8139.rs#L226][MOROS]] we can now try polling for received packets
+#+begin_src rust
+  impl Device {
+      fn receive_packet(&self) {
+          if inb(self.ioaddr + REG_CMD) & CR_BUFFER_EMPTY
+              == CR_BUFFER_EMPTY {
+                  return; // No packet
+              }
+          debug_println!("Received packet!");
+      }
+  }
+#+end_src
+and in =main()= after resetting the device just keep calling this
+function:
+#+begin_src rust
+loop { device.receive_packet(); }
+#+end_src
+
+To be able to test this we need a way to send packets to
+the QEMU network card. [[https://wiki.qemu.org/Documentation/Networking][QEMU networking]] has several options
+for making the guest operating system accessible to the host
+and outside world, but the easiest seems to be to forward
+a TCP port. In =kernel/Cargo.toml= we can set QEMU arguments
+to forward port 5555 on the host to port 23 on the guest:
+#+begin_src toml
+run-args = ["-nic", "user,model=rtl8139,hostfwd=tcp::5555-:23"]
+#+end_src
+When this is run, as soon as you run on the host something like
+=telnet= or =ssh= and connect to port 5555 e.g.
+#+begin_src bash
+  telnet localhost 5555
+#+end_src
+should keep writing "Received packet!" because we're not
+taking the data out of the buffer yet.
