@@ -80,6 +80,7 @@ pub mod pci {
     // Calls
     pub const FIND_DEVICE: u64 = 256;
     pub const READ_BAR: u64 = 257;
+    pub const ENABLE_BUS_MASTERING: u64 = 258;
 
     // Replies
 

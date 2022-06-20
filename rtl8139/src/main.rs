@@ -4,6 +4,7 @@
 use core::arch::asm;
 use euralios_std::{debug_println,
                    syscalls,
+                   syscalls::MemoryHandle,
                    net::MacAddress,
                    message::rcall,
                    message::pci};
@@ -24,6 +25,10 @@ fn main() {
     }
     debug_println!("[rtl8139] Found at address: {:08X}", address);
 
+    // Enable bus mastering so the card can access main memory
+    syscalls::send(&handle, syscalls::Message::Short(
+        pci::ENABLE_BUS_MASTERING, address, 0)).unwrap();
+
     // Read BAR0 to get the I/O address
     let (_, bar0, _) = rcall(&handle, pci::READ_BAR,
                              address, 0,
@@ -31,12 +36,12 @@ fn main() {
     let ioaddr = (bar0 & 0xFFFC) as u16;
     debug_println!("[rtl8139] BAR0: {:08X}. I/O addr: {:04X}", bar0, ioaddr);
 
-
     // Allocate memory for receive buffer
     let (rx_buffer, rx_buffer_physaddr) =
         syscalls::malloc(8192 + 16, 0xFFFF_FFFF).unwrap();
 
     let mut device = Device{ioaddr,
+                            rx_buffer,
                             rx_buffer_physaddr:(rx_buffer_physaddr as u32)};
 
     match device.reset() {
@@ -53,6 +58,10 @@ fn main() {
         // Check if a packet has been received
 
         let _ = device.receive_packet();
+
+        for _i in 0..10000000 {
+            unsafe{asm!("nop")};
+        }
     }
 }
 
@@ -107,18 +116,24 @@ fn inw(ioaddr: u16) -> u16 {
     value
 }
 
-const REG_RX_ADDR: u16 = 0x30; // 32-bit physical memory address
-const REG_CMD: u16 = 0x37;
-const REG_CAPR: u16 = 0x38;
-const REG_CBR: u16 = 0x3A;
+const REG_RBSTART: u16 = 0x30; // 32-bit physical memory address
+const REG_CMD: u16 = 0x37;  // 8-bit
+const REG_CAPR: u16 = 0x38; // 16-bit
+const REG_CBR: u16 = 0x3A;  // 16-bit
 const REG_IMR: u16 = 0x3C;  // Interrupt Mask Register
+const REG_ISR: u16 = 0x3E;
 const REG_RX_CONFIG: u16 = 0x44;
 const REG_CONFIG_1: u16 = 0x52;
 
+const RX_BUFFER_PAD: u64 = 16;
+
 const CR_BUFFER_EMPTY: u8 = 1;
+
+const ROK: u16 = 0x01;
 
 struct Device {
     ioaddr: u16,
+    rx_buffer: MemoryHandle,
     rx_buffer_physaddr: u32
 }
 
@@ -155,7 +170,7 @@ impl Device {
         }
 
         // Set the receive buffer
-        outportd(self.ioaddr + REG_RX_ADDR, self.rx_buffer_physaddr);
+        outportd(self.ioaddr + REG_RBSTART, self.rx_buffer_physaddr);
 
         // Set Interrupt Mask Register
         outportw(self.ioaddr + 0x3C, 0x0005); // Sets the TOK and ROK bits high
@@ -194,6 +209,24 @@ impl Device {
                 return None
             }
         debug_println!("Received packet!");
+
+        let capr = inw(self.ioaddr + REG_CAPR);
+        let cbr = inw(self.ioaddr + REG_CBR);
+
+        // CAPR starts at 65520 and with the pad it overflows to 0
+        let offset = ((capr as u64) + RX_BUFFER_PAD) & 0xFFFF;
+
+        debug_println!("capr: {}, cbr: {}, offset: {}", capr, cbr, offset);
+
+        let header = unsafe{*((self.rx_buffer.as_u64() + offset) as *const u16)};
+
+        debug_println!("header: {}", header);
+
+        if header & ROK != ROK {
+            debug_println!("    => Packet not ok");
+            outportw(self.ioaddr + REG_CAPR, cbr);
+            return None;
+        }
 
         Some(0)
     }

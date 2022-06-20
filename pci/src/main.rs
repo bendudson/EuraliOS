@@ -71,6 +71,23 @@ impl PciLocation {
         value
     }
 
+    fn write_register(&self, register: u8, value: u32) {
+        let addr = self.address()
+            | ((register as u32) << 2);
+
+        unsafe {
+            asm!("out dx, eax",
+                 in("dx") CONFIG_ADDRESS,
+                 in("eax") addr,
+                 options(nomem, nostack));
+
+            asm!("out dx, eax",
+                 in("dx") CONFIG_DATA,
+                 in("eax") value,
+                 options(nomem, nostack));
+        }
+    }
+
     /// Return the Device which is at this PCI bus location
     /// May return None if there is no device
     fn get_device(&self) -> Option<Device> {
@@ -265,6 +282,16 @@ fn main() {
                                        syscalls::Message::Short(
                                            pci::BAR,
                                            bar_value as u64, bar_id));
+                    }
+                    // Enable bus mastering, allowing a device to use DMA
+                    // https://github.com/vinc/moros/blob/trunk/src/sys/pci.rs#L74
+                    syscalls::Message::Short(
+                        pci::ENABLE_BUS_MASTERING, address, _) => {
+                        let location = PciLocation::from_address(address as u32);
+
+                        // Read the command register (1),
+                        location.write_register(1,
+                                                location.read_register(1) | (1 << 2));
                     }
                     _ => {}
                 }

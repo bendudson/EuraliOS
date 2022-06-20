@@ -19,6 +19,10 @@ pub const STDOUT:CommHandle = CommHandle(1);
 pub struct MemoryHandle(u64);
 
 impl MemoryHandle {
+    /// Get the virtual address of the start of the memory region
+    pub fn as_u64(&self) -> u64 {
+        return self.0;
+    }
     /// Get a reference with lifetime tied to MemoryHandle
     pub unsafe fn as_ref<T>(&self) -> &T {
         & *(self.0 as *const T)
