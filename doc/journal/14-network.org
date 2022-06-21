@@ -683,6 +683,33 @@ fn sys_malloc(
 #+end_src
 which calls the =new_memory_chunk()= function in =process.rs=
 
+** Freeing memory chunks
+
+The =MemoryHandle= object will own a chunk of memory, and
+free it when it is dropped. Syscall 8 is =sys_free=, which
+takes the virtual address of the start of the memory chunk.
+We can then implement =drop()= as:
+#+begin_src rust
+impl Drop for MemoryHandle {
+    fn drop(&mut self) {
+        let error: u64;
+        unsafe {
+            asm!("syscall",
+                 in("rax") SYSCALL_FREE,
+                 in("rdi") self.0, // First argument
+                 lateout("rax") error,
+                 out("rcx") _,
+                 out("r11") _);
+        }
+        if error != 0 {
+            debug_println!("MemoryHandle::drop({:X}) error {}", self.0, error);
+        }
+    }
+}
+#+end_src
+
+** Testing it in RTL8139 driver
+
 Trying this out in =rtl8139= with:
 #+begin_src rust
   let result = syscalls::malloc(8192 + 16, 0xFFFF_FFFF);

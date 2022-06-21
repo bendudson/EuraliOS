@@ -760,3 +760,14 @@ pub fn new_memory_chunk(
     }
     Err(syscalls::SYSCALL_ERROR_THREAD)
 }
+
+/// Free a memory chunk previously allocated with new_memory_chunk
+pub fn free_memory_chunk(
+    address: VirtAddr
+) -> Result<(), usize> {
+    if let Some(thread) = CURRENT_THREAD.read().as_ref() {
+        return memory::free_page_chunk(thread.page_table_physaddr,
+                                       address);
+    }
+    Err(syscalls::SYSCALL_ERROR_THREAD)
+}

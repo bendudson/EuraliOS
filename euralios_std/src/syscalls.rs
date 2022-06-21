@@ -35,8 +35,21 @@ impl MemoryHandle {
 }
 
 impl Drop for MemoryHandle {
+    /// Drop a MemoryHandle by freeing the memory
     fn drop(&mut self) {
-        debug_println!("Drop MemoryHandle {:X}", self.0);
+        let error: u64;
+        unsafe {
+            asm!("syscall",
+                 in("rax") SYSCALL_FREE,
+                 in("rdi") self.0, // First argument
+                 lateout("rax") error,
+                 out("rcx") _,
+                 out("r11") _);
+        }
+
+        if error != 0 {
+            debug_println!("MemoryHandle::drop({:X}) error {}", self.0, error);
+        }
     }
 }
 
@@ -57,11 +70,10 @@ impl SyscallError {
 ///  Ok(thread_id) or Err(error_code)
 ///
 pub fn thread_spawn(func: extern "C" fn() -> ()) -> Result<u64, SyscallError> {
-    let mut tid: u64;
-    let mut errcode: u64;
+    let tid: u64;
+    let errcode: u64;
     unsafe {
-        asm!("mov rax, 0", // fork_current_thread syscall
-             "syscall",
+        asm!("syscall",
              // rax = 0 indicates no error
              "cmp rax, 0",
              "jnz 2f",
@@ -74,9 +86,12 @@ pub fn thread_spawn(func: extern "C" fn() -> ()) -> Result<u64, SyscallError> {
              "syscall",
              // New thread never leaves this asm block
              "2:",
+             in("rax") SYSCALL_FORK_THREAD,
              in("r8") func,
              lateout("rax") errcode,
-             lateout("rdi") tid);
+             lateout("rdi") tid,
+             out("rcx") _,
+             out("r11") _);
     }
     if errcode != 0 {
         return Err(SyscallError(errcode));
@@ -87,8 +102,8 @@ pub fn thread_spawn(func: extern "C" fn() -> ()) -> Result<u64, SyscallError> {
 /// Exit the current thread. Never returns.
 pub fn thread_exit() -> ! {
     unsafe {
-        asm!("mov rax, 1", // exit_current_thread syscall
-             "syscall",
+        asm!("syscall",
+             in("rax") SYSCALL_EXIT_THREAD,
              options(noreturn));
     }
 }
@@ -98,8 +113,8 @@ pub fn receive(handle: &CommHandle) -> Result<Message, SyscallError> {
     let ctrl: u64;
     let (data1, data2, data3): (u64, u64, u64);
     unsafe {
-        asm!("mov rax, 3", // sys_receive
-             "syscall",
+        asm!("syscall",
+             in("rax") SYSCALL_RECEIVE,
              in("rdi") handle.0,
              lateout("rax") ctrl,
              lateout("rdi") data1,
@@ -126,7 +141,7 @@ pub fn send(
     let err: u64;
     unsafe {
         asm!("syscall",
-             in("rax") 4 | ctrl | ((handle.0 as u64) << 32),
+             in("rax") SYSCALL_SEND | ctrl | ((handle.0 as u64) << 32),
              in("rdi") data1,
              in("rsi") data2,
              in("rdx") data3,
@@ -153,7 +168,7 @@ pub fn send_receive(
     let (ret_ctrl, ret_data1, ret_data2, ret_data3): (u64, u64, u64, u64);
     unsafe {
         asm!("syscall",
-             in("rax") 5 | ctrl | ((handle.0 as u64) << 32),
+             in("rax") SYSCALL_SENDRECEIVE | ctrl | ((handle.0 as u64) << 32),
              in("rdi") data1,
              in("rsi") data2,
              in("rdx") data3,
@@ -177,11 +192,11 @@ pub fn open(path: &str) -> Result<CommHandle, SyscallError> {
     let error: u64;
     let handle: u32;
     unsafe {
-        asm!("mov rax, 6", // syscall function
-             "syscall",
+        asm!("syscall",
+             in("rax") SYSCALL_OPEN,
              in("rdi") path.as_ptr(), // First argument
              in("rsi") path.len(), // Second argument
-             out("rax") error,
+             lateout("rax") error,
              lateout("rdi") handle,
              out("rcx") _,
              out("r11") _);
@@ -206,11 +221,11 @@ pub fn malloc(
     let virtaddr: u64;
     let physaddr: u64;
     unsafe {
-        asm!("mov rax, 7", // syscall function
-             "syscall",
+        asm!("syscall",
+             in("rax") SYSCALL_MALLOC,
              in("rdi") num_pages, // First argument
              in("rsi") max_physaddr, // Second argument
-             out("rax") error,
+             lateout("rax") error,
              lateout("rdi") virtaddr,
              lateout("rsi") physaddr,
              out("rcx") _,
@@ -232,6 +247,8 @@ pub const SYSCALL_RECEIVE: u64 = 3;
 pub const SYSCALL_SEND: u64 = 4;
 pub const SYSCALL_SENDRECEIVE: u64 = 5;
 pub const SYSCALL_OPEN: u64 = 6;
+pub const SYSCALL_MALLOC: u64 = 7;
+pub const SYSCALL_FREE: u64 = 8;
 
 // Syscall error codes
 pub const SYSCALL_ERROR_SEND_BLOCKING: SyscallError = SyscallError(1);

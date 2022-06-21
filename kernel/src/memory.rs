@@ -13,6 +13,7 @@ const THREAD_STACK_PAGE_INDEX: [u8; 3] = [5, 0, 0];
 
 use crate::println;
 use crate::allocator;
+use crate::syscalls;
 use bootloader::BootInfo;
 
 use core::arch::asm;
@@ -454,7 +455,93 @@ pub fn find_available_page_chunk(
     None
 }
 
+/// Free a memory chunk, releasing the pages back to the frame allocator
+pub fn free_page_chunk(
+    level_4_physaddr: u64,
+    address: VirtAddr
+) -> Result<(), usize> {
+
+    let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+
+    // Check that the p4 and p3 index is in range
+    if usize::from(address.p4_index()) != MEMORY_CHUNK_L4_ENTRY {
+        // Incorrect P4 entry
+        return Err(syscalls::SYSCALL_ERROR_PARAM);
+    }
+    if (usize::from(address.p3_index()) < MEMORY_CHUNK_L3_FIRST) ||
+        (usize::from(address.p3_index()) > MEMORY_CHUNK_L3_LAST) {
+            // P3 out of range
+            return Err(syscalls::SYSCALL_ERROR_PARAM);
+        }
+
+    // Follow page table addresses
+    let l4_table: &PageTable = unsafe {
+        & *(memory_info.physical_memory_offset
+            + level_4_physaddr).as_mut_ptr()};
+    let l4_entry = &l4_table[MEMORY_CHUNK_L4_ENTRY];
+
+    if l4_entry.is_unused() {
+        // No chunks allocated
+        return Err(syscalls::SYSCALL_ERROR_MEMORY);
+    }
+
+    let l3_table: &mut PageTable = unsafe {
+        &mut *(memory_info.physical_memory_offset
+               + l4_entry.addr().as_u64()).as_mut_ptr()};
+    let l3_entry = &mut l3_table[address.p3_index()];
+
+    if l3_entry.is_unused() {
+        // Not allocated => Double free?
+        return Err(syscalls::SYSCALL_ERROR_DOUBLEFREE);
+    }
+
+    // Free page tables and pages recursively
+    free_pages_rec(memory_info.physical_memory_offset,
+                   &mut memory_info.frame_allocator,
+                   l3_entry.addr(),
+                   2); // Level 2
+
+    // Mark entry as empty
+    l3_entry.set_unused();
+
+    Ok(())
+}
+
 ///////////////////////////////////////////////////////////////////////
+
+/// Recursively free all pages and page tables, including the page
+/// table at the given table_physaddr.
+fn free_pages_rec(physical_memory_offset: VirtAddr,
+                  frame_allocator: &mut MultilevelBitmapFrameAllocator,
+                  table_physaddr: PhysAddr,
+                  level: u16) {
+    let table = unsafe{&mut *(physical_memory_offset
+                              + table_physaddr.as_u64())
+                       .as_mut_ptr() as &mut PageTable};
+    for entry in table.iter() {
+        if !entry.is_unused() {
+            if level == 1 || entry.flags().contains(PageTableFlags::HUGE_PAGE) {
+                // Maps a frame, not a page table
+                if entry.flags().contains(PageTableFlags::PRESENT |
+                                          PageTableFlags::WRITABLE |
+                                          PageTableFlags::USER_ACCESSIBLE)  {
+                    // A user frame => deallocate
+                    frame_allocator.deallocate_frame(
+                        entry.frame().unwrap());
+                }
+            } else {
+                // A page table
+                free_pages_rec(physical_memory_offset,
+                               frame_allocator,
+                               entry.addr(),
+                               level - 1);
+            }
+        }
+    }
+    // Free page table
+    frame_allocator.deallocate_frame(
+        PhysFrame::from_start_address(table_physaddr).unwrap());
+}
 
 /// Free all user-accessible pages and the page table frames
 ///
@@ -462,38 +549,6 @@ pub fn find_available_page_chunk(
 ///       Switch to kernel pagetable before calling
 pub fn free_user_pagetables(level_4_physaddr: u64) {
     let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
-
-    fn free_pages_rec(physical_memory_offset: VirtAddr,
-                      frame_allocator: &mut MultilevelBitmapFrameAllocator,
-                      table_physaddr: PhysAddr,
-                      level: u16) {
-        let table = unsafe{&mut *(physical_memory_offset
-                                  + table_physaddr.as_u64())
-                           .as_mut_ptr() as &mut PageTable};
-        for entry in table.iter() {
-            if !entry.is_unused() {
-                if level == 1 || entry.flags().contains(PageTableFlags::HUGE_PAGE) {
-                    // Maps a frame, not a page table
-                    if entry.flags().contains(PageTableFlags::PRESENT |
-                                              PageTableFlags::WRITABLE |
-                                              PageTableFlags::USER_ACCESSIBLE)  {
-                        // A user frame => deallocate
-                        frame_allocator.deallocate_frame(
-                            entry.frame().unwrap());
-                    }
-                } else {
-                    // A page table
-                    free_pages_rec(physical_memory_offset,
-                                   frame_allocator,
-                                   entry.addr(),
-                                   level - 1);
-                }
-            }
-        }
-        // Free page table
-        frame_allocator.deallocate_frame(
-            PhysFrame::from_start_address(table_physaddr).unwrap());
-    }
 
     free_pages_rec(memory_info.physical_memory_offset,
                    &mut memory_info.frame_allocator,

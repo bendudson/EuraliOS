@@ -9,11 +9,13 @@
 //!
 //! 0   fork_current_thread() -> (RAX: errcode, RDI: thread_id)
 //! 1   exit_current_thread() -> !   (does not return)
-//! 2   write(RDI: *const u8, RSI: usize) -> ()
+//! 2   debug_write(RDI: *const u8, RSI: usize) -> ()
 //! 3   receive
 //! 4   send
 //! 5   sendreceive
 //! 6   open(RDI: *const u8, RSI: usize) -> RAX: errcode, RDI: handle
+//! 7   malloc
+//! 8   free
 //!
 //! Potential future syscalls
 //! -------------------------
@@ -40,6 +42,7 @@ pub const SYSCALL_SEND: u64 = 4;
 pub const SYSCALL_SENDRECEIVE: u64 = 5;
 pub const SYSCALL_OPEN: u64 = 6;
 pub const SYSCALL_MALLOC: u64 = 7;
+pub const SYSCALL_FREE: u64 = 8;
 
 // Syscall error codes
 pub const SYSCALL_ERROR_SEND_BLOCKING: usize = 1;
@@ -51,6 +54,7 @@ pub const SYSCALL_ERROR_UTF8: usize = 6; // UTF8 conversion error
 pub const SYSCALL_ERROR_NOTFOUND: usize = 7;
 pub const SYSCALL_ERROR_THREAD: usize = 8;
 pub const SYSCALL_ERROR_MEMORY: usize = 9;
+pub const SYSCALL_ERROR_DOUBLEFREE: usize = 10;
 
 // Syscall message control bits
 pub const MESSAGE_LONG: u64 = 2 << 8;
@@ -65,6 +69,7 @@ const MESSAGE_DATA3_MOVE: u64 = 2 << 12;
 use crate::{print, println};
 use core::arch::asm;
 use core::{slice, str};
+use x86_64::VirtAddr;
 
 use crate::process;
 use crate::gdt;
@@ -265,18 +270,19 @@ extern "C" fn dispatch_syscall(context_ptr: *mut Context, syscall_id: u64,
     match syscall_id & SYSCALL_MASK {
         SYSCALL_FORK_THREAD => process::fork_current_thread(context),
         SYSCALL_EXIT_THREAD => process::exit_current_thread(context),
-        SYSCALL_DEBUG_WRITE => sys_write(arg1 as *const u8, arg2 as usize),
+        SYSCALL_DEBUG_WRITE => sys_debug_write(arg1 as *const u8, arg2 as usize),
         SYSCALL_RECEIVE => sys_receive(context_ptr, arg1),
         SYSCALL_SEND => sys_send(context_ptr, syscall_id, arg1, arg2, arg3),
         SYSCALL_SENDRECEIVE => sys_send(context_ptr, syscall_id, arg1, arg2, arg3), // sys_sendreceive
         SYSCALL_OPEN => sys_open(context_ptr, arg1 as *const u8, arg2 as usize),
         SYSCALL_MALLOC => sys_malloc(context_ptr, arg1, arg2),
+        SYSCALL_FREE => sys_free(context_ptr, arg1),
         _ => println!("Unknown syscall {:?} {} {} {}",
                       context_ptr, syscall_id, arg1, arg2)
     }
 }
 
-fn sys_write(ptr: *const u8, len:usize) {
+fn sys_debug_write(ptr: *const u8, len:usize) {
     // Check all inputs: Does ptr -> ptr+len lie entirely in user address space?
     if len == 0 {
         return;
@@ -500,6 +506,21 @@ fn sys_malloc(
             context.rdi = 0;
             context.rsi = 0;
             context.rdx = 0;
+        }
+    }
+}
+fn sys_free(
+    context_ptr: *mut Context,
+    virtaddr: u64
+) {
+    let context = unsafe {&mut (*context_ptr)};
+
+    match process::free_memory_chunk(VirtAddr::new(virtaddr)) {
+        Ok(()) => {
+            context.rax = 0; // No error
+        }
+        Err(code) => {
+            context.rax = code;
         }
     }
 }
