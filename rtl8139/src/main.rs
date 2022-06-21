@@ -2,12 +2,14 @@
 #![no_main]
 
 use core::arch::asm;
+use core::ptr;
 use euralios_std::{debug_println,
                    syscalls,
                    syscalls::MemoryHandle,
                    net::MacAddress,
                    message::rcall,
                    message::pci};
+use core::{slice, str};
 
 #[no_mangle]
 fn main() {
@@ -203,7 +205,13 @@ impl Device {
     }
 
     /// Read a packet
-    fn receive_packet(&self) -> Option<u64> {
+    ///
+    /// Rx buffer, when not empty, will contain:
+    /// [header            (2 bytes)]
+    /// [length            (2 bytes)]
+    /// [packet   (length - 4 bytes)]
+    /// [crc               (4 bytes)]
+    fn receive_packet(&self) -> Option<MemoryHandle> {
         if inb(self.ioaddr + REG_CMD) & CR_BUFFER_EMPTY
             == CR_BUFFER_EMPTY {
                 return None
@@ -216,18 +224,34 @@ impl Device {
         // CAPR starts at 65520 and with the pad it overflows to 0
         let offset = ((capr as u64) + RX_BUFFER_PAD) & 0xFFFF;
 
-        debug_println!("capr: {}, cbr: {}, offset: {}", capr, cbr, offset);
-
         let header = unsafe{*((self.rx_buffer.as_u64() + offset) as *const u16)};
-
-        debug_println!("header: {}", header);
-
         if header & ROK != ROK {
             debug_println!("    => Packet not ok");
             outportw(self.ioaddr + REG_CAPR, cbr);
             return None;
         }
 
-        Some(0)
+        // Length of the packet
+        let length = unsafe{*((self.rx_buffer.as_u64() + offset + 2) as *const u16)};
+
+        // Receive buffer, including header (u16), length (u16) and crc (u32)
+        let src_data = (self.rx_buffer.as_u64() + offset) as *const u8;
+
+        // Copy data into a separate memory chunk which can be
+        // sent to other processes. Use malloc syscall to get a MemoryHandle.
+        let (mem_handle, _) = syscalls::malloc((length + 4) as u64, 0).ok()?;
+
+        let dest_data = mem_handle.as_u64() as *mut u8;
+        unsafe{
+            ptr::copy_nonoverlapping(src_data, dest_data,
+                                     (length + 4) as usize);
+        }
+
+        // Update buffer read pointer
+        let rx_offset = ((offset as u16) + length + 4 + 3) & !3;
+        outportw(self.ioaddr + REG_CAPR,
+                 rx_offset - (RX_BUFFER_PAD as u16));
+
+        Some(mem_handle)
     }
 }
