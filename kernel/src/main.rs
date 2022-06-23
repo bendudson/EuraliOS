@@ -17,6 +17,7 @@ use kernel::process;
 use kernel::vga_buffer;
 use kernel::interrupts;
 use kernel::rendezvous::Rendezvous;
+use kernel::vfs;
 
 entry_point!(kernel_entry);
 
@@ -37,23 +38,30 @@ fn kernel_thread_main() {
                 vga_rz.clone()
             ]),
             io_privileges: true,
-            mounts: Arc::new(RwLock::new(Vec::new()))
+            mounts: vfs::VFS::new()
         });
+
+    // New input for the rtl8139 driver
+    let rtl_input = Arc::new(RwLock::new(Rendezvous::Empty));
+
+    // Create a Virtual File System
+    let vfs = vfs::VFS::from([
+        // A VFS path to the PCI input
+        (String::from("/pci"), pci_input),
+        (String::from("/dev/nic"), rtl_input.clone())
+    ].to_vec());
 
     process::new_user_thread(
         include_bytes!("../../user/rtl8139"),
         process::Params{
             handles: Vec::from([
-                // New input (not shared with anything else)
-                Arc::new(RwLock::new(Rendezvous::Empty)),
+                // Input which is in the VFS
+                rtl_input,
                 // VGA output
                 vga_rz
             ]),
             io_privileges: true,
-            mounts: Arc::new(RwLock::new(Vec::from([
-                // A VFS path to the PCI input
-                (String::from("/pci"), pci_input)
-            ])))
+            mounts: vfs
         });
 
     kernel::hlt_loop();

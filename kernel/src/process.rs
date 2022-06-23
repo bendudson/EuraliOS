@@ -21,6 +21,7 @@ use crate::gdt;
 use crate::memory;
 use crate::syscalls;
 use crate::rendezvous::{Rendezvous, MessageData};
+use crate::vfs;
 
 use object::{Object, ObjectSegment};
 
@@ -74,7 +75,7 @@ struct Process {
     handles: Vec<Option<Arc<RwLock<Rendezvous>>>>,
 
     /// Paths to handlers which can be open'ed
-    mounts: Arc<RwLock<Vec<(String, Arc<RwLock<Rendezvous>>)>>>
+    mounts: vfs::VFS
 }
 
 impl Drop for Process {
@@ -410,7 +411,7 @@ pub fn new_kernel_thread(function: fn()->(), mut handles: Vec<Arc<RwLock<Rendezv
                 handles:handles.drain(..)
                     .map(|h| Some(h)).collect(),
                 // Empty set of mount paths
-                mounts: Arc::new(RwLock::new(Vec::new()))
+                mounts: vfs::VFS::new()
             })),
             page_table_physaddr: 0, // Don't need to switch PT
             kernel_stack,
@@ -478,7 +479,7 @@ fn with_pagetable<F, R>(page_table_physaddr: u64, func: F) -> R where
 pub struct Params {
     pub handles: Vec<Arc<RwLock<Rendezvous>>>,
     pub io_privileges: bool,
-    pub mounts: Arc<RwLock<Vec<(String, Arc<RwLock<Rendezvous>>)>>>
+    pub mounts: vfs::VFS
 }
 
 pub fn new_user_thread(
@@ -750,15 +751,7 @@ pub fn open_path(
 
         let mut process = current_thread.process.write();
 
-        let option_rv = if let Some((_mount, rv)) =
-            process.mounts.read().iter().find(
-                |&(mount, _rv)| mount == path) {
-                Some(rv.clone())
-            } else {
-                None
-            };
-
-        if let Some(rv) = option_rv {
+        if let Some(rv) = process.mounts.open(path) {
             // Found!
             let handle = process.add_handle(rv.clone());
             return Ok(handle);
@@ -835,3 +828,4 @@ pub fn free_memory_chunk(
     }
     Err(syscalls::SYSCALL_ERROR_THREAD)
 }
+
