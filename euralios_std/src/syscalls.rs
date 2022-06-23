@@ -11,6 +11,27 @@ pub struct CommHandle(u32);
 pub const STDIN:CommHandle = CommHandle(0);
 pub const STDOUT:CommHandle = CommHandle(1);
 
+impl CommHandle {
+    pub fn new(handle: u32) -> Self {
+        CommHandle(handle)
+    }
+
+    pub unsafe fn take(&mut self) -> u32 {
+        let handle = self.0;
+        self.0 = 0;
+        handle
+    }
+}
+
+impl Drop for CommHandle {
+    /// Drop a CommHandle by removing the Rendezvous pointer
+    fn drop(&mut self) {
+        if self.0 == 0 {
+            return; // Already taken
+        }
+    }
+}
+
 /// Handle to a chunk of memory that can be
 /// passed to other processes and free'd when dropped
 ///
@@ -19,10 +40,23 @@ pub const STDOUT:CommHandle = CommHandle(1);
 pub struct MemoryHandle(u64);
 
 impl MemoryHandle {
+    pub fn new(virtaddr: u64) -> Self {
+        MemoryHandle(virtaddr)
+    }
+
     /// Get the virtual address of the start of the memory region
     pub fn as_u64(&self) -> u64 {
         return self.0;
     }
+    /// Take the value out of the handle
+    /// Note: When the handle is dropped the memory
+    ///       the memory will not be freed
+    pub unsafe fn take(&mut self) -> u64 {
+        let handle = self.0;
+        self.0 = 0;
+        handle
+    }
+
     /// Get a reference with lifetime tied to MemoryHandle
     pub unsafe fn as_ref<T>(&self) -> &T {
         & *(self.0 as *const T)
@@ -37,6 +71,9 @@ impl MemoryHandle {
 impl Drop for MemoryHandle {
     /// Drop a MemoryHandle by freeing the memory
     fn drop(&mut self) {
+        if self.0 == 0 {
+            return; // Already taken
+        }
         let error: u64;
         unsafe {
             asm!("syscall",
@@ -60,6 +97,9 @@ pub struct SyscallError(u64);
 impl SyscallError {
     pub fn new(value: u64) -> SyscallError {
         SyscallError(value)
+    }
+    pub fn as_u64(&self) -> u64 {
+        self.0
     }
 }
 
@@ -133,7 +173,7 @@ pub fn receive(handle: &CommHandle) -> Result<Message, SyscallError> {
 /// Send a message and wait for it to be received
 pub fn send(
     handle: &CommHandle,
-    message: Message
+    mut message: Message
 ) -> Result<(), SyscallError> {
 
     let (ctrl, data1, data2, data3) = message.to_values()?;
@@ -158,7 +198,7 @@ pub fn send(
 /// Send a message and wait for a message back from the same thread
 pub fn send_receive(
     handle: &CommHandle,
-    message: Message
+    mut message: Message
 ) -> Result<Message, SyscallError> {
 
     // Convert the message to register values
@@ -217,7 +257,6 @@ pub fn malloc(
         if (num_bytes & 4095) != 0 {1} else {0};
 
     let error: u64;
-    let handle: u16;
     let virtaddr: u64;
     let physaddr: u64;
     unsafe {

@@ -55,16 +55,23 @@ pub const SYSCALL_ERROR_NOTFOUND: usize = 7;
 pub const SYSCALL_ERROR_THREAD: usize = 8;
 pub const SYSCALL_ERROR_MEMORY: usize = 9;
 pub const SYSCALL_ERROR_DOUBLEFREE: usize = 10;
+pub const SYSCALL_ERROR_NOMEMSLOTS: usize = 11; // No memory chunk slots
 
 // Syscall message control bits
-pub const MESSAGE_LONG: u64 = 2 << 8;
-pub const MESSAGE_DATA2_RDV: u64 = 2 << 9;
-const MESSAGE_DATA2_TYPE: u64 = MESSAGE_DATA2_RDV; // Bit mask
-const MESSAGE_DATA2_MOVE: u64 = 2 << 10;
+pub const MESSAGE_LONG: u64 = 1 << 8;
+pub const MESSAGE_DATA2_RDV: u64 = 1 << 9;
+pub const MESSAGE_DATA2_MEM: u64 = 2 << 9;
+pub const MESSAGE_DATA2_ERR: u64 = 3 << 9;
 
-pub const MESSAGE_DATA3_RDV: u64 = 2 << 11;
-const MESSAGE_DATA3_TYPE: u64 = MESSAGE_DATA3_RDV; // Bit mask
-const MESSAGE_DATA3_MOVE: u64 = 2 << 12;
+const MESSAGE_DATA2_TYPE: u64 =
+    MESSAGE_DATA2_RDV | MESSAGE_DATA2_MEM | MESSAGE_DATA2_ERR; // Bit mask
+
+pub const MESSAGE_DATA3_RDV: u64 = 1 << 11;
+pub const MESSAGE_DATA3_MEM: u64 = 2 << 11;
+pub const MESSAGE_DATA3_ERR: u64 = 3 << 11;
+
+const MESSAGE_DATA3_TYPE: u64 =
+    MESSAGE_DATA3_RDV | MESSAGE_DATA3_MEM | MESSAGE_DATA3_ERR; // Bit mask
 
 use crate::{print, println};
 use core::arch::asm;
@@ -334,7 +341,12 @@ fn sys_receive(context_ptr: *mut Context, handle: u64) {
     }
 }
 
-
+/// Take data passed via syscall and convert to
+/// a kernel Message object.
+///
+/// If the user passed rendezvous or memory handles then these are
+/// removed from the process and stored in the Message
+///
 fn format_message(
     thread: &mut process::Thread,
     syscall_id: u64,
@@ -350,38 +362,62 @@ fn format_message(
         // Long message
         let message = Message::Long(
             data1,
-            if syscall_id & MESSAGE_DATA2_TYPE == MESSAGE_DATA2_RDV {
-                // Moving or copying a handle
-                // First copy, then drop if message is valid
-                if let Some(rdv) = thread.rendezvous(data2) {
-                    MessageData::Rendezvous(rdv)
-                } else {
-                    // Invalid handle
-                    return Err(SYSCALL_ERROR_INVALID_HANDLE);
+            match syscall_id & MESSAGE_DATA2_TYPE {
+                MESSAGE_DATA2_RDV => {
+                    // Moving or copying a handle
+                    // First copy, then drop if message is valid
+                    if let Some(rdv) = thread.rendezvous(data2) {
+                        MessageData::Rendezvous(rdv)
+                    } else {
+                        // Invalid handle
+                        return Err(SYSCALL_ERROR_INVALID_HANDLE);
+                    }
                 }
-            } else {
-                MessageData::Value(data2)
+                MESSAGE_DATA2_MEM => {
+                    // Memory handle
+                    let (physaddr, level) = thread.memory_chunk(
+                        VirtAddr::new(data2))?;
+                    MessageData::Memory(physaddr)
+                }
+                _ => MessageData::Value(data2)
             },
-            if syscall_id & MESSAGE_DATA3_TYPE == MESSAGE_DATA3_RDV {
-                if let Some(rdv) = thread.rendezvous(data3) {
-                    MessageData::Rendezvous(rdv)
-                } else {
-                    // Invalid handle.
-                    // If we moved data2 we would have to put it back here
-                    return Err(SYSCALL_ERROR_INVALID_HANDLE);
+            match syscall_id & MESSAGE_DATA3_TYPE {
+                MESSAGE_DATA3_RDV => {
+                    if let Some(rdv) = thread.rendezvous(data3) {
+                        MessageData::Rendezvous(rdv)
+                    } else {
+                        // Invalid handle.
+                        // If we moved data2 we would have to put it back here
+                        return Err(SYSCALL_ERROR_INVALID_HANDLE);
+                    }
                 }
-            } else {
-                MessageData::Value(data3)
+                MESSAGE_DATA3_MEM => {
+                    // Memory handle
+                    let (physaddr, level) = thread.memory_chunk(
+                        VirtAddr::new(data3))?;
+                    MessageData::Memory(physaddr)
+                }
+                _ => MessageData::Value(data3)
             });
         // Message is valid => Remove handles being moved
-        if (syscall_id & MESSAGE_DATA2_TYPE == MESSAGE_DATA2_RDV) &&
-            (syscall_id & MESSAGE_DATA2_MOVE != 0) {
+        match syscall_id & MESSAGE_DATA2_TYPE {
+            MESSAGE_DATA2_RDV => {
                 let _ = thread.take_rendezvous(data2);
             }
-        if (syscall_id & MESSAGE_DATA3_TYPE == MESSAGE_DATA3_RDV) &&
-            (syscall_id & MESSAGE_DATA3_MOVE != 0) {
+            MESSAGE_DATA2_MEM => {
+                let _ = thread.take_memory_chunk(VirtAddr::new(data2));
+            }
+            _ => {}
+        }
+        match syscall_id & MESSAGE_DATA3_TYPE {
+            MESSAGE_DATA3_RDV => {
                 let _ = thread.take_rendezvous(data3);
             }
+            MESSAGE_DATA3_MEM => {
+                let _ = thread.take_memory_chunk(VirtAddr::new(data3));
+            }
+            _ => {}
+        }
         Ok(message)
     }
 }

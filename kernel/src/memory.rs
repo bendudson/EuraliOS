@@ -460,8 +460,29 @@ pub fn free_page_chunk(
     level_4_physaddr: u64,
     address: VirtAddr
 ) -> Result<(), usize> {
-
     let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+
+    // Remove from page table, get address of l3 entry
+    let (physaddr, level) = get_page_chunk(level_4_physaddr, address, true)?;
+
+    // Free page tables and pages recursively
+    free_pages_rec(memory_info.physical_memory_offset,
+                   &mut memory_info.frame_allocator,
+                   physaddr,
+                   level); // Page table level
+    Ok(())
+}
+
+/// Remove a page chunk from a page table
+/// Doesn't free any of the pages
+///
+/// Returns physical address and level of the page table that it points to
+pub fn get_page_chunk(
+    level_4_physaddr: u64,
+    address: VirtAddr,
+    take: bool
+) -> Result<(PhysAddr, u16), usize> {
+        let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
 
     // Check that the p4 and p3 index is in range
     if usize::from(address.p4_index()) != MEMORY_CHUNK_L4_ENTRY {
@@ -495,16 +516,59 @@ pub fn free_page_chunk(
         return Err(syscalls::SYSCALL_ERROR_DOUBLEFREE);
     }
 
-    // Free page tables and pages recursively
-    free_pages_rec(memory_info.physical_memory_offset,
-                   &mut memory_info.frame_allocator,
-                   l3_entry.addr(),
-                   2); // Level 2
+    let physaddr = l3_entry.addr();
 
-    // Mark entry as empty
-    l3_entry.set_unused();
+    if take {
+        // Mark entry as empty
+        l3_entry.set_unused();
+    }
 
-    Ok(())
+    // Return address of level 2 page table
+    Ok((physaddr, 2))
+}
+
+/// Finds an available page chunk entry, stores the physical address
+/// in the page table and returns the virtual address.
+pub fn put_page_chunk(
+    level_4_physaddr: u64,
+    physaddr: PhysAddr
+) -> Result<VirtAddr, usize> {
+    let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+
+    let l4_table: &mut PageTable = unsafe {
+        &mut *(memory_info.physical_memory_offset
+               + level_4_physaddr).as_mut_ptr()};
+    let l4_entry = &mut l4_table[MEMORY_CHUNK_L4_ENTRY];
+
+    if l4_entry.is_unused() {
+        // L3 table not allocated -> Create
+        let (_new_table_ptr, new_table_physaddr) = create_empty_pagetable();
+        l4_entry.set_addr(PhysAddr::new(new_table_physaddr),
+                          PageTableFlags::PRESENT |
+                          PageTableFlags::WRITABLE |
+                          PageTableFlags::USER_ACCESSIBLE);
+    }
+    let l3_table: &mut PageTable = unsafe {
+        &mut *(memory_info.physical_memory_offset
+               + l4_entry.addr().as_u64()).as_mut_ptr()};
+
+    // Each entry in l3_table from FIRST to LAST inclusive
+    // is a separate chunk
+    for ind in MEMORY_CHUNK_L3_FIRST..=MEMORY_CHUNK_L3_LAST {
+        let entry = &mut l3_table[ind];
+        if entry.is_unused() {
+            // Found an empty chunk
+            entry.set_addr(physaddr,
+                           PageTableFlags::PRESENT |
+                           PageTableFlags::WRITABLE |
+                           PageTableFlags::USER_ACCESSIBLE);
+
+            // Convert L4 and L3 index into virtual address
+            return Ok(VirtAddr::new(((MEMORY_CHUNK_L4_ENTRY as u64) << 39) |
+                                    (ind << 30) as u64));
+        }
+    }
+    Err(syscalls::SYSCALL_ERROR_NOMEMSLOTS)
 }
 
 ///////////////////////////////////////////////////////////////////////
@@ -513,10 +577,18 @@ pub fn free_page_chunk(
 /// table at the given table_physaddr.
 fn free_pages_rec(physical_memory_offset: VirtAddr,
                   frame_allocator: &mut MultilevelBitmapFrameAllocator,
-                  table_physaddr: PhysAddr,
+                  physaddr: PhysAddr,
                   level: u16) {
+
+    if level == 0 {
+        // A frame, not a table
+        frame_allocator.deallocate_frame(
+            PhysFrame::containing_address(physaddr));
+        return;
+    }
+
     let table = unsafe{&mut *(physical_memory_offset
-                              + table_physaddr.as_u64())
+                              + physaddr.as_u64())
                        .as_mut_ptr() as &mut PageTable};
     for entry in table.iter() {
         if !entry.is_unused() {
@@ -540,7 +612,7 @@ fn free_pages_rec(physical_memory_offset: VirtAddr,
     }
     // Free page table
     frame_allocator.deallocate_frame(
-        PhysFrame::from_start_address(table_physaddr).unwrap());
+        PhysFrame::from_start_address(physaddr).unwrap());
 }
 
 /// Free all user-accessible pages and the page table frames

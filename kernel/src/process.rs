@@ -207,6 +207,20 @@ impl Thread {
                                         syscalls:: MESSAGE_LONG) as usize;
                         self.give_rendezvous(rdv)
                     }
+                    MessageData::Memory(physaddr) => {
+                        match self.give_memory_chunk(physaddr) {
+                            Ok(virtaddr) => {
+                                context.rax |= (syscalls::MESSAGE_DATA2_MEM |
+                                                syscalls:: MESSAGE_LONG) as usize;
+                                virtaddr.as_u64()
+                            }
+                            Err(error_code) => {
+                                context.rax |= (syscalls::MESSAGE_DATA2_ERR |
+                                                syscalls:: MESSAGE_LONG) as usize;
+                                error_code as u64
+                            }
+                        }
+                    }
                 } as usize;
 
                 context.rdx = match data3 {
@@ -215,6 +229,20 @@ impl Thread {
                         context.rax |= (syscalls::MESSAGE_DATA3_RDV |
                                         syscalls::MESSAGE_LONG) as usize;
                         self.give_rendezvous(rdv)
+                    }
+                    MessageData::Memory(physaddr) => {
+                        match self.give_memory_chunk(physaddr) {
+                            Ok(virtaddr) => {
+                                context.rax |= (syscalls::MESSAGE_DATA3_MEM |
+                                                syscalls:: MESSAGE_LONG) as usize;
+                                virtaddr.as_u64()
+                            }
+                            Err(error_code) => {
+                                context.rax |= (syscalls::MESSAGE_DATA3_ERR |
+                                                syscalls:: MESSAGE_LONG) as usize;
+                                error_code as u64
+                            }
+                        }
                     }
                 } as usize;
             }
@@ -252,6 +280,42 @@ impl Thread {
         // All full => Add new handle
         handles.push(Some(rendezvous));
         (handles.len() - 1) as u64
+    }
+
+    /// Get the physical address and page table level of the memory
+    /// chunk containing the given virtual address
+    pub fn memory_chunk(
+        &self,
+        address: VirtAddr
+    ) -> Result<(PhysAddr, u16), usize> {
+        memory::get_page_chunk(
+            self.page_table_physaddr,
+            address,
+            false) // false => Don't remove from pagetable
+    }
+
+    /// Remove a memory chunk from this thread's page table which
+    /// contains the given virtual address.
+    ///
+    /// Note: Doesn't free the frames or pagetables
+    pub fn take_memory_chunk(
+        &self,
+        address: VirtAddr
+    ) -> Result<(PhysAddr, u16), usize> {
+        memory::get_page_chunk(
+            self.page_table_physaddr,
+            address,
+            true) // true => Remove from pagetable
+    }
+
+    /// Add a memory chunk to this thread's page table
+    pub fn give_memory_chunk(
+        &self,
+        physaddr: PhysAddr
+    ) -> Result<VirtAddr, usize> {
+        memory::put_page_chunk(
+            self.page_table_physaddr,
+            physaddr)
     }
 }
 
