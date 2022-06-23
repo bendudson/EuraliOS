@@ -7,8 +7,10 @@ use euralios_std::{debug_println,
                    syscalls,
                    syscalls::MemoryHandle,
                    net::MacAddress,
-                   message::rcall,
-                   message::pci};
+                   message::{self, rcall, pci, MessageData},
+                   ports::{outportb, outportw, outportd,
+                           inb, inw}};
+
 use core::{slice, str};
 
 #[no_mangle]
@@ -65,57 +67,6 @@ fn main() {
             unsafe{asm!("nop")};
         }
     }
-}
-
-fn outportb(ioaddr: u16, value: u8) {
-    unsafe {
-        asm!("out dx, al",
-             in("dx") ioaddr,
-             in("al") value,
-             options(nomem, nostack));
-    }
-}
-
-/// Write a word (16 bits) to a port
-fn outportw(ioaddr: u16, value: u16) {
-    unsafe {
-        asm!("out dx, ax",
-             in("dx") ioaddr,
-             in("ax") value,
-             options(nomem, nostack));
-    }
-}
-
-/// Write a double word (32 bits) to a port
-fn outportd(ioaddr: u16, value: u32) {
-    unsafe {
-        asm!("out dx, eax",
-             in("dx") ioaddr,
-             in("eax") value,
-             options(nomem, nostack));
-    }
-}
-
-fn inb(ioaddr: u16) -> u8 {
-    let value: u8;
-    unsafe {
-        asm!("in al, dx",
-             in("dx") ioaddr,
-             lateout("al") value,
-             options(nomem, nostack));
-    }
-    value
-}
-
-fn inw(ioaddr: u16) -> u16 {
-    let value: u16;
-    unsafe {
-        asm!("in ax, dx",
-             in("dx") ioaddr,
-             lateout("ax") value,
-             options(nomem, nostack));
-    }
-    value
 }
 
 const REG_RBSTART: u16 = 0x30; // 32-bit physical memory address
