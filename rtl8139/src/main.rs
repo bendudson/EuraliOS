@@ -4,8 +4,7 @@
 use core::arch::asm;
 use core::ptr;
 use euralios_std::{debug_println,
-                   syscalls,
-                   syscalls::MemoryHandle,
+                   syscalls::{self, MemoryHandle, STDIN},
                    net::MacAddress,
                    message::{self, rcall, pci, MessageData},
                    ports::{outportb, outportw, outportd,
@@ -40,13 +39,24 @@ fn main() {
     let ioaddr = (bar0 & 0xFFFC) as u16;
     debug_println!("[rtl8139] BAR0: {:08X}. I/O addr: {:04X}", bar0, ioaddr);
 
-    // Allocate memory for receive buffer
-    let (rx_buffer, rx_buffer_physaddr) =
-        syscalls::malloc(8192 + 16, 0xFFFF_FFFF).unwrap();
+    let mut device = {
+        // Allocate memory for receive buffer
+        let (rx_buffer, rx_buffer_physaddr) =
+            syscalls::malloc(8192 + 16, 0xFFFF_FFFF).unwrap();
 
-    let mut device = Device{ioaddr,
-                            rx_buffer,
-                            rx_buffer_physaddr:(rx_buffer_physaddr as u32)};
+        // Allocate transmit buffers
+        // Initializing arrays in Rust is awkward, so just repeat 4 times
+        let (tx1, tx1_addr) = syscalls::malloc(TX_BUFFER_LEN as u64, 0xFFFF_FFFF).unwrap();
+        let (tx2, tx2_addr) = syscalls::malloc(TX_BUFFER_LEN as u64, 0xFFFF_FFFF).unwrap();
+        let (tx3, tx3_addr) = syscalls::malloc(TX_BUFFER_LEN as u64, 0xFFFF_FFFF).unwrap();
+        let (tx4, tx4_addr) = syscalls::malloc(TX_BUFFER_LEN as u64, 0xFFFF_FFFF).unwrap();
+        Device{ioaddr,
+               rx_buffer,
+               rx_buffer_physaddr: (rx_buffer_physaddr as u32),
+               tx_buffer: [tx1, tx2, tx3, tx4],
+               tx_buffer_physaddr: [tx1_addr as u32, tx2_addr as u32,
+                                    tx3_addr as u32, tx4_addr as u32],
+               active_tx_id: 0}};
 
     match device.reset() {
         Ok(()) => debug_println!("[rtl8139] Device reset OK"),
@@ -58,13 +68,48 @@ fn main() {
 
     debug_println!("[rtl8139] MAC address {}", device.mac_address());
 
+    // Server loop. Note: Single threaded for now
     loop {
-        // Check if a packet has been received
+        match syscalls::receive(&STDIN) {
+            Ok(message) => {
+                match message {
+                    syscalls::Message::Short(
+                        message::READ, _, _) => {
 
-        let _ = device.receive_packet();
-
-        for _i in 0..10000000 {
-            unsafe{asm!("nop")};
+                        // Check if a packet has been received
+                        if let Some((length, handle)) = device.receive_packet() {
+                            // Received data in a MemoryHandle
+                            // -> Send back
+                            syscalls::send(
+                                &STDIN,
+                                syscalls::Message::Long(
+                                    message::DATA, (length as u64).into(), handle.into()));
+                        } else {
+                            // No packet to read
+                            syscalls::send(
+                                &STDIN,
+                                syscalls::Message::Short(
+                                    message::EMPTY, 0, 0));
+                        }
+                    }
+                    syscalls::Message::Long(
+                        message::WRITE,
+                        MessageData::Value(length),
+                        MessageData::MemoryHandle(handle)) => {
+                        device.send_packet(length as u16, handle);
+                    }
+                    _ => {
+                        debug_println!("[rtl8139] unknown message");
+                    }
+                }
+            }
+            Err(code) => {
+                debug_println!("[rtl8139] Receive error {}", code);
+                // Wait and try again
+                for _i in 0..10000 {
+                    unsafe{asm!("nop")};
+                }
+            }
         }
     }
 }
@@ -79,15 +124,27 @@ const REG_RX_CONFIG: u16 = 0x44;
 const REG_CONFIG_1: u16 = 0x52;
 
 const RX_BUFFER_PAD: u64 = 16;
+const TX_BUFFER_LEN: u16 = 1792; // Maximum data length
 
 const CR_BUFFER_EMPTY: u8 = 1;
 
 const ROK: u16 = 0x01;
 
+const TOWN: u16 = 1 << 13; // DMA operation completed
+
 struct Device {
     ioaddr: u16,
+
+    // Receive buffer
     rx_buffer: MemoryHandle,
-    rx_buffer_physaddr: u32
+    rx_buffer_physaddr: u32,
+
+    // Transmit buffers
+    tx_buffer: [MemoryHandle; 4],
+    tx_buffer_physaddr: [u32; 4],
+
+    // The currently active transmit buffer
+    active_tx_id: usize
 }
 
 impl Device {
@@ -162,7 +219,10 @@ impl Device {
     /// [length            (2 bytes)]
     /// [packet   (length - 4 bytes)]
     /// [crc               (4 bytes)]
-    fn receive_packet(&self) -> Option<MemoryHandle> {
+    ///
+    /// The handle returned will not contain the header or length
+    /// so starts with the packet and includes CRC
+    fn receive_packet(&self) -> Option<(u16, MemoryHandle)> {
         if inb(self.ioaddr + REG_CMD) & CR_BUFFER_EMPTY
             == CR_BUFFER_EMPTY {
                 return None
@@ -186,16 +246,16 @@ impl Device {
         let length = unsafe{*((self.rx_buffer.as_u64() + offset + 2) as *const u16)};
 
         // Receive buffer, including header (u16), length (u16) and crc (u32)
-        let src_data = (self.rx_buffer.as_u64() + offset) as *const u8;
+        let src_data = (self.rx_buffer.as_u64() + offset + 4) as *const u8;
 
         // Copy data into a separate memory chunk which can be
         // sent to other processes. Use malloc syscall to get a MemoryHandle.
-        let (mem_handle, _) = syscalls::malloc((length + 4) as u64, 0).ok()?;
+        let (mem_handle, _) = syscalls::malloc(length as u64, 0).ok()?;
 
         let dest_data = mem_handle.as_u64() as *mut u8;
         unsafe{
             ptr::copy_nonoverlapping(src_data, dest_data,
-                                     (length + 4) as usize);
+                                     length as usize);
         }
 
         // Update buffer read pointer
@@ -203,6 +263,43 @@ impl Device {
         outportw(self.ioaddr + REG_CAPR,
                  rx_offset - (RX_BUFFER_PAD as u16));
 
-        Some(mem_handle)
+        Some((length, mem_handle))
+    }
+
+    /// Send a packet to the device
+    ///
+    /// handle should point to memory containing
+    ///   - length : u16
+    ///   - data : [u8; length]
+    ///
+    fn send_packet(&mut self, length: u16, handle: MemoryHandle) -> Result<(), ()> {
+        if length > TX_BUFFER_LEN {
+            debug_println!("Packet too large to transmit: {} bytes", length);
+            return Err(());
+        }
+
+        let cmd_port = (0x10 + (self.active_tx_id << 2)) as u16;
+
+        // Check that the buffer can be written to
+        while inw(self.ioaddr + cmd_port) & TOWN != TOWN {
+            // Wait a bit
+        }
+        // OWN bit now set to 1 => Can write to buffer
+
+        let src_data = handle.as_u64() as *const u8;
+        let dest_data = self.tx_buffer[self.active_tx_id].as_u64() as *mut u8;
+        unsafe{
+            ptr::copy_nonoverlapping(src_data, dest_data,
+                                     length as usize);
+        }
+
+        // Set OWN bit low
+        // Note: length is stored in the first 13 bits;
+        //       the rest of the bits can be set low
+        outportw(self.ioaddr + cmd_port, length & 0x1FFF);
+
+        // Move to the next buffer in round robin
+        self.active_tx_id = (self.active_tx_id + 1) % 4;
+        Ok(())
     }
 }
