@@ -1104,7 +1104,7 @@ impl MultilevelBitmapFrameAllocator {
         let nframes = if max_frames < self.nframes {max_frames} else {self.nframes};
 
         // Number of 32-bit chunks to search
-        let nchunks = (self.nframes >> 5) + if self.nframes & 31 != 0 {1} else {0};
+        let nchunks = (nframes >> 5) + if nframes & 31 != 0 {1} else {0};
 
         // Pointer to lowest level frame bitmap
         let ptr = self.bitmap_virt_addr[0].as_mut_ptr() as *mut u32;
