@@ -1,24 +1,11 @@
-use alloc::{boxed::Box, sync::Arc};
+use alloc::boxed::Box;
 use crate::process::Thread;
 use crate::syscalls;
+use crate::message::Message;
 use core::mem;
-
-use spin::RwLock;
-use x86_64::PhysAddr;
 
 // Standard message types
 pub const MESSAGE_TYPE_CHAR: u64 = 0;
-
-pub enum MessageData {
-    Value(u64),
-    Rendezvous(Arc<RwLock<Rendezvous>>),
-    Memory(PhysAddr)
-}
-
-pub enum Message {
-    Short(u64, u64, u64),
-    Long(u64, MessageData, MessageData),
-}
 
 /// A Rendezvous is in one of three states:
 ///  1. Empty

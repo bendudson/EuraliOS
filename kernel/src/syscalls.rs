@@ -5,15 +5,18 @@
 //! Syscalls
 //! --------
 //!
-//! syscall function selector in RAX
+//! syscall function selector in AL (first 8 bits of RAX)
 //!
 //! 0   fork_current_thread() -> (RAX: errcode, RDI: thread_id)
 //! 1   exit_current_thread() -> !   (does not return)
 //! 2   debug_write(RDI: *const u8, RSI: usize) -> ()
+//!         Used to print to console for development/debugging
 //! 3   receive
 //! 4   send
 //! 5   sendreceive
+//!         Ensures a reply from the receiving thread
 //! 6   open(RDI: *const u8, RSI: usize) -> RAX: errcode, RDI: handle
+//!         Opens a VFS handle for read/write
 //! 7   malloc
 //! 8   free
 //!
@@ -28,9 +31,7 @@
 //! - unique_id() -> u64         Return a unique number
 //!
 //! - mount(str, handle)         Attach a process to a vfs node
-//! - open(str) -> handle        Open a vfs node
 //!
-//! - send_receive(handle, message)  Ensure reply from same thread
 
 // Syscall numbers
 pub const SYSCALL_MASK: u64 = 0xFF;
@@ -57,22 +58,6 @@ pub const SYSCALL_ERROR_MEMORY: usize = 9;
 pub const SYSCALL_ERROR_DOUBLEFREE: usize = 10;
 pub const SYSCALL_ERROR_NOMEMSLOTS: usize = 11; // No memory chunk slots
 
-// Syscall message control bits
-pub const MESSAGE_LONG: u64 = 1 << 8;
-pub const MESSAGE_DATA2_RDV: u64 = 1 << 9;
-pub const MESSAGE_DATA2_MEM: u64 = 2 << 9;
-pub const MESSAGE_DATA2_ERR: u64 = 3 << 9;
-
-const MESSAGE_DATA2_TYPE: u64 =
-    MESSAGE_DATA2_RDV | MESSAGE_DATA2_MEM | MESSAGE_DATA2_ERR; // Bit mask
-
-pub const MESSAGE_DATA3_RDV: u64 = 1 << 11;
-pub const MESSAGE_DATA3_MEM: u64 = 2 << 11;
-pub const MESSAGE_DATA3_ERR: u64 = 3 << 11;
-
-const MESSAGE_DATA3_TYPE: u64 =
-    MESSAGE_DATA3_RDV | MESSAGE_DATA3_MEM | MESSAGE_DATA3_ERR; // Bit mask
-
 use crate::{print, println};
 use core::arch::asm;
 use core::{slice, str};
@@ -81,7 +66,7 @@ use x86_64::VirtAddr;
 use crate::process;
 use crate::gdt;
 use crate::interrupts::{self, Context};
-use crate::rendezvous::{Message, MessageData};
+use crate::message::Message;
 
 // register for address of syscall handler
 const MSR_STAR: usize = 0xc0000081;
@@ -341,87 +326,6 @@ fn sys_receive(context_ptr: *mut Context, handle: u64) {
     }
 }
 
-/// Take data passed via syscall and convert to
-/// a kernel Message object.
-///
-/// If the user passed rendezvous or memory handles then these are
-/// removed from the process and stored in the Message
-///
-fn format_message(
-    thread: &mut process::Thread,
-    syscall_id: u64,
-    data1: u64,
-    data2: u64,
-    data3: u64) -> Result<Message, usize> {
-
-    if syscall_id & MESSAGE_LONG == 0 {
-        Ok(Message::Short(data1,
-                          data2,
-                          data3))
-    } else {
-        // Long message
-        let message = Message::Long(
-            data1,
-            match syscall_id & MESSAGE_DATA2_TYPE {
-                MESSAGE_DATA2_RDV => {
-                    // Moving or copying a handle
-                    // First copy, then drop if message is valid
-                    if let Some(rdv) = thread.rendezvous(data2) {
-                        MessageData::Rendezvous(rdv)
-                    } else {
-                        // Invalid handle
-                        return Err(SYSCALL_ERROR_INVALID_HANDLE);
-                    }
-                }
-                MESSAGE_DATA2_MEM => {
-                    // Memory handle
-                    let (physaddr, level) = thread.memory_chunk(
-                        VirtAddr::new(data2))?;
-                    MessageData::Memory(physaddr)
-                }
-                _ => MessageData::Value(data2)
-            },
-            match syscall_id & MESSAGE_DATA3_TYPE {
-                MESSAGE_DATA3_RDV => {
-                    if let Some(rdv) = thread.rendezvous(data3) {
-                        MessageData::Rendezvous(rdv)
-                    } else {
-                        // Invalid handle.
-                        // If we moved data2 we would have to put it back here
-                        return Err(SYSCALL_ERROR_INVALID_HANDLE);
-                    }
-                }
-                MESSAGE_DATA3_MEM => {
-                    // Memory handle
-                    let (physaddr, level) = thread.memory_chunk(
-                        VirtAddr::new(data3))?;
-                    MessageData::Memory(physaddr)
-                }
-                _ => MessageData::Value(data3)
-            });
-        // Message is valid => Remove handles being moved
-        match syscall_id & MESSAGE_DATA2_TYPE {
-            MESSAGE_DATA2_RDV => {
-                let _ = thread.take_rendezvous(data2);
-            }
-            MESSAGE_DATA2_MEM => {
-                let _ = thread.take_memory_chunk(VirtAddr::new(data2));
-            }
-            _ => {}
-        }
-        match syscall_id & MESSAGE_DATA3_TYPE {
-            MESSAGE_DATA3_RDV => {
-                let _ = thread.take_rendezvous(data3);
-            }
-            MESSAGE_DATA3_MEM => {
-                let _ = thread.take_memory_chunk(VirtAddr::new(data3));
-            }
-            _ => {}
-        }
-        Ok(message)
-    }
-}
-
 /// This handles both syscall_send and syscall_sendreceive
 fn sys_send(
     context_ptr: *mut Context,
@@ -437,7 +341,7 @@ fn sys_send(
 
         // Get the Rendezvous, create Message and call
         if let Some(rdv) = thread.rendezvous(handle) {
-            match format_message(&mut thread, syscall_id, data1, data2, data3) {
+            match Message::from_values(&mut thread, syscall_id, data1, data2, data3) {
                 Ok(message) => {
                     let (thread1, thread2) = match syscall_id & SYSCALL_MASK {
                         SYSCALL_SEND => rdv.write().send(
@@ -545,6 +449,8 @@ fn sys_malloc(
         }
     }
 }
+
+/// Free a memory chunk containing the given virtual address
 fn sys_free(
     context_ptr: *mut Context,
     virtaddr: u64

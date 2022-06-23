@@ -20,7 +20,8 @@ use crate::interrupts::{Context, INTERRUPT_CONTEXT_SIZE};
 use crate::gdt;
 use crate::memory;
 use crate::syscalls;
-use crate::rendezvous::{Rendezvous, MessageData};
+use crate::rendezvous::Rendezvous;
+use crate::message::Message;
 use crate::vfs;
 
 use object::{Object, ObjectSegment};
@@ -63,8 +64,6 @@ pub fn unique_id() -> u64 {
         *counter
     })
 }
-
-use alloc::string::String;
 
 /// Per-process state
 struct Process {
@@ -149,8 +148,6 @@ pub struct Thread {
     context: u64,
 }
 
-use crate::rendezvous::Message;
-
 impl Thread {
     /// Get the Thread ID
     pub fn tid(&self) -> u64 {
@@ -191,63 +188,11 @@ impl Thread {
     pub fn return_message(&self, message: Message) {
         let context = self.context_mut();
 
-        context.rax = 0; // No error
-        match message {
-            Message::Short(data1, data2, data3) => {
-                context.rdi = data1 as usize;
-                context.rsi = data2 as usize;
-                context.rdx = data3 as usize;
-            },
-            Message::Long(data1, data2, data3) => {
-                context.rdi = data1 as usize;
-
-                context.rsi = match data2 {
-                    MessageData::Value(value) => value,
-                    MessageData::Rendezvous(rdv) => {
-                        context.rax |= (syscalls::MESSAGE_DATA2_RDV |
-                                        syscalls:: MESSAGE_LONG) as usize;
-                        self.give_rendezvous(rdv)
-                    }
-                    MessageData::Memory(physaddr) => {
-                        match self.give_memory_chunk(physaddr) {
-                            Ok(virtaddr) => {
-                                context.rax |= (syscalls::MESSAGE_DATA2_MEM |
-                                                syscalls:: MESSAGE_LONG) as usize;
-                                virtaddr.as_u64()
-                            }
-                            Err(error_code) => {
-                                context.rax |= (syscalls::MESSAGE_DATA2_ERR |
-                                                syscalls:: MESSAGE_LONG) as usize;
-                                error_code as u64
-                            }
-                        }
-                    }
-                } as usize;
-
-                context.rdx = match data3 {
-                    MessageData::Value(value) => value,
-                    MessageData::Rendezvous(rdv) => {
-                        context.rax |= (syscalls::MESSAGE_DATA3_RDV |
-                                        syscalls::MESSAGE_LONG) as usize;
-                        self.give_rendezvous(rdv)
-                    }
-                    MessageData::Memory(physaddr) => {
-                        match self.give_memory_chunk(physaddr) {
-                            Ok(virtaddr) => {
-                                context.rax |= (syscalls::MESSAGE_DATA3_MEM |
-                                                syscalls:: MESSAGE_LONG) as usize;
-                                virtaddr.as_u64()
-                            }
-                            Err(error_code) => {
-                                context.rax |= (syscalls::MESSAGE_DATA3_ERR |
-                                                syscalls:: MESSAGE_LONG) as usize;
-                                error_code as u64
-                            }
-                        }
-                    }
-                } as usize;
-            }
-        }
+        let (ctrl, data1, data2, data3) = message.to_values(self);
+        context.rax = ctrl as usize;
+        context.rdi = data1 as usize;
+        context.rsi = data2 as usize;
+        context.rdx = data3 as usize;
     }
 
     /// Get a clone of a rendezvous handle if it exists
@@ -743,7 +688,7 @@ pub fn schedule_next(context_addr: usize) -> usize {
 /// Open the given path
 /// Returns either a Rendezvous handle, or an error
 pub fn open_path(
-    current_context: &mut Context,
+    _current_context: &mut Context,
     path: &str) -> Result<usize, usize> {
 
     if let Some(current_thread) = CURRENT_THREAD.read().as_ref() {

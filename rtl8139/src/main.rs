@@ -10,7 +10,7 @@ use euralios_std::{debug_println,
                    ports::{outportb, outportw, outportd,
                            inb, inw}};
 
-use core::{slice, str};
+use core::str;
 
 #[no_mangle]
 fn main() {

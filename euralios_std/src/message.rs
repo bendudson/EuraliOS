@@ -1,3 +1,8 @@
+//! Message type in EuraliOS standard library
+//!
+//! Interface to syscalls from user code. Note that
+//! the kernel message types are implemented differently.
+
 use core::arch::asm;
 use core::convert::From;
 
@@ -50,6 +55,11 @@ const MESSAGE_DATA3_TYPE: u64 =
     MESSAGE_DATA3_RDV | MESSAGE_DATA3_MEM | MESSAGE_DATA3_ERR; // Bit mask
 
 impl Message {
+    /// Convert a Message to values which can be put into registers
+    /// for a send or send_receive syscall.
+    ///
+    /// This should be the inverse of from_values, and consistent with
+    /// the kernel Message implementation.
     pub fn to_values(
         &mut self
     ) -> Result<(u64, u64, u64, u64), SyscallError> {
@@ -71,7 +81,7 @@ impl Message {
                     }
                     MessageData::Error(syserror) => {
                         ctrl |= MESSAGE_DATA2_ERR; // Error
-                        unsafe{syserror.as_u64()}
+                        syserror.as_u64()
                     }
                 };
                 let value3 = match data3 {
@@ -86,13 +96,19 @@ impl Message {
                     }
                     MessageData::Error(syserror) => {
                         ctrl |= MESSAGE_DATA3_ERR; // Error
-                        unsafe{syserror.as_u64()}
+                        syserror.as_u64()
                     }
                 };
                 Ok((ctrl, *value1, value2, value3))
             }
         }
     }
+
+    /// Reconstruct a Message from register values returned by a
+    /// receive syscall.
+    ///
+    /// This should be the inverse of to_values, and consistent with
+    /// the kernel Message implementation.
     pub fn from_values(
         ctrl: u64,
         data1: u64, data2: u64, data3: u64

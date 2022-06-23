@@ -310,7 +310,8 @@ impl InterruptIndex {
 
 use alloc::sync::Arc;
 use spin::RwLock;
-use crate::rendezvous::{Rendezvous, Message, MESSAGE_TYPE_CHAR};
+use crate::rendezvous::{Rendezvous, MESSAGE_TYPE_CHAR};
+use crate::message::Message;
 
 lazy_static! {
     static ref KEYBOARD_RENDEZVOUS: Arc<RwLock<Rendezvous>> =
