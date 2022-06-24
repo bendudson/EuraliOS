@@ -31,11 +31,10 @@ which is probably enough.
 
 Somewhat arbitrarily we're going to use three registers for the data
 (for now): =rdi=, =rsi= and =rdx=.  We'll make the =Short= message
-type larger in =kernel/src/rendezvous.rs=:
+type larger, and move it into a new file =kernel/src/message.rs=:
 #+begin_src rust
   pub enum Message {
      Short(u64, u64, u64),
-     Long,
   }
 #+end_src
 
@@ -43,7 +42,12 @@ We can also define =Message= in the user library in a new file
 =euralios_std/src/message.rs= with the same code, and add
 =pub mod message;= to =euralios_std/src/lib.rs=. We'll keep the
 definitions separate because the storage of messages in the kernel and
-user code will probably be different in general.
+user code will be different for the long messages.
+
+#+CAPTION: Short message handling
+#+NAME: fig-short-messages
+[[./img/11-01-short-messages.svg]]
+
 
 The library code (=euralios_std/src/syscalls.rs=) is now going to put
 the syscall number and handle into =rax=, and the three values into
@@ -173,6 +177,10 @@ register can contain either a value or a rendezvous handle.
 - 1 bit per register (3 total) to specify copy or move
 - 17 remaining bits for future expansion
 
+
+#+CAPTION: Long message handling
+#+NAME: fig-long-messages
+[[./img/11-02-messages.svg]]
 
 In =rendezvous.rs= we can define the long message as it will be stored
 in the kernel:
