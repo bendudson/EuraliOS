@@ -183,7 +183,7 @@ impl Device {
         outportd(self.ioaddr + REG_RBSTART, self.rx_buffer_physaddr);
 
         // Set Interrupt Mask Register
-        outportw(self.ioaddr + 0x3C, 0x0005); // Sets the TOK and ROK bits high
+        outportw(self.ioaddr + REG_IMR, 0x0005); // Sets the TOK and ROK bits high
 
         // Configure receive buffer
         //

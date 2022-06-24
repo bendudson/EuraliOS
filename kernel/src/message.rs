@@ -51,8 +51,9 @@ impl Message {
     /// Convert a Message into values which will be returned to user
     /// code by the receive or send_receive syscalls.
     ///
-    /// Includes moving Rendezvous and memory chunks in the receiving
-    /// process' handles and page tables.
+    /// Includes moving Rendezvous and memory chunks into the
+    /// receiving process' handles and page tables, calling
+    /// give_rendezvous() and give_memory_chunk() methods.
     ///
     /// Note: No error return type because errors are indicated to the
     ///       receiver in the values.
@@ -113,7 +114,8 @@ impl Message {
     /// a kernel Message object.
     ///
     /// If the user passed rendezvous or memory handles then these are
-    /// removed from the process and stored in the Message
+    /// removed from the process using take_rendezvous() and
+    /// take_memory_chunk() methods, and stored in the Message.
     ///
     pub fn from_values(
         thread: &mut Thread,
