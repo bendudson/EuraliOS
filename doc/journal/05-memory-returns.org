@@ -786,3 +786,17 @@ impl Drop for Process {
 
 Now finally threads and processes return frames to the allocator when
 they exit!
+
+** Appendix: Subdirectories in src/
+
+The memory handling code is going to be a significant part of the
+kernel, so breaking up this 1000+ lines of code into separate files
+might help keep it manageable. According to [[https://stackoverflow.com/a/58936090][this Stackoverflow answer]]
+one way to do this is to have a file =src/memory.rs=, and sub-modules
+as files in =src/memory/=. We can move all frame allocator-related
+code into =src/memory/frame_allocator.rs= and then add near
+the top of =memory.rs=:
+#+begin_src rust
+mod frame_allocator; // In memory/frame_allocator.rs
+use frame_allocator::MultilevelBitmapFrameAllocator;
+#+end_src
