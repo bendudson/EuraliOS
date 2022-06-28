@@ -114,6 +114,7 @@ fn main() {
     }
 }
 
+const REG_TBSTART: u16 = 0x20; // 32-bit
 const REG_RBSTART: u16 = 0x30; // 32-bit physical memory address
 const REG_CMD: u16 = 0x37;  // 8-bit
 const REG_CAPR: u16 = 0x38; // 16-bit
@@ -181,6 +182,11 @@ impl Device {
 
         // Set the receive buffer
         outportd(self.ioaddr + REG_RBSTART, self.rx_buffer_physaddr);
+
+        // Set transmit buffer addresses
+        for (i, addr) in self.tx_buffer_physaddr.iter().enumerate() {
+            outportd(self.ioaddr + REG_TBSTART + 4 * (i as u16), *addr);
+        }
 
         // Set Interrupt Mask Register
         outportw(self.ioaddr + REG_IMR, 0x0005); // Sets the TOK and ROK bits high
