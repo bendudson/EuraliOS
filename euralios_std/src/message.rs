@@ -3,7 +3,6 @@
 //! Interface to syscalls from user code. Note that
 //! the kernel message types are implemented differently.
 
-use core::arch::asm;
 use core::convert::From;
 
 use crate::syscalls::{self, CommHandle, MemoryHandle, SyscallError};
@@ -14,6 +13,21 @@ pub enum MessageData {
     MemoryHandle(MemoryHandle),
     CommHandle(CommHandle),
     Error(SyscallError)
+}
+
+impl MessageData {
+    pub fn value(&self) -> u64 {
+        match self {
+            MessageData::Value(value) => *value,
+            _ => panic!("Expected MessageData::Value")
+        }
+    }
+    pub fn memory(self) -> MemoryHandle {
+        match self {
+            MessageData::MemoryHandle(handle) => handle,
+            _ => panic!("Expected MessageData::Value")
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -151,10 +165,15 @@ impl Message {
 pub fn rcall(
     handle: &CommHandle,
     data1: u64,
-    data2: u64,
-    data3: u64,
+    data2: MessageData,
+    data3: MessageData,
     expect_rdata1: Option<u64>
-) -> Result<(u64, u64, u64), SyscallError> {
+) -> Result<(u64, MessageData, MessageData), (SyscallError, Message)> {
+
+    let mut message = match (data2, data3) {
+        (MessageData::Value(value2), MessageData::Value(value3)) => Message::Short(data1, value2, value3),
+        (data2, data3) => Message::Long(data1, data2, data3)
+    };
 
     const MAX_RETRIES: usize = 100;
 
@@ -163,17 +182,19 @@ pub fn rcall(
         // Try sending
         let result = syscalls::send_receive(
             handle,
-            Message::Short(data1, data2, data3));
+            message);
 
         match result {
-            Err(syscalls::SYSCALL_ERROR_SEND_BLOCKING) |
-            Err(syscalls::SYSCALL_ERROR_RECV_BLOCKING) => {
+            Err((syscalls::SYSCALL_ERROR_SEND_BLOCKING, ret_message)) |
+            Err((syscalls::SYSCALL_ERROR_RECV_BLOCKING, ret_message)) => {
                 // Rendezvous blocked => Wait and try again
+
+                message = ret_message; // Handles may have changed
 
                 retry += 1;
                 if retry > MAX_RETRIES {
                     // Give up
-                    return Err(syscalls::SYSCALL_ERROR_SEND_BLOCKING);
+                    return Err((syscalls::SYSCALL_ERROR_SEND_BLOCKING, message));
                 }
 
                 // Let another thread run
@@ -181,16 +202,27 @@ pub fn rcall(
 
                 continue; // Go around for another try
             }
+            Err(err_message) => {
+                return Err(err_message);
+            }
             Ok(Message::Short(rdata1, rdata2, rdata3)) => {
                 if let Some(rd1) = expect_rdata1 {
                     // Filter on first argument
                     if rdata1 != rd1 {
-                        return Err(SyscallError::new(0));
+                        return Err((SyscallError::new(0), Message::Short(rdata1, rdata2, rdata3)));
+                    }
+                }
+                return Ok((rdata1, rdata2.into(), rdata3.into()));
+            }
+            Ok(Message::Long(rdata1, rdata2, rdata3)) => {
+                if let Some(rd1) = expect_rdata1 {
+                    // Filter on first argument
+                    if rdata1 != rd1 {
+                        return Err((SyscallError::new(0), Message::Long(rdata1, rdata2, rdata3)));
                     }
                 }
                 return Ok((rdata1, rdata2, rdata3));
             }
-            _ => return Err(SyscallError::new(0)),
         }
     }
 }

@@ -174,7 +174,9 @@ impl Thread {
     /// Note: Should only be applied to threads that
     /// will return from a syscall.
     pub fn return_error(&self, error_code: usize) {
-        self.context_mut().rax = error_code;
+        // Ensure that the error is in range, no message
+        self.context_mut().rax = error_code &
+            syscalls::SYSCALL_ERROR_MASK;
     }
 
     /// Modify a thread context, setting registers
@@ -182,17 +184,29 @@ impl Thread {
     /// Note: Should only be applied to threads that
     /// will return from a syscall.
     ///
+    /// If error != 0 then an error is sent along with the message
+    ///
     /// Note:
     ///  - RCX and R11 are used by sysret so can't be used
     ///    to return data
-    pub fn return_message(&self, message: Message) {
+    pub fn return_error_message(&self, error: usize, message: Message) {
         let context = self.context_mut();
 
         let (ctrl, data1, data2, data3) = message.to_values(self);
         context.rax = ctrl as usize;
+        if error != 0 {
+            // Error returning a message
+            context.rax |=  syscalls::SYSCALL_ERROR_CONTAINS_MESSAGE |
+            (error & syscalls::SYSCALL_ERROR_MASK);
+        }
         context.rdi = data1 as usize;
         context.rsi = data2 as usize;
         context.rdx = data3 as usize;
+    }
+
+    /// Return a message to the thread
+    pub fn return_message(&self, message: Message) {
+        self.return_error_message(0, message)
     }
 
     /// Get a clone of a rendezvous handle if it exists

@@ -66,6 +66,10 @@ impl MemoryHandle {
     pub unsafe fn as_mut_ref<T>(&mut self) -> &mut T {
         &mut *(self.0 as *mut T)
     }
+
+    pub unsafe fn as_mut_ptr<T>(&mut self) -> *mut T {
+        self.0 as *mut T
+    }
 }
 
 impl Drop for MemoryHandle {
@@ -184,38 +188,58 @@ pub fn receive(handle: &CommHandle) -> Result<Message, SyscallError> {
 }
 
 /// Send a message and wait for it to be received
+///
+/// If an error occurs then a message is returned.
+/// Note: handles not guaranteed to have same internal state
 pub fn send(
     handle: &CommHandle,
     mut message: Message
-) -> Result<(), SyscallError> {
+) -> Result<(), (SyscallError, Message)> {
 
-    let (ctrl, data1, data2, data3) = message.to_values()?;
+    let (ctrl, data1, data2, data3) = message.to_values().map_err(|e| (e, message))?;
 
-    let err: u64;
+    let ret_ctrl: u64;
+    let ret_data1: u64;
+    let ret_data2: u64;
+    let ret_data3: u64;
     unsafe {
         asm!("syscall",
              in("rax") SYSCALL_SEND | ctrl | ((handle.0 as u64) << 32),
              in("rdi") data1,
              in("rsi") data2,
              in("rdx") data3,
-             lateout("rax") err,
+             lateout("rax") ret_ctrl,
+             lateout("rdi") ret_data1,
+             lateout("rsi") ret_data2,
+             lateout("rdx") ret_data3,
              out("rcx") _,
              out("r11") _);
     }
+    let err = ret_ctrl & (SYSCALL_ERROR_MASK as u64);
     if err == 0 {
         return Ok(());
     }
-    Err(SyscallError(err))
+    if ret_ctrl & (SYSCALL_ERROR_CONTAINS_MESSAGE as u64) != 0 {
+        // Error. Original message not valid, new message returned
+        return Err((SyscallError(err),
+                    Message::from_values(ret_ctrl,
+                                         ret_data1, ret_data2, ret_data3)));
+    }
+    // Error, original message still valid
+    Err((SyscallError(err), Message::from_values(ctrl,
+                                                 data1, data2, data3)))
 }
 
 /// Send a message and wait for a message back from the same thread
+///
+///
 pub fn send_receive(
     handle: &CommHandle,
     mut message: Message
-) -> Result<Message, SyscallError> {
+) -> Result<Message, (SyscallError, Message)> {
 
     // Convert the message to register values
-    let (ctrl, data1, data2, data3) = message.to_values()?;
+    let (ctrl, data1, data2, data3) = message.to_values().map_err(|e| (e, message))?;
 
     // Values to be received
     let (ret_ctrl, ret_data1, ret_data2, ret_data3): (u64, u64, u64, u64);
@@ -232,12 +256,20 @@ pub fn send_receive(
              out("rcx") _,
              out("r11") _);
     }
-    let err = ret_ctrl & 0xFF;
+    let err = ret_ctrl & (SYSCALL_ERROR_MASK as u64);
     if err == 0 {
         return Ok(Message::from_values(ret_ctrl,
                                        ret_data1, ret_data2, ret_data3));
     }
-    Err(SyscallError(err))
+    if ret_ctrl & (SYSCALL_ERROR_CONTAINS_MESSAGE as u64) != 0{
+        // Error. Original message not valid, new message returned
+        return Err((SyscallError(err),
+                    Message::from_values(ret_ctrl,
+                                         ret_data1, ret_data2, ret_data3)));
+        }
+    // Error, original message still valid
+    Err((SyscallError(err), Message::from_values(ctrl,
+                                                 data1, data2, data3)))
 }
 
 /// Returns a handle on success, or an error code
@@ -304,6 +336,8 @@ pub const SYSCALL_FREE: u64 = 8;
 pub const SYSCALL_YIELD: u64 = 9;
 
 // Syscall error codes
+pub const SYSCALL_ERROR_MASK : usize = 127; // Lower 7 bits
+pub const SYSCALL_ERROR_CONTAINS_MESSAGE: usize = 128;
 pub const SYSCALL_ERROR_SEND_BLOCKING: SyscallError = SyscallError(1);
 pub const SYSCALL_ERROR_RECV_BLOCKING: SyscallError = SyscallError(2);
 pub const SYSCALL_ERROR_INVALID_HANDLE: SyscallError = SyscallError(3);

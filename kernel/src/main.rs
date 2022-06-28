@@ -41,28 +41,43 @@ fn kernel_thread_main() {
             mounts: vfs::VFS::new()
         });
 
-    // New input for the rtl8139 driver
-    let rtl_input = Arc::new(RwLock::new(Rendezvous::Empty));
-
     // Create a Virtual File System
-    let vfs = vfs::VFS::from([
+    let mut vfs = vfs::VFS::from([
         // A VFS path to the PCI input
-        (String::from("/pci"), pci_input),
-        (String::from("/dev/nic"), rtl_input.clone())
+        (String::from("/pci"), pci_input)
     ].to_vec());
 
+    // New input for the rtl8139 driver
+    let rtl_input = Arc::new(RwLock::new(Rendezvous::Empty));
     process::new_user_thread(
         include_bytes!("../../user/rtl8139"),
         process::Params{
             handles: Vec::from([
-                // Input which is in the VFS
-                rtl_input,
+                // Input
+                rtl_input.clone(),
+                // VGA output
+                vga_rz.clone()
+            ]),
+            io_privileges: true,
+            mounts: vfs.clone()
+        });
+    vfs.mount("/dev/nic", rtl_input);
+
+    // New input for tcp stack
+    let tcp_input = Arc::new(RwLock::new(Rendezvous::Empty));
+    process::new_user_thread(
+        include_bytes!("../../user/tcp"),
+        process::Params{
+            handles: Vec::from([
+                // Input
+                tcp_input.clone(),
                 // VGA output
                 vga_rz
             ]),
             io_privileges: true,
-            mounts: vfs
+            mounts: vfs.clone()
         });
+    vfs.mount("/tcp", tcp_input);
 
     kernel::hlt_loop();
 }

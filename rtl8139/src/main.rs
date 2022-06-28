@@ -19,9 +19,10 @@ fn main() {
     let handle = syscalls::open("/pci").expect("Couldn't open pci");
 
     // Use PCI program to look for device
-    let (msg_type, address, _) = rcall(&handle, pci::FIND_DEVICE,
-                                       0x10EC, 0x8139,
-                                       None).unwrap();
+    let (msg_type, md_address, _) = rcall(&handle, pci::FIND_DEVICE,
+                                          0x10EC.into(), 0x8139.into(),
+                                          None).unwrap();
+    let address = md_address.value();
     if msg_type != pci::ADDRESS {
         debug_println!("[rtl8139] Device not found. Exiting.");
         return;
@@ -33,9 +34,10 @@ fn main() {
         pci::ENABLE_BUS_MASTERING, address, 0)).unwrap();
 
     // Read BAR0 to get the I/O address
-    let (_, bar0, _) = rcall(&handle, pci::READ_BAR,
-                             address, 0,
-                             Some(pci::BAR)).unwrap();
+    let (_, md_bar0, _) = rcall(&handle, pci::READ_BAR,
+                                address.into(), 0.into(),
+                                Some(pci::BAR)).unwrap();
+    let bar0 = md_bar0.value();
     let ioaddr = (bar0 & 0xFFFC) as u16;
     debug_println!("[rtl8139] BAR0: {:08X}. I/O addr: {:04X}", bar0, ioaddr);
 
@@ -99,7 +101,7 @@ fn main() {
                         device.send_packet(length as u16, handle);
                     }
                     _ => {
-                        debug_println!("[rtl8139] unknown message");
+                        debug_println!("[rtl8139] unknown message {:?}", message);
                     }
                 }
             }

@@ -47,6 +47,8 @@ pub const SYSCALL_FREE: u64 = 8;
 pub const SYSCALL_YIELD: u64 = 9;
 
 // Syscall error codes
+pub const SYSCALL_ERROR_MASK : usize = 127; // Lower 7 bits
+pub const SYSCALL_ERROR_CONTAINS_MESSAGE: usize = 128;
 pub const SYSCALL_ERROR_SEND_BLOCKING: usize = 1;
 pub const SYSCALL_ERROR_RECV_BLOCKING: usize = 2;
 pub const SYSCALL_ERROR_INVALID_HANDLE: usize = 3;
