@@ -105,6 +105,9 @@ direction...
   =send_receive= system call into an =rcall= remote procedure call,
   and add frame allocation of consecutive frames for direct memory
   access.
+- [[file:doc/journal/15-tcp-stack.org][15. TCP stack]] where the [[https://docs.rs/smoltcp/latest/smoltcp/][smoltcp]] crate is used to provide a TCP stack
+  in user-space which communicates with the network card driver by
+  messaging.
 
 ** Bibliography
 
@@ -117,3 +120,5 @@ Useful reference material includes:
 Other relevant links
 
 - [[https://osblog.stephenmarz.com/index.html][The Adventures of OS: Making a RISC-V Operating System using Rust]]
+- [[https://github.com/nuta/resea][The resea micro-kernel based OS]] written in C
+- [[https://github.com/nuta/kerla/][The kerla monolithic kernel]] written in Rust

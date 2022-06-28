@@ -176,10 +176,9 @@ pub fn rcall(
                     return Err(syscalls::SYSCALL_ERROR_SEND_BLOCKING);
                 }
 
-                // Delay. Should have a syscall for short delay
-                for _i in 0..10000 {
-                    unsafe{asm!("nop")};
-                }
+                // Let another thread run
+                syscalls::thread_yield();
+
                 continue; // Go around for another try
             }
             Ok(Message::Short(rdata1, rdata2, rdata3)) => {

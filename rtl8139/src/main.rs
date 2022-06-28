@@ -106,9 +106,7 @@ fn main() {
             Err(code) => {
                 debug_println!("[rtl8139] Receive error {}", code);
                 // Wait and try again
-                for _i in 0..10000 {
-                    unsafe{asm!("nop")};
-                }
+                syscalls::thread_yield();
             }
         }
     }

@@ -44,6 +44,7 @@ pub const SYSCALL_SENDRECEIVE: u64 = 5;
 pub const SYSCALL_OPEN: u64 = 6;
 pub const SYSCALL_MALLOC: u64 = 7;
 pub const SYSCALL_FREE: u64 = 8;
+pub const SYSCALL_YIELD: u64 = 9;
 
 // Syscall error codes
 pub const SYSCALL_ERROR_SEND_BLOCKING: usize = 1;
@@ -269,6 +270,7 @@ extern "C" fn dispatch_syscall(context_ptr: *mut Context, syscall_id: u64,
         SYSCALL_OPEN => sys_open(context_ptr, arg1 as *const u8, arg2 as usize),
         SYSCALL_MALLOC => sys_malloc(context_ptr, arg1, arg2),
         SYSCALL_FREE => sys_free(context_ptr, arg1),
+        SYSCALL_YIELD => sys_yield(context_ptr),
         _ => println!("Unknown syscall {:?} {} {} {}",
                       context_ptr, syscall_id, arg1, arg2)
     }
@@ -465,4 +467,10 @@ fn sys_free(
             context.rax = code;
         }
     }
+}
+
+/// Yield to another process
+fn sys_yield(context_ptr: *mut Context) {
+    let next_stack = process::schedule_next(context_ptr as usize);
+    interrupts::launch_thread(next_stack);
 }

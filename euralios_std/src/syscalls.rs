@@ -148,6 +148,19 @@ pub fn thread_exit() -> ! {
     }
 }
 
+/// Gives up the processor for another thread to run.
+///
+/// Usually called when a thread has nothing useful to do
+/// and can wait for an undetermined amount of time.
+pub fn thread_yield() {
+    unsafe{
+        asm!("syscall",
+             in("rax") SYSCALL_YIELD,
+             out("rcx") _,
+             out("r11") _);
+    }
+}
+
 /// Wait for a message to be received
 pub fn receive(handle: &CommHandle) -> Result<Message, SyscallError> {
     let ctrl: u64;
@@ -288,6 +301,7 @@ pub const SYSCALL_SENDRECEIVE: u64 = 5;
 pub const SYSCALL_OPEN: u64 = 6;
 pub const SYSCALL_MALLOC: u64 = 7;
 pub const SYSCALL_FREE: u64 = 8;
+pub const SYSCALL_YIELD: u64 = 9;
 
 // Syscall error codes
 pub const SYSCALL_ERROR_SEND_BLOCKING: SyscallError = SyscallError(1);
