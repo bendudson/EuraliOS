@@ -4,6 +4,7 @@ members = [
     "kernel",
     "euralios_std",
     "pci",
-    "rtl8139"
+    "rtl8139",
+    "tcp"
 ]
 
