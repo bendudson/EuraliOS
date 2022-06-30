@@ -108,6 +108,9 @@ direction...
 - [[file:doc/journal/15-messages.org][15. Message error handling]] where we add error handling and send retries to
   make messaging more robust. We also add a =thread_yield= system call
   to yield control of the processor when waiting and recovering from errors.
+- [[file:doc/journal/16-arp.org][16. Address Resolution Protocol]] implementation: Writing a simple program
+  to send and receive an ARP packet through the network.
+- [[file:doc/journal/17-tcp-stack.org][17. TCP stack]] where the [[https://docs.rs/smoltcp/latest/smoltcp/][smoltcp]] crate is used to provide a TCP stack
   in user-space which communicates with the network card driver by
   messaging.
 

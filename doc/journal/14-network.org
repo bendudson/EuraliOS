@@ -837,4 +837,3 @@ program.
 
 Running =telnet= or other command should now produce output as the memory handles are
 allocated and free'd.
-

@@ -248,3 +248,10 @@ pub mod pci {
     pub const NOTFOUND: u64 = 385;
     pub const BAR: u64 = 386;
 }
+
+/// Message types specific to Network Interface Cards
+pub mod nic {
+    pub const GET_MAC_ADDRESS: u64 = 260;
+
+    pub const MAC_ADDRESS: u64 = 300;
+}

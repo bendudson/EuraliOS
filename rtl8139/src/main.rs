@@ -99,11 +99,31 @@ fn main() {
                         MessageData::MemoryHandle(handle)) => {
                         device.send_packet(length as u16, handle);
                     }
+
+                    syscalls::Message::Short(
+                        message::nic::GET_MAC_ADDRESS, _, _) => {
+
+                        let address = device.mac_address();
+                        syscalls::send(
+                                &STDIN,
+                                syscalls::Message::Short(
+                                    message::nic::MAC_ADDRESS,
+                                    address.as_u64(), 0));
+                    }
                     _ => {
                         debug_println!("[rtl8139] unknown message {:?}", message);
                     }
                 }
             }
+            Err(syscalls::SYSCALL_ERROR_RECV_BLOCKING) => {
+                // Waiting for a message
+                // => Send an error message
+                syscalls::send(&STDIN,
+                               syscalls::Message::Short(
+                                   0, 0, 0));
+                // Wait and try again
+                syscalls::thread_yield();
+            },
             Err(code) => {
                 debug_println!("[rtl8139] Receive error {}", code);
                 // Wait and try again

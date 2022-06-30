@@ -5,6 +5,7 @@ members = [
     "euralios_std",
     "pci",
     "rtl8139",
+    "arp",
     "tcp"
 ]
 

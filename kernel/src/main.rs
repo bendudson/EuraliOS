@@ -66,7 +66,7 @@ fn kernel_thread_main() {
     // New input for tcp stack
     let tcp_input = Arc::new(RwLock::new(Rendezvous::Empty));
     process::new_user_thread(
-        include_bytes!("../../user/tcp"),
+        include_bytes!("../../user/arp"),
         process::Params{
             handles: Vec::from([
                 // Input
@@ -77,7 +77,7 @@ fn kernel_thread_main() {
             io_privileges: true,
             mounts: vfs.clone()
         });
-    vfs.mount("/tcp", tcp_input);
+    vfs.mount("/arp", tcp_input);
 
     kernel::hlt_loop();
 }
