@@ -1,5 +1,7 @@
 use core::arch::asm;
 use core::fmt;
+use core::ptr;
+use core::slice;
 
 pub use crate::message::Message;
 use crate::debug_println;
@@ -44,6 +46,30 @@ impl MemoryHandle {
         MemoryHandle(virtaddr)
     }
 
+    pub fn from_u8_slice(values: &[u8]) -> Self {
+        // Allocate memory
+        let (mem_handle, _) = malloc(values.len() as u64, 0).unwrap();
+        // Copy data from slice into memory
+        unsafe{
+            ptr::copy_nonoverlapping(values.as_ptr(),
+                                     mem_handle.as_u64() as *mut u8,
+                                     values.len());
+        }
+        mem_handle
+    }
+
+    pub fn as_slice<T>(&self, length: usize) -> &[T] {
+        unsafe{slice::from_raw_parts(
+            self.as_ptr::<T>(),
+            length)}
+    }
+
+    pub fn as_mut_slice<T>(&mut self, length: usize) -> &mut [T] {
+        unsafe{slice::from_raw_parts_mut(
+            self.as_mut_ptr::<T>(),
+            length)}
+    }
+
     /// Get the virtual address of the start of the memory region
     pub fn as_u64(&self) -> u64 {
         return self.0;
@@ -55,6 +81,10 @@ impl MemoryHandle {
         let handle = self.0;
         self.0 = 0;
         handle
+    }
+
+    pub unsafe fn as_ptr<T>(&self) -> *const T {
+        self.0 as *const T
     }
 
     /// Get a reference with lifetime tied to MemoryHandle
