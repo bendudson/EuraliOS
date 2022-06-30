@@ -1,14 +1,13 @@
 #![no_std]
 #![no_main]
 
-use core::arch::asm;
 use core::ptr;
 use euralios_std::{debug_println,
                    syscalls::{self, MemoryHandle, STDIN},
                    net::MacAddress,
                    message::{self, rcall, pci, MessageData},
                    ports::{outportb, outportw, outportd,
-                           inb, inw}};
+                           inportb, inportw, inportd}};
 
 use core::str;
 
@@ -121,17 +120,34 @@ const REG_CAPR: u16 = 0x38; // 16-bit
 const REG_CBR: u16 = 0x3A;  // 16-bit
 const REG_IMR: u16 = 0x3C;  // Interrupt Mask Register
 const REG_ISR: u16 = 0x3E;
-const REG_RX_CONFIG: u16 = 0x44;
+const REG_TX_CONFIG: u16 = 0x40; // Transmit buffer configuration
+const REG_RX_CONFIG: u16 = 0x44; // Receive buffer configuration
 const REG_CONFIG_1: u16 = 0x52;
 
 const RX_BUFFER_PAD: u64 = 16;
 const TX_BUFFER_LEN: u16 = 1792; // Maximum data length
 
+// Interframe Gap Time
+const TCR_IFG: u32 = 3 << 24;
+// Max DMA Burst Size per Tx DMA Burst
+// 000 = 16 bytes
+// 001 = 32 bytes
+// 010 = 64 bytes
+// 011 = 128 bytes
+// 100 = 256 bytes
+// 101 = 512 bytes
+// 110 = 1024 bytes
+// 111 = 2048 bytes
+const TCR_MXDMA0: u32 = 1 << 8;
+const TCR_MXDMA1: u32 = 1 << 9;
+const TCR_MXDMA2: u32 = 1 << 10;
+
 const CR_BUFFER_EMPTY: u8 = 1;
 
 const ROK: u16 = 0x01;
+const TOK: u32 = 1 << 15; // Transmit OK
 
-const TOWN: u16 = 1 << 13; // DMA operation completed
+const TOWN: u32 = 1 << 13; // DMA operation completed
 
 struct Device {
     ioaddr: u16,
@@ -169,15 +185,13 @@ impl Device {
 
         const MAX_ATTEMPTS: usize = 1000;
         let mut retry = 0;
-        while (inb(self.ioaddr + 0x37) & 0x10) != 0 {
+        while (inportb(self.ioaddr + 0x37) & 0x10) != 0 {
             retry += 1;
             if retry > MAX_ATTEMPTS {
                 return Err("Timeout");
             }
             // Wait for a bit
-            for _i in 0..100000 {
-                unsafe{ asm!("nop"); }
-            }
+            syscalls::thread_yield();
         }
 
         // Set the receive buffer
@@ -202,6 +216,10 @@ impl Device {
         //       (run in promiscuous mode).
         outportd(self.ioaddr + REG_RX_CONFIG, 0xf); // 0xf is AB+AM+APM+AAP
 
+        // Configure transmit buffer
+        outportd(self.ioaddr + REG_TX_CONFIG,
+                 TCR_IFG | TCR_MXDMA0 | TCR_MXDMA1 | TCR_MXDMA2);
+
         // Enable receive and transmitter
         outportb(self.ioaddr + REG_CMD, 0x0C); // Sets the RE and TE bits high
 
@@ -213,7 +231,7 @@ impl Device {
     fn mac_address(&self) -> MacAddress {
         let mut octet: [u8; 6] = [0; 6];
         for ind in 0..octet.len() {
-            octet[ind] = inb(self.ioaddr + ind as u16);
+            octet[ind] = inportb(self.ioaddr + ind as u16);
         }
         MacAddress::new(octet)
     }
@@ -229,14 +247,14 @@ impl Device {
     /// The handle returned will not contain the header or length
     /// so starts with the packet and includes CRC
     fn receive_packet(&self) -> Option<(u16, MemoryHandle)> {
-        if inb(self.ioaddr + REG_CMD) & CR_BUFFER_EMPTY
+        if inportb(self.ioaddr + REG_CMD) & CR_BUFFER_EMPTY
             == CR_BUFFER_EMPTY {
                 return None
             }
         debug_println!("Received packet!");
 
-        let capr = inw(self.ioaddr + REG_CAPR);
-        let cbr = inw(self.ioaddr + REG_CBR);
+        let capr = inportw(self.ioaddr + REG_CAPR);
+        let cbr = inportw(self.ioaddr + REG_CBR);
 
         // CAPR starts at 65520 and with the pad it overflows to 0
         let offset = ((capr as u64) + RX_BUFFER_PAD) & 0xFFFF;
@@ -287,8 +305,9 @@ impl Device {
         let cmd_port = (0x10 + (self.active_tx_id << 2)) as u16;
 
         // Check that the buffer can be written to
-        while inw(self.ioaddr + cmd_port) & TOWN != TOWN {
+        while inportd(self.ioaddr + cmd_port) & TOWN != TOWN {
             // Wait a bit
+            syscalls::thread_yield();
         }
         // OWN bit now set to 1 => Can write to buffer
 
@@ -302,10 +321,13 @@ impl Device {
         // Set OWN bit low
         // Note: length is stored in the first 13 bits;
         //       the rest of the bits can be set low
-        outportw(self.ioaddr + cmd_port, length & 0x1FFF);
+        outportd(self.ioaddr + cmd_port, (length & 0x1FFF) as u32);
 
         // Move to the next buffer in round robin
         self.active_tx_id = (self.active_tx_id + 1) % 4;
+
+        debug_println!("[rtl8139] Sent packet {} bytes", length);
+
         Ok(())
     }
 }

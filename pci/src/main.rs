@@ -304,16 +304,12 @@ fn main() {
                                    pci::NOTFOUND,
                                    0, 0));
                 // Wait and try again
-                for _i in 0..10000 {
-                    unsafe{asm!("nop")};
-                }
+                syscalls::thread_yield();
             },
             Err(code) => {
                 debug_println!("[pci] Receive error {}", code);
                 // Wait and try again
-                for _i in 0..10000 {
-                    unsafe{asm!("nop")};
-                }
+                syscalls::thread_yield();
             }
         }
     }

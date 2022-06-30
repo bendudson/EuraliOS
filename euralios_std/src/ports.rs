@@ -32,7 +32,7 @@ pub fn outportd(ioaddr: u16, value: u32) {
 }
 
 /// Read a byte from a port
-pub fn inb(ioaddr: u16) -> u8 {
+pub fn inportb(ioaddr: u16) -> u8 {
     let value: u8;
     unsafe {
         asm!("in al, dx",
@@ -44,12 +44,23 @@ pub fn inb(ioaddr: u16) -> u8 {
 }
 
 /// Read a word (16 bits) from a port
-pub fn inw(ioaddr: u16) -> u16 {
+pub fn inportw(ioaddr: u16) -> u16 {
     let value: u16;
     unsafe {
         asm!("in ax, dx",
              in("dx") ioaddr,
              lateout("ax") value,
+             options(nomem, nostack));
+    }
+    value
+}
+
+pub fn inportd(ioaddr: u16) -> u32 {
+    let value: u32;
+    unsafe {
+        asm!("in eax, dx",
+             in("dx") ioaddr,
+             lateout("eax") value,
              options(nomem, nostack));
     }
     value
