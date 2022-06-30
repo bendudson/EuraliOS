@@ -12,13 +12,33 @@ pub struct MacAddress {
 
 impl MacAddress {
     /// Create a new MacAddress from bytes
-    pub fn new(octet: [u8; 6]) -> MacAddress {
+    pub fn new(octet: [u8; 6]) -> Self {
         MacAddress{octet}
     }
 
     /// Return the address as an array of bytes
     pub fn bytes(&self) -> [u8; 6] {
         self.octet
+    }
+
+    pub fn from_u64(value: u64) -> Self {
+        MacAddress{octet:[
+            (value & 0xFF) as u8,
+            ((value >> 8) & 0xFF) as u8,
+            ((value >> 16) & 0xFF) as u8,
+            ((value >> 24) & 0xFF) as u8,
+            ((value >> 32) & 0xFF) as u8,
+            ((value >> 40) & 0xFF) as u8
+        ]}
+    }
+
+    pub fn as_u64(&self) -> u64 {
+        (self.octet[0] as u64) |
+        ((self.octet[1] as u64) << 8)  |
+        ((self.octet[2] as u64) << 16) |
+        ((self.octet[3] as u64) << 24) |
+        ((self.octet[4] as u64) << 32) |
+        ((self.octet[5] as u64) << 40)
     }
 }
 
