@@ -335,7 +335,7 @@ impl MultilevelBitmapFrameAllocator {
                             let mut chunk_number = frame;
 
                             // Clear higher bitmaps if the chunk is empty
-                            for level in 1..self.nlevels {
+                            for level in 0..self.nlevels {
                                 // Low 5 bits of the chunk at the lower level are the index at this level
                                 let index = chunk_number & 31;
                                 // High bits are the chunk at this level
