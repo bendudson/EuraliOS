@@ -39,7 +39,8 @@ impl Rendezvous {
             Rendezvous::Sending(_, _) => {
                 // Signal error to thread: Can't have two sending threads
                 if let Some(t) = &thread {
-                    t.return_error(syscalls::SYSCALL_ERROR_SEND_BLOCKING);
+                    // Return message, so that any handles are not lost
+                    t.return_error_message(syscalls::SYSCALL_ERROR_SEND_BLOCKING, message);
                 }
                 (thread, None)
             }
@@ -49,7 +50,7 @@ impl Rendezvous {
                     if let Some(t) = &thread {
                         if t.tid() != *tid {
                             // Wrong thread ID
-                            t.return_error(syscalls::SYSCALL_ERROR_RECV_BLOCKING);
+                            t.return_error_message(syscalls::SYSCALL_ERROR_RECV_BLOCKING, message);
                             return (thread, None);
                         }
                         // else keep going
@@ -64,7 +65,7 @@ impl Rendezvous {
                 if let Rendezvous::Receiving(rec_thread, _) = mem::replace(self, Rendezvous::Empty) {
                     rec_thread.return_message(message);
                     if let Some(ref t) = thread {
-                        t.return_error(0);
+                        t.return_error(0); // Success
                     }
                     return (Some(rec_thread), thread);
                 }
@@ -73,7 +74,7 @@ impl Rendezvous {
             Rendezvous::SendReceiving(_, _) => {
                 // Signal error to thread: Can't have two sending threads
                 if let Some(t) = &thread {
-                    t.return_error(syscalls::SYSCALL_ERROR_SEND_BLOCKING);
+                    t.return_error_message(syscalls::SYSCALL_ERROR_SEND_BLOCKING, message);
                 }
                 (thread, None)
             }
@@ -107,7 +108,7 @@ impl Rendezvous {
                 if let Rendezvous::Sending(snd_thread, message) = mem::replace(self, Rendezvous::Empty) {
                     thread.return_message(message);
                     if let Some(ref t) = snd_thread {
-                        t.return_error(0);
+                        t.return_error(0); // Success
                     }
                     return (Some(thread), snd_thread);
                 }
@@ -147,7 +148,7 @@ impl Rendezvous {
             }
             Rendezvous::Sending(_, _) => {
                 // Signal error to thread: Can't have two sending threads
-                thread.return_error(syscalls::SYSCALL_ERROR_SEND_BLOCKING);
+                thread.return_error_message(syscalls::SYSCALL_ERROR_SEND_BLOCKING, message);
                 (Some(thread), None)
             }
             Rendezvous::Receiving(_, some_tid) => {
@@ -155,7 +156,7 @@ impl Rendezvous {
                     // Restricted to a single thread
                     if thread.tid() != *tid {
                         // Wrong thread ID
-                        thread.return_error(syscalls::SYSCALL_ERROR_RECV_BLOCKING);
+                        thread.return_error_message(syscalls::SYSCALL_ERROR_RECV_BLOCKING, message);
                         return (Some(thread), None);
                     }
                 }
@@ -173,7 +174,7 @@ impl Rendezvous {
             }
             Rendezvous::SendReceiving(_, _) => {
                 // Signal error to thread: Can't have two sending threads
-                thread.return_error(syscalls::SYSCALL_ERROR_SEND_BLOCKING);
+                thread.return_error_message(syscalls::SYSCALL_ERROR_SEND_BLOCKING, message);
                 (Some(thread), None)
             }
         }

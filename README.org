@@ -96,16 +96,18 @@ direction...
   library, moving code out of the user program into a separate crate.
 - [[file:doc/journal/11-messages.org][11. More messages]]
 - [[file:doc/journal/12-devices.org][12. PCI devices]] where we start working on input/output to PCI
-  devices.
+  devices and discovering which devices are available.
 - [[file:doc/journal/13-return-to-sender.org][13. Return to sender]] where we add the =send_receive= syscall to make
   remote procedure calls more reliable, and start to develop a Virtual
   File System (VFS) with a new =open= syscall.
 - [[file:doc/journal/14-network.org][14. RTL8139 network card]] where we develop a basic driver for the
   [[https://wiki.osdev.org/RTL8139][RTL8139]] card, adapting [[https://github.com/vinc/moros/blob/trunk/src/sys/net/rtl8139.rs][the MOROS driver]]. In the process we wrap the
   =send_receive= system call into an =rcall= remote procedure call,
-  and add frame allocation of consecutive frames for direct memory
-  access.
-- [[file:doc/journal/15-tcp-stack.org][15. TCP stack]] where the [[https://docs.rs/smoltcp/latest/smoltcp/][smoltcp]] crate is used to provide a TCP stack
+  and add frame allocation of consecutive physical frames for direct
+  memory access.
+- [[file:doc/journal/15-messages.org][15. Message error handling]] where we add error handling and send retries to
+  make messaging more robust. We also add a =thread_yield= system call
+  to yield control of the processor when waiting and recovering from errors.
   in user-space which communicates with the network card driver by
   messaging.
 
@@ -113,6 +115,7 @@ direction...
 
 Useful reference material includes:
 
+- [[https://wiki.osdev.org/Expanded_Main_Page][The OSDev.org wiki]]
 - [[https://www.amd.com/system/files/TechDocs/24593.pdf][AMD64 Architecture Programmer's Manual (Vol 2: System programming)]]
 - [[https://0xax.gitbooks.io/linux-insides/content/][Linux insides]] by [[https://twitter.com/0xAX][@0xAX]]
 - [[https://www.kernel.org/doc/html/latest/][The Linux Kernel documentation]]

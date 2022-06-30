@@ -1,0 +1,215 @@
+* Message error handling
+
+In the [[./14-network.org][last section]] we developed a basic network card driver, and in
+the [[./16-arp.org][next section]] we'll start building a network stack by working with
+the [[https://en.wikipedia.org/wiki/Address_Resolution_Protocol][Address Resolution Protocol (ARP)]].
+
+Creating an =arp= program, following the same steps as before to
+with the =build.rs= and =Cargo.toml= files:
+#+begin_src bash
+  cargo new arp
+#+end_src
+
+** Communication conflicts
+
+To get started with an =arp= program, I tried opening a connection to
+the PCI server and sending a character message:
+#+begin_src rust
+  #[no_mangle]
+  fn main() {
+      debug_println!("[arp] Starting");
+
+      let handle = syscalls::open("/pci").expect("Couldn't open pci");
+      syscalls::send(&handle,
+                     syscalls::Message::Short(
+                         syscalls::MESSAGE_TYPE_CHAR,
+                         'X' as u64, 0));
+  }
+#+end_src
+
+This results in =rtl8139= panicking, shown in figure [[fig-panic]].
+
+#+CAPTION: Both =rtl8139= and =arp= programs try to send messages to =pci=.
+#+NAME: fig-panic
+[[./img/15-01-panic.png]]
+
+What has happened is that =arp= has sent a message before =pci= has
+called =receive=, so the rendezvous is put into the =Sending=
+state. Before =pci= receives this message, =rtl8139= calls =rcall=
+(=rtl8139/src/main.rs= line 24), and also tries to send a message to
+=pci=, receiving a =SyscallError(1)=
+i.e. =SYSCALL_ERROR_SEND_BLOCKING= error instead.
+
+This kind of situation is going to happen increasingly often as we add
+more programs, which all try to access the same resources.  We need to
+make =rcall= more robust so that these conflicts don't crash our
+programs.
+
+For =Short= messages, which just contain =u64= values, the solution is
+quite simple: We can just wait for a bit, perhaps letting other
+threads run which will hopefully unblock the rendezvous, and try
+sending another message.
+
+=Long= messages are more complicated because they transfer
+communication and memory resources between processes. If a message is
+sent but an error returned, then those resources are lost, potentially
+leaked. I think the options are:
+1. Long messages remove resources from the sending process (as now),
+   then if an error occurs the resources are returned to the original
+   thread. The sender gets back an error code along with their
+   message, though the handle internals may be different. The sender
+   can then choose whether to try again.
+2. A variation is to copy resources from the sender, and only remove them
+   from the sender when the message is sent or stored in the Rendezvous.
+   In this case the Message passed into the =send()= function would remain
+   valid, and could be sent again. =Message::from_values= already does this
+   two-stage process (copy, then remove) to handle errors in constructing
+   the Message.
+3. A more complex solution would be to add a queue of senders to =Rendezvous=,
+   so sending to a blocked Rendezvous would put the sending thread into
+   a queue, suspended until the message could be received.
+
+There may be other ways that messages could fail to be delivered,
+requiring messages to be returned to their sender, so (1) or (2) will
+be needed. (3) seems like an optimisation which could be added later.
+Option (1) turned out to be slightly easier to implement so is what we'll do for now.
+
+In =process.rs= we modify =Thread::return_message()= to take an error argument. This
+allows us to return an error and a message:
+#+begin_src rust
+  impl Thread {
+      pub fn return_error_message(&self, error: usize, message: Message) {
+          let context = self.context_mut();
+
+          let (ctrl, data1, data2, data3) = message.to_values(self);
+          context.rax = ctrl as usize;
+          if error != 0 {
+              // Error returning a message
+              context.rax |=  syscalls::SYSCALL_ERROR_CONTAINS_MESSAGE |
+              (error & syscalls::SYSCALL_ERROR_MASK);
+          }
+          context.rdi = data1 as usize;
+          context.rsi = data2 as usize;
+          context.rdx = data3 as usize;
+      }
+  }
+#+end_src
+So in =rendezvous.rs= rather than
+#+begin_src rust
+  t.return_error(syscalls::SYSCALL_ERROR_SEND_BLOCKING);
+#+end_src
+we can have
+#+begin_src rust
+  t.return_error_message(syscalls::SYSCALL_ERROR_SEND_BLOCKING, message);
+#+end_src
+and return the message to the sending thread. The handles used might be
+different, but at least resources shouldn't be lost.
+
+In =euralios_std/src/syscalls.rs= the return type of the =send()= and =send_receive()=
+functions change, so that their error type is =Err((SyscallError, Message))=. Both functions now
+capture the =rdi=, =rsi= and =rdx= register values:
+#+begin_src rust
+  asm!("syscall",
+       in("rax") SYSCALL_SEND | ctrl | ((handle.0 as u64) << 32),
+       in("rdi") data1,
+       in("rsi") data2,
+       in("rdx") data3,
+       lateout("rax") ret_ctrl,
+       lateout("rdi") ret_data1,
+       lateout("rsi") ret_data2,
+       lateout("rdx") ret_data3,
+       out("rcx") _,
+       out("r11") _);
+#+end_src
+and then handle three cases: The operation can succeed; it can fail and return a replacement message;
+or it can fail and the original message is still valid:
+#+begin_src rust
+  if err == 0 {
+      return Ok(()); // Success
+  }
+  if ret_ctrl & (SYSCALL_ERROR_CONTAINS_MESSAGE as u64) != 0 {
+      // Error. Original message not valid, new message returned
+      return Err((SyscallError(err),
+                  Message::from_values(ret_ctrl,
+                                       ret_data1, ret_data2, ret_data3)));
+  }
+  // Error, original message still valid
+  Err((SyscallError(err), Message::from_values(ctrl,
+                                               data1, data2, data3)))
+#+end_src
+
+With this we can now write a version of =rcall()= which recovers from errors and retries.
+We first create a =Message=:
+#+begin_src rust
+  pub fn rcall(
+    handle: &CommHandle,
+    data1: u64,
+    data2: MessageData,
+    data3: MessageData,
+    expect_rdata1: Option<u64>
+  ) -> Result<(u64, MessageData, MessageData), (SyscallError, Message)> {
+      let mut message = match (data2, data3) {
+          (MessageData::Value(value2), MessageData::Value(value3)) => Message::Short(data1, value2, value3),
+          (data2, data3) => Message::Long(data1, data2, data3)
+      };
+      ...
+#+end_src
+Then inside a loop try sending the message, match on the result and include a case
+#+begin_src rust
+  Err((syscalls::SYSCALL_ERROR_SEND_BLOCKING, ret_message)) |
+  Err((syscalls::SYSCALL_ERROR_RECV_BLOCKING, ret_message)) => {
+      // Rendezvous blocked
+      message = ret_message; // Handles may have changed
+      // Wait
+      continue; // Go around for another try
+  }
+#+end_src
+
+** A thread_yield system call
+
+In a few places we now need to wait for a while to allow state to
+change, or for messages to be received. Rather than using CPU cycles
+in a big =nop= loop, we can instead yield the processor, allowing
+other more useful threads to run.  One of them may indeed need to run
+before the current thread can do anything.
+
+Fortunately adding a =thread_yield= system call is quite straightforward
+using the pieces we already have. In the kernel (=syscalls.rs=) we just schedule
+the next thread and launch it (via =iret=):
+#+begin_src rust
+  fn sys_yield(context_ptr: *mut Context) {
+      let next_stack = process::schedule_next(context_ptr as usize);
+      interrupts::launch_thread(next_stack);
+  }
+#+end_src
+In the user library =euralios_std= the function just calls with
+=SYSCALL_YIELD= in =rax= (value 9 currently):
+#+begin_src rust
+  pub fn thread_yield() {
+      unsafe{
+          asm!("syscall",
+               in("rax") SYSCALL_YIELD,
+               out("rcx") _,
+               out("r11") _);
+      }
+  }
+#+end_src
+
+Everywhere we need to wait, such as in =rcall= if the rendezvous is
+blocked, we can now call =syscalls::thread_yield()=.
+
+Some further improvements are possible in future, to reduce power use
+when nothing is happening. They all require adding a way to tell the
+scheduler that =yield= was called:
+- If all running threads yield, the scheduler should =hlt=, or schedule
+  a lowest-priority task which does something similar.
+- If really nothing is happening, there's no point in waking up every
+  timer interrupt to schedule a task that doesn't have anything to do
+  except call =yield= again. Instead we should make the timer interval longer,
+  or turn it off entirely. Several kernels, including Linux, are "tickless"
+  in that they dynamically adjust their interrupt timer.
+
+
+
+
+
