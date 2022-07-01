@@ -5,27 +5,155 @@ cards with physical harware addresses. The protocol used to discover
 the hardware (MAC) address associated with an IP address on the local
 network is the [[https://en.wikipedia.org/wiki/Address_Resolution_Protocol][Address Resolution Protocol (ARP)]].
 
-** Sending packet data
+** Getting the MAC address
 
-QEMU's networking https://wiki.qemu.org/Documentation/Networking
+We can open a connection to the =rtl8139= driver with
+#+begin_src rust
+  let handle = syscalls::open("/dev/nic").expect("Couldn't open /dev/nic");
+#+end_src
+
+We need to get the hardware (MAC) address of the card, so for now we'll create
+a new message type =nic:GET_MAC_ADDRESS= to request the address, and =nic:MAC_ADDRESS=
+for the return message. Then in =arp= we can get the MAC address with
+#+begin_src rust
+  let (_, ret, _) = rcall(&handle, nic::GET_MAC_ADDRESS,
+                          0.into(), 0.into(),
+                          Some(message::nic::MAC_ADDRESS)).unwrap();
+
+  let mac_address = MacAddress::from_u64(ret.value());
+  let mac = mac_address.bytes();
+#+end_src
+which sends a =Short= message, and converts the returned value into a
+=MacAddress= object. The separate bytes are used to create the data
+for the ethernet frame and ARP packet.
+
+** Sending ARP requests
+
+
+
+The network card expects the data to start with an ethernet frame, consisting of:
+- Destination MAC address (6 bytes)
+- Source MAC address (6 bytes)
+- Ethernet protocol type (2 bytes). IPv4 is 0x0800; ARP is 0x0806;
+  IPv6 is 0x86DD.
+
+After this should come the packet data. If the ethernet protocol is ARP then it should
+consist of:
+- Hardware type (2 bytes), always 0x0001 for ethernet
+- Protocol type (2 bytes), 0x0800 for IP protocol
+- Hardware address length (1 byte). 6 for ethernet MAC address
+- Protocol address length (1 byte). 4 for IPv4
+- ARP Operation Code (2 bytes). 0x0001 for request, 0x0002 for reply
+- Source hardware address
+- Source protocol address
+- Destination hardware address. All zeros because we don't know what it is.
+- Destination protocol address.
+
 Guest assigned IPs starting 10.0.2.15. Gateway at 10.0.2.2.
+smoltcp code to handle [[https://docs.rs/smoltcp/latest/src/smoltcp/wire/arp.rs.html][arp packets]] and [[https://github.com/smoltcp-rs/smoltcp/blob/master/src/wire/ethernet.rs#L89][ethernet frames]]. 
 
-Saves in [[https://wiki.wireshark.org/Development/LibpcapFileFormat][libpcap format]]
+#+begin_src rust
+  let frame = [
+      // Ethernet frame header
+      0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // Destination MAC address
+      mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], // Source address
+      0x08, 0x06, // Ethernet protocol type: Ipv4 = 0x0800, Arp  = 0x0806, Ipv6 = 0x86DD
 
+      // ARP packet
+      0, 1, // u16 Hardware type (Ethernet is 0x1)
+      8, 0, // u16 Protocol type (IP is 0x0800)
+      6,    // u8 hlen, Hardware address length (Ethernet = 6)
+      4,    // u8 plen, Protocol address length (IPv4 = 4)
+      0, 1, // u16 ARP Operation Code (ARP request = 0x0001)
+      mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], // Source hardware address - hlen bytes
+      10, 0, 2, 15,  // Source protocol address - plen bytes
+      0, 0, 0, 0, 0, 0, // Destination hardware address
+      10, 0, 2, 2    // Destination protocol address
+  ];
+#+end_src
+
+To send this data to the network driver we need to put it into a message.
+We copy it into a newly allocated chunk of memory:
+#+begin_src rust
+  let mem_handle = syscalls::MemoryHandle::from_u8_slice(&frame);
+#+end_src
+and send it to the driver:
+#+begin_src rust
+  syscalls::send(&handle,
+                 message::Message::Long(
+                     message::WRITE,
+                     (frame.len() as u64).into(),
+                     mem_handle.into()));
+#+end_src
+
+** Intercepting packet data
+
+To check that the rtl8139 driver and our ARP code is sending and
+receiving packets correctly, we can use [[https://wiki.qemu.org/Documentation/Networking][QEMU's networking]] to capture
+all packets. This is done by changing the arguments to QEMU in
+=kernel/Config.toml=, telling QEMU to use =filter-dump= to save
+network packets to a file =dump.dat=:
 #+begin_src toml
   run-args = ["-netdev", "user,id=u1", "-device", "rtl8139,netdev=u1", "-object", "filter-dump,id=f1,netdev=u1,file=dump.dat"]
 #+end_src
-
-
-** ARP
-
-smoltcp code to handle [[https://docs.rs/smoltcp/latest/src/smoltcp/wire/arp.rs.html][arp packets]] and ethernet frames
+This will save network traffic in [[https://wiki.wireshark.org/Development/LibpcapFileFormat][libpcap format]], a standard format
+which can be read by tools like [[https://www.tcpdump.org/][tcpdump]] and [[https://www.wireshark.org/][wireshark]]. We won't need
+fancy features so just use tcpdump.
 
 #+begin_src bash
   $ tcpdump -r dump.dat
   reading from file dump.dat, link-type EN10MB (Ethernet), snapshot length 65536
-  18:42:39.511872 ARP, Request who-has 10.0.2.2 tell 10.0.2.15, length 28
-  18:42:39.511935 ARP, Reply 10.0.2.2 is-at 52:55:0a:00:02:02 (oui Unknown), length 50
+  07:38:15.457337 ARP, Request who-has 10.0.2.2 tell 10.0.2.15, length 28
+  07:38:15.457414 ARP, Reply 10.0.2.2 is-at 52:55:0a:00:02:02 (oui Unknown), length 50
+#+end_src
+
+This shows that we're sending the request correctly, and should be able
+to receive the reply.
+
+** Receiving the ARP reply
+
+Currently the =rtl8139= driver has to be polled to check if a message has
+been received:
+#+begin_src rust
+  loop {
+      match rcall(&handle, message::READ,
+                  0.into(), 0.into(),
+                  None).unwrap() {
+          (message::DATA, md_length, md_handle) => {
+              // Received.
+              break;
+          }
+          _ => {
+              // Wait and retry
+              syscalls::thread_yield();
+          }
+      }
+  }
+#+end_src
+This code keeps checking if a packet has been received. If it has then
+it will do something with it; if not, or an error occurred, then just
+wait and try again.
+
+Once a packet is received, for now we can just print it:
+#+begin_src rust
+  let handle = md_handle.memory();
+
+  // Get the ethernet frame via a &[u8] slice
+  let frame = handle.as_slice::<u8>(md_length.value() as usize);
+  let from_mac = MacAddress::new(frame[0..6].try_into().unwrap());
+  let to_mac = MacAddress::new(frame[6..12].try_into().unwrap());
+  debug_println!("Ethernet frame: to {} from {} type {:02x}{:02x}",
+                 from_mac, to_mac, frame[12], frame[13]);
+
+  // ARP packet
+  let arp = &frame[14..];
+
+  debug_println!("ARP packet: hw {:02x}{:02x} protocol {:02x}{:02x} hlen {:02x} plen {:02x} op {:02x}{:02x}",
+                 arp[0], arp[1], arp[2], arp[3], arp[4], arp[5], arp[6], arp[7]);
+  debug_println!("            source {} / {}.{}.{}.{}",
+                 MacAddress::new(arp[8..14].try_into().unwrap()), arp[14], arp[15], arp[16], arp[17]);
+  debug_println!("            target {} / {}.{}.{}.{}",
+                 MacAddress::new(arp[18..24].try_into().unwrap()), arp[24], arp[25], arp[26], arp[27]);
 #+end_src
 
 #+CAPTION: Sending an =ARP= broadcast request and receiving a reply from the QEMU gateway
