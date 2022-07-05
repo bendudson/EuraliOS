@@ -32,14 +32,28 @@ impl VFS {
         self.0.write().push((String::from(path), handle));
     }
 
-    /// Open a path, returning a handle to read/write
+    /// Open a path, returning a handle to read/write and the
+    /// length of the string matched.
     pub fn open(&self,
-                path: &str) -> Option<Arc<RwLock<Rendezvous>>> {
-        if let Some((_mount, rv)) =
-            self.0.read().iter().find(|&(mount, _rv)| mount == path) {
-                Some(rv.clone())
-            } else {
-                None
+                path: &str) -> Option<(Arc<RwLock<Rendezvous>>, usize)> {
+        let mounts = self.0.read();
+        let mut found: Option<(usize, usize)> = None;
+        for (i, mount_path) in mounts.iter().enumerate() {
+            if path.starts_with(&mount_path.0) {
+                let len = mount_path.0.len();
+                // Choose the longest match
+                if let Some((_, maxlen)) = found {
+                    if len > maxlen {
+                        found = Some((i, len));
+                    }
+                } else {
+                    found = Some((i, len));
+                }
             }
+        }
+        if let Some((ind, match_len)) = found {
+            return Some((mounts[ind].1.clone(), match_len));
+        }
+        None
     }
 }

@@ -271,7 +271,7 @@ impl Device {
             == CR_BUFFER_EMPTY {
                 return None
             }
-        debug_println!("Received packet!");
+        debug_println!("[rtl8139] Received packet");
 
         let capr = inportw(self.ioaddr + REG_CAPR);
         let cbr = inportw(self.ioaddr + REG_CBR);

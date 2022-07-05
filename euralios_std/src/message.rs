@@ -231,6 +231,7 @@ pub fn rcall(
 pub const READ: u64 = 1;  // Short(READ, offset, length
 pub const WRITE: u64 = 2; // Long(WRITE, length, handle)
 pub const DATA: u64 = 2;  // Same as write
+pub const OPEN: u64 = 3;
 
 pub const EMPTY: u64 = 128;
 

@@ -41,6 +41,7 @@ much, but it can do it all at the same time.
 - [X] Frame allocator based on a bitmap tree structure
 - [X] On-demand memory allocation using page fault handler
 - [X] User space stack and heap memory management
+- [X] RTL8139 network card driver running in user space
 
 There is no filesystem (yet), so user programs are compiled and then
 the ELF files are included in the kernel binary using Rust's
@@ -113,6 +114,7 @@ direction...
 - [[file:doc/journal/17-tcp-stack.org][17. TCP stack]] where the [[https://docs.rs/smoltcp/latest/smoltcp/][smoltcp]] crate is used to provide a TCP stack
   in user-space which communicates with the network card driver by
   messaging.
+- [[file:doc/journal/18-vfs.org][18. Virtual File System]]
 
 ** Bibliography
 

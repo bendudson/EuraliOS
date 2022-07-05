@@ -29,16 +29,17 @@ for the ethernet frame and ARP packet.
 
 ** Sending ARP requests
 
-
-
-The network card expects the data to start with an ethernet frame, consisting of:
+To send messages over the network the network card driver receives
+=WRITE= messages, and copies the data from a memory chunk into one of
+the transmit buffers. The network card expects that data to start
+with an ethernet frame, consisting of:
 - Destination MAC address (6 bytes)
 - Source MAC address (6 bytes)
 - Ethernet protocol type (2 bytes). IPv4 is 0x0800; ARP is 0x0806;
   IPv6 is 0x86DD.
 
-After this should come the packet data. If the ethernet protocol is ARP then it should
-consist of:
+After this should come the packet data. If the ethernet protocol is
+ARP then it should consist of:
 - Hardware type (2 bytes), always 0x0001 for ethernet
 - Protocol type (2 bytes), 0x0800 for IP protocol
 - Hardware address length (1 byte). 6 for ethernet MAC address
@@ -48,26 +49,35 @@ consist of:
 - Source protocol address
 - Destination hardware address. All zeros because we don't know what it is.
 - Destination protocol address.
+The smoltcp code to handle [[https://docs.rs/smoltcp/latest/src/smoltcp/wire/arp.rs.html][arp packets]] and [[https://github.com/smoltcp-rs/smoltcp/blob/master/src/wire/ethernet.rs#L89][ethernet frames]] is a useful place
+to look to figure this out.
 
-Guest assigned IPs starting 10.0.2.15. Gateway at 10.0.2.2.
-smoltcp code to handle [[https://docs.rs/smoltcp/latest/src/smoltcp/wire/arp.rs.html][arp packets]] and [[https://github.com/smoltcp-rs/smoltcp/blob/master/src/wire/ethernet.rs#L89][ethernet frames]]. 
-
+[[https://wiki.qemu.org/Documentation/Networking][QEMU's network stack]] assigns guests IPs starting 10.0.2.15, so we can
+use that as our "source protocol address". The network gateway is at
+IP address 10.0.2.2 but we don't know its hardware address. We can
+send an ARP request, asking for a response from the computer with IP
+address 10.0.2.2, by setting that as the destination protocol address
+and leaving the destination hardware address as all zeros in the ARP
+packet. In the ethernet frame we'll set the destination to
+=ff:ff:ff:ff:ff:ff= because this is the broadcast address. The data to
+be sent to the =rtl8139= driver and loaded into the transmission
+buffer is therefore:
 #+begin_src rust
   let frame = [
       // Ethernet frame header
-      0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // Destination MAC address
+      0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // Destination MAC address (Broadcast)
       mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], // Source address
-      0x08, 0x06, // Ethernet protocol type: Ipv4 = 0x0800, Arp  = 0x0806, Ipv6 = 0x86DD
+      0x08, 0x06, // Ethernet protocol type (ARP = 0x0806)
 
       // ARP packet
-      0, 1, // u16 Hardware type (Ethernet is 0x1)
-      8, 0, // u16 Protocol type (IP is 0x0800)
+      0, 1, // u16 Hardware type (Ethernet = 0x1)
+      8, 0, // u16 Protocol type (IP = 0x0800)
       6,    // u8 hlen, Hardware address length (Ethernet = 6)
       4,    // u8 plen, Protocol address length (IPv4 = 4)
-      0, 1, // u16 ARP Operation Code (ARP request = 0x0001)
+      0, 1, // u16 ARP Operation Code (Request = 0x0001)
       mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], // Source hardware address - hlen bytes
       10, 0, 2, 15,  // Source protocol address - plen bytes
-      0, 0, 0, 0, 0, 0, // Destination hardware address
+      0, 0, 0, 0, 0, 0, // Destination hardware address (unknown)
       10, 0, 2, 2    // Destination protocol address
   ];
 #+end_src
@@ -132,11 +142,12 @@ been received:
 #+end_src
 This code keeps checking if a packet has been received. If it has then
 it will do something with it; if not, or an error occurred, then just
-wait and try again.
+wait and try again. This is inefficient, and a better way would be to
+use interrupts to get notifications when a packet is received.
 
 Once a packet is received, for now we can just print it:
 #+begin_src rust
-  let handle = md_handle.memory();
+  let handle = md_handle.memory(); // Get MemoryHandle from MessageData
 
   // Get the ethernet frame via a &[u8] slice
   let frame = handle.as_slice::<u8>(md_length.value() as usize);
@@ -156,7 +167,19 @@ Once a packet is received, for now we can just print it:
                  MacAddress::new(arp[18..24].try_into().unwrap()), arp[24], arp[25], arp[26], arp[27]);
 #+end_src
 
+This now produces the result in figure [[fig-arp]] and it works!
+
 #+CAPTION: Sending an =ARP= broadcast request and receiving a reply from the QEMU gateway
 #+NAME: fig-arp
 [[./img/16-01-arp.png]]
 
+There are several problems with this, including:
+1. The need to poll for packets, rather than being interrupt-driven.
+2. This code will get very confused in a realistic situation where
+   many different kinds of packets are being transmitted on the
+   network: It assumes the packet that's received is a reply to the ARP packet
+   that's sent, but that's not guaranteed.
+
+Implementing a network stack to handle multiple kinds of messages and simultaneous
+connections is very complicated. Fortunately there are libraries to do this
+including [[https://docs.rs/smoltcp/latest/smoltcp/][smoltcp]] which we'll use in the [[./17-tcp-stack.org][next section]].

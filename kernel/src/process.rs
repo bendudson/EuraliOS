@@ -700,20 +700,20 @@ pub fn schedule_next(context_addr: usize) -> usize {
 }
 
 /// Open the given path
-/// Returns either a Rendezvous handle, or an error
+/// Returns either a Rendezvous handle and path match length, or an error
 pub fn open_path(
     _current_context: &mut Context,
-    path: &str) -> Result<usize, usize> {
+    path: &str) -> Result<(usize, usize), usize> {
 
     if let Some(current_thread) = CURRENT_THREAD.read().as_ref() {
         println!("Thread {} opening {}", current_thread.tid, path);
 
         let mut process = current_thread.process.write();
 
-        if let Some(rv) = process.mounts.open(path) {
+        if let Some((rv, match_len)) = process.mounts.open(path) {
             // Found!
             let handle = process.add_handle(rv.clone());
-            return Ok(handle);
+            return Ok((handle, match_len));
         } else {
             return Err(syscalls::SYSCALL_ERROR_NOTFOUND);
         }

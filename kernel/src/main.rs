@@ -26,10 +26,11 @@ entry_point!(kernel_entry);
 /// which is started once basic kernel functions have
 /// been initialised in kernel_entry
 fn kernel_thread_main() {
-    let pci_input = interrupts::keyboard_rendezvous();
+    let keyboard_rz = interrupts::keyboard_rendezvous();
     let vga_rz = vga_buffer::start_listener();
 
-    // Start PCI program with keyboard input and VGA output
+    // Start PCI program with new input and VGA output
+    let pci_input = Arc::new(RwLock::new(Rendezvous::Empty));
     process::new_user_thread(
         include_bytes!("../../user/pci"),
         process::Params{
@@ -66,18 +67,32 @@ fn kernel_thread_main() {
     // New input for tcp stack
     let tcp_input = Arc::new(RwLock::new(Rendezvous::Empty));
     process::new_user_thread(
-        include_bytes!("../../user/arp"),
+        include_bytes!("../../user/tcp"),
         process::Params{
             handles: Vec::from([
                 // Input
                 tcp_input.clone(),
                 // VGA output
-                vga_rz
+                vga_rz.clone()
             ]),
-            io_privileges: true,
+            io_privileges: false,
             mounts: vfs.clone()
         });
-    vfs.mount("/arp", tcp_input);
+    vfs.mount("/tcp", tcp_input);
+
+    // Use keyboard input for gopher
+    process::new_user_thread(
+        include_bytes!("../../user/gopher"),
+        process::Params{
+            handles: Vec::from([
+                // Input
+                keyboard_rz,
+                // VGA output
+                vga_rz
+            ]),
+            io_privileges: false,
+            mounts: vfs.clone()
+        });
 
     kernel::hlt_loop();
 }

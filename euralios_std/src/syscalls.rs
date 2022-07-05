@@ -3,7 +3,7 @@ use core::fmt;
 use core::ptr;
 use core::slice;
 
-pub use crate::message::Message;
+pub use crate::message::{self, Message};
 use crate::debug_println;
 
 /// Communication handle
@@ -306,6 +306,7 @@ pub fn send_receive(
 pub fn open(path: &str) -> Result<CommHandle, SyscallError> {
     let error: u64;
     let handle: u32;
+    let match_len: usize;
     unsafe {
         asm!("syscall",
              in("rax") SYSCALL_OPEN,
@@ -313,10 +314,30 @@ pub fn open(path: &str) -> Result<CommHandle, SyscallError> {
              in("rsi") path.len(), // Second argument
              lateout("rax") error,
              lateout("rdi") handle,
+             lateout("rsi") match_len,
              out("rcx") _,
              out("r11") _);
     }
     if error == 0 {
+        // Found mount point
+        let subpath = &path[match_len..];
+        debug_println!("open '{}' matched {} -> '{}'",
+                       path, match_len, subpath);
+
+        if subpath.len() != 0 {
+            // Send unmatched part of the path to the given handle
+            let bytes = subpath.as_bytes();
+
+            match message::rcall(
+                &CommHandle(handle),
+                message::OPEN,
+                (bytes.len() as u64).into(),
+                MemoryHandle::from_u8_slice(bytes).into(),
+                None) {
+                _ => debug_println!("rcall reply")
+            }
+        }
+
         Ok(CommHandle(handle))
     } else {
         Err(SyscallError(error))

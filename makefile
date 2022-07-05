@@ -7,6 +7,6 @@ user/% : FORCE
 FORCE:
 
 .PHONY: run
-run : user/pci user/rtl8139 user/arp user/tcp
+run : user/pci user/rtl8139 user/arp user/tcp user/gopher
 	cargo run --release --bin kernel
 

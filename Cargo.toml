@@ -6,6 +6,7 @@ members = [
     "pci",
     "rtl8139",
     "arp",
-    "tcp"
+    "tcp",
+    "gopher"
 ]
 

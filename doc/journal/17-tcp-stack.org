@@ -7,3 +7,7 @@ we can use the [[https://docs.rs/smoltcp/latest/smoltcp/][smoltcp]] crate to add
 
 The traits to implement a physical layer are
 https://github.com/smoltcp-rs/smoltcp/blob/master/src/phy/mod.rs
+
+#+CAPTION: Using smoltcp to configure IP settings with DHCP
+#+NAME: fig-dhcp
+[[./img/17-01-dhcp.png]]

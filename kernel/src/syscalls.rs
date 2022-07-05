@@ -410,9 +410,10 @@ fn sys_open(
 
     if let Ok(path_string) = str::from_utf8(u8_slice) {
         match process::open_path(context, &path_string) {
-            Ok(handle) => {
+            Ok((handle, match_len)) => {
                 context.rax = 0; // No error
                 context.rdi = handle; // Return handle
+                context.rsi = match_len; // Path match length
             }
             Err(error_code) => {
                 context.rax = error_code;
