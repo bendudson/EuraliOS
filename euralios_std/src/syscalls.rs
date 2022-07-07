@@ -143,7 +143,7 @@ impl SyscallError {
 ///
 ///  Ok(thread_id) or Err(error_code)
 ///
-pub fn thread_spawn(func: extern "C" fn() -> ()) -> Result<u64, SyscallError> {
+pub fn thread_spawn(func: extern "C" fn(usize) -> (), param: usize) -> Result<u64, SyscallError> {
     let tid: u64;
     let errcode: u64;
     unsafe {
@@ -155,6 +155,7 @@ pub fn thread_spawn(func: extern "C" fn() -> ()) -> Result<u64, SyscallError> {
              "cmp rdi, 0",
              "jnz 2f",
              // New thread
+             "mov rdi, r9", // Function argument
              "call r8",
              "mov rax, 1", // exit_current_thread syscall
              "syscall",
@@ -162,6 +163,7 @@ pub fn thread_spawn(func: extern "C" fn() -> ()) -> Result<u64, SyscallError> {
              "2:",
              in("rax") SYSCALL_FORK_THREAD,
              in("r8") func,
+             in("r9") param,
              lateout("rax") errcode,
              lateout("rdi") tid,
              out("rcx") _,
@@ -334,7 +336,7 @@ pub fn open(path: &str) -> Result<CommHandle, SyscallError> {
                 (bytes.len() as u64).into(),
                 MemoryHandle::from_u8_slice(bytes).into(),
                 None) {
-                _ => debug_println!("rcall reply")
+                msg => debug_println!("rcall reply {:?}", msg)
             }
         }
 

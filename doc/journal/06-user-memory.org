@@ -345,9 +345,103 @@ The Rust standard library includes a =thread::spawn= function which
   }
 #+end_src
 
-The =spawn= function takes ownership of a closure, puts it in a =Box=,
-and passes it to [[https://github.com/rust-lang/rust/blob/master/library/std/src/sys/unix/thread.rs#L51][Thread::new()]]
+The =spawn= function in the standard library has the signature
+#+begin_src rust
+fn spawn<F, T>(f: F) -> JoinHandle<T>
+where
+    F: FnOnce() -> T,
+    F: Send + 'static,
+    T: Send + 'static,
+#+end_src
+It takes ownership of a closure, puts it in a =Box=, and
+passes it to [[https://github.com/rust-lang/rust/blob/master/library/std/src/sys/unix/thread.rs#L51][Thread::new()]]. We can use the same method to make a nice
+wrapper around the =syscalls::thread_spawn()= function made in
+[[./04-more-syscalls.org][section 4]].
+
+In a new file =euralios_std/src/thread.rs= we'll write =launch()=
+which will take a boxed function =Box<dyn FnOnce()>= and pass it to
+=thread_spawn()=. We'll return an error code if something goes wrong:
+#+begin_src rust
+  fn launch(p: Box<dyn FnOnce()>) -> Result<(), u64>
+  {
+      // Call thread_spawn
+      extern "C" fn thread_start(main: usize) {
+          // This function called by thread_spawn
+      }
+  }
+#+end_src
+The =thread_spawn= function has the signature
+#+begin_src rust
+  pub fn thread_spawn(func: extern "C" fn(usize) -> (), param: usize)
+                      -> Result<u64, u64> {
+#+end_src
+so we can pass it =thread_start= as the =func= argument, and use
+the parameter to pass the address of the boxed function.
+
+To convert =Box<dyn FnOnce()>= to a "thin" pointer address, we have to
+wrap the boxed function in another box, and get the raw pointer:
+#+begin_src rust
+  let p = Box::into_raw(Box::new(p));
+#+end_src
+The reason is that =Box<dyn FnOnce()>= is a fat pointer, consisting of
+a pointer to allocated memory to store closure data (if any), the
+function, and also a function to drop the contents. A thin pointer
+can't store all this information, so here =Box::new(p)= moves it into
+heap-allocated memory, which can be pointed to by a thin pointer.
+
+The call to =thread_spawn= can now be:
+#+begin_src rust
+  syscalls::thread_spawn(thread_start,
+                         p as *mut () as usize)
+#+end_src
+which converts the box raw pointer to a thin pointer and then to
+an address which can be passed as the argument to the =thread_start=
+function.
+
+Inside =thread_start= we can convert the thin pointer back into a
+=Box= and call the function:
+#+begin_src rust
+  unsafe {Box::from_raw(main as *mut Box<dyn FnOnce()>)()};
+#+end_src
+
+The =spawn= function is then quite simple: It takes a closure,
+puts it into a =Box=, and passes it to =launch=:
+#+begin_src rust
+pub fn spawn<F>(f: F) -> Result<(), SyscallError>
+where
+    F: FnOnce() -> (),
+    F: Send + 'static,
+{
+    launch(Box::new(f))
+}
+#+end_src
+The constraints on the function mean that any variables captured by
+the closure must either be moved or have =static= lifetime. That is
+because the launched thread may outlive the caller.
+
+We can now run threads using syntax like the std library:
+#+begin_src rust
+  use euralios_std::thread;
+
+  ...
+  let value: usize = 42;
+
+  thread::spawn(move || {
+      println!("Hello from thread: {}", value);
+  });
+#+end_src
+Taking out the =move= results in a compile-time error like:
+#+begin_src rust
+  | thread::spawn(|| {
+  |               ^^ may outlive borrowed value `value`
+  |       println!("Hello from thread: {}", value);
+  |                                         ----- `value` is borrowed here
+note: function requires argument type to outlive `'static`
+#+end_src
+along with a helpful note to use the =move= keyword so that the
+closure takes ownership of any referenced variables. We now have
+reasonably nice and safe interface to launching threads using
+closures.
 
 In the [[file:07-ipc.org][next section]] we'll start working on inter-process/thread communication,
 allowing threads to send messages to each other.
-

@@ -8,6 +8,7 @@ pub mod memory;
 pub mod net;
 pub mod message;
 pub mod ports;
+pub mod thread;
 
 use core::panic::PanicInfo;
 #[panic_handler]
