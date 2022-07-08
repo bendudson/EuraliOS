@@ -4,13 +4,13 @@ In [[./13-return-to-sender.org][section 13]] we implemented a very basic Virtual
 which has allowed programs to open particular paths e.g "/dev/nic" to
 get a communication handle.
 
-Opening "/tcp/192.80.49.99 70" should result in the tcp server opening
+Opening "/tcp/192.80.49.99/70" should result in the tcp server opening
 a new socket, connecting to the given address (192.80.49.99,
 gopher.floodgap.com) and port (70). The returned communication handle
 should allow sending (writing) and receiving (reading) data through
 that socket.
 
-1. The client calls the =open= syscall with the "/tcp/192.80.49.99 70" string
+1. The client calls the =open= syscall with the "/tcp/192.80.49.99/70" string
 2. The kernel checks the client's VFS, choosing the mount point which
    matches the longest part of the string, in this case "/tcp".
 2. The kernel sends an =OPEN= message to the rendezvous at that mount

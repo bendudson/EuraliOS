@@ -233,7 +233,13 @@ pub const WRITE: u64 = 2; // Long(WRITE, length, handle)
 pub const DATA: u64 = 2;  // Same as write
 pub const OPEN: u64 = 3;
 
+pub const COMM_HANDLE: u64 = 64; // A communication handle
+
 pub const EMPTY: u64 = 128;
+pub const ERROR: u64 = 129;
+pub const ERROR_INVALID_FORMAT: u64 = 130;
+pub const ERROR_INVALID_UTF8: u64 = 131;
+pub const ERROR_INVALID_VALUE: u64 = 132;
 
 /// Message types for the system PCI program
 pub mod pci {

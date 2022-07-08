@@ -15,10 +15,13 @@ use core::str;
 use smoltcp::{self, iface::{InterfaceBuilder, NeighborCache, Routes}};
 use smoltcp::phy::DeviceCapabilities;
 use smoltcp::time::Instant;
-use smoltcp::wire::{EthernetAddress, IpCidr, Ipv4Address};
+use smoltcp::wire::{EthernetAddress, IpCidr, Ipv4Address, IpAddress};
+use core::str::FromStr;
+use smoltcp::socket::{TcpSocket, TcpSocketBuffer};
 
 use euralios_std::{debug_println, debug_print,
-                   syscalls::{self, STDIN},
+                   syscalls::{self, STDIN, CommHandle},
+                   thread,
                    net::MacAddress,
                    message::{self, rcall, nic, MessageData}};
 
@@ -204,12 +207,29 @@ fn main() {
                                     let path = path.trim_matches(|c:char| c == '/' ||
                                                                  c.is_whitespace());
                                     debug_println!("[tcp] Opening path '{}'", path);
+
+                                    if let Ok(handle) = open_path(path) {
+                                        syscalls::send(&STDIN,
+                                                       syscalls::Message::Long(
+                                                           message::COMM_HANDLE,
+                                                           handle.into(), 0.into()));
+                                    } else {
+                                        syscalls::send(&STDIN,
+                                                       syscalls::Message::Short(
+                                                           message::ERROR_INVALID_VALUE, 0, 0));
+                                    }
                                 } else {
                                     debug_println!("[tcp] open invalid utf8 path");
+                                    syscalls::send(&STDIN,
+                                                   syscalls::Message::Short(
+                                                       message::ERROR_INVALID_UTF8, 0, 0));
                                 }
                             }
                             _ => {
                                 debug_println!("[tcp] open invalid message format");
+                                syscalls::send(&STDIN,
+                                               syscalls::Message::Short(
+                                                   message::ERROR_INVALID_FORMAT, 0, 0));
                             }
                         }
                     }
@@ -223,7 +243,7 @@ fn main() {
                 // => Send an error message
                 syscalls::send(&STDIN,
                                syscalls::Message::Short(
-                                   0, 0, 0));
+                                   message::ERROR, 0, 0));
                 // Wait and try again
                 syscalls::thread_yield();
             },
@@ -235,3 +255,66 @@ fn main() {
         }
     }
 }
+
+/// Open a path from the root, returning a communication handle
+///
+/// Note: This function spawns a thread which will then attempt
+///       to open the socket. It is possible that this function
+///       succeeds but then opening the socket fails.
+fn open_path(path: &str) -> Result<CommHandle, ()> {
+    if let Some(ind) = path.find('/') {
+        // Split and copy into Strings which can be moved to a new thread
+        let ip = IpAddress::from_str(&path[..ind])
+            .map_err(|e| {debug_println!("[tcp] Invalid host address: {:?}", e);})?;
+        let port: u16 =  ((&path[(ind+1)..])
+                                 .trim_matches(|c:char| c == '/' ||
+                                               c.is_whitespace()))
+            .parse().map_err(|e| {debug_println!("[tcp] Invalid port: {:?}", e);})?;
+
+        // Make a new communication handle pair
+        let (handle, client_handle) = syscalls::new_rendezvous()
+            .map_err(|e| {debug_println!("[tcp] Couldn't create Rendezvous {:?}", e);})?;
+
+        // Start a thread with one of the handles
+        thread::spawn(move || {
+            open_socket(ip, port, handle);
+        });
+
+        // Return the other handle to the client
+        return Ok(client_handle);
+    }
+    debug_println!("[tcp] Error: open_path '{}' doesn't contain '/'", path);
+    Err(())
+}
+
+/// Open a socket and wait in a loop for messages on given handle
+fn open_socket(ip: IpAddress, port: u16, handle: CommHandle) {
+    debug_println!("[tcp] Connecting to {} port {}", ip, port);
+
+    let tcp_rx_buffer = TcpSocketBuffer::new(vec![0; 1024]);
+    let tcp_tx_buffer = TcpSocketBuffer::new(vec![0; 1024]);
+    let tcp_socket = TcpSocket::new(tcp_rx_buffer, tcp_tx_buffer);
+
+    loop {
+        match syscalls::receive(&handle) {
+            Ok(msg) => {
+                debug_println!("[tcp {}/{}] -> {:?}", ip, port, msg);
+            }
+            Err(syscalls::SYSCALL_ERROR_RECV_BLOCKING) => {
+                // Waiting for a message
+                // => Send an error message
+                syscalls::send(&handle,
+                               syscalls::Message::Short(
+                                   message::ERROR, 0, 0));
+                // Wait and try again
+                syscalls::thread_yield();
+            },
+            Err(code) => {
+                debug_println!("[tcp {}/{}] Receive error {}", ip, port, code);
+                // Wait and try again
+                syscalls::thread_yield();
+            }
+        }
+    }
+}
+

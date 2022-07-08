@@ -336,10 +336,17 @@ pub fn open(path: &str) -> Result<CommHandle, SyscallError> {
                 (bytes.len() as u64).into(),
                 MemoryHandle::from_u8_slice(bytes).into(),
                 None) {
-                msg => debug_println!("rcall reply {:?}", msg)
+                // Success, returning a communication handle
+                Ok((message::COMM_HANDLE,
+                    message::MessageData::CommHandle(handle), _)) => {
+                    return Ok(handle);
+                }
+                msg => {
+                    debug_println!("rcall reply {:?}", msg);
+                    return Err(SYSCALL_ERROR_NOTFOUND);
+                }
             }
         }
-
         Ok(CommHandle(handle))
     } else {
         Err(SyscallError(error))
