@@ -7,18 +7,20 @@
 //!
 //! syscall function selector in AL (first 8 bits of RAX)
 //!
-//! 0   fork_current_thread() -> (RAX: errcode, RDI: thread_id)
-//! 1   exit_current_thread() -> !   (does not return)
-//! 2   debug_write(RDI: *const u8, RSI: usize) -> ()
+//!  0   fork_current_thread() -> (RAX: errcode, RDI: thread_id)
+//!  1   exit_current_thread() -> !   (does not return)
+//!  2   debug_write(RDI: *const u8, RSI: usize) -> ()
 //!         Used to print to console for development/debugging
-//! 3   receive
-//! 4   send
-//! 5   sendreceive
+//!  3   receive
+//!  4   send
+//!  5   sendreceive
 //!         Ensures a reply from the receiving thread
-//! 6   open(RDI: *const u8, RSI: usize) -> RAX: errcode, RDI: handle
+//!  6   open(RDI: *const u8, RSI: usize) -> RAX: errcode, RDI: handle
 //!         Opens a VFS handle for read/write
-//! 7   malloc
-//! 8   free
+//!  7   malloc(num_pages, max_physaddr)
+//!  8   free(mem_handle)
+//!  9   yield()
+//! 10   new_rendezvous() -> (handle, handle)
 //!
 //! Potential future syscalls
 //! -------------------------
@@ -45,6 +47,7 @@ pub const SYSCALL_OPEN: u64 = 6;
 pub const SYSCALL_MALLOC: u64 = 7;
 pub const SYSCALL_FREE: u64 = 8;
 pub const SYSCALL_YIELD: u64 = 9;
+pub const SYSCALL_NEW_RENDEZVOUS: u64 = 10;
 
 // Syscall error codes
 pub const SYSCALL_ERROR_MASK : usize = 127; // Lower 7 bits
@@ -273,6 +276,7 @@ extern "C" fn dispatch_syscall(context_ptr: *mut Context, syscall_id: u64,
         SYSCALL_MALLOC => sys_malloc(context_ptr, arg1, arg2),
         SYSCALL_FREE => sys_free(context_ptr, arg1),
         SYSCALL_YIELD => sys_yield(context_ptr),
+        SYSCALL_NEW_RENDEZVOUS => sys_new_rendezvous(context_ptr),
         _ => println!("Unknown syscall {:?} {} {} {}",
                       context_ptr, syscall_id, arg1, arg2)
     }
@@ -476,4 +480,20 @@ fn sys_free(
 fn sys_yield(context_ptr: *mut Context) {
     let next_stack = process::schedule_next(context_ptr as usize);
     interrupts::launch_thread(next_stack);
+}
+
+/// Create a new pair of Rendezvous handles
+fn sys_new_rendezvous(context_ptr: *mut Context) {
+    let context = unsafe {&mut (*context_ptr)};
+
+    match process::new_rendezvous() {
+        Ok((handle1, handle2)) => {
+            context.rax = 0; // Success!
+            context.rdi = handle1;
+            context.rsi = handle2;
+        }
+        Err(code) => {
+            context.rax = code;
+        }
+    }
 }

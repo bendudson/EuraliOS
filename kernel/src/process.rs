@@ -225,7 +225,7 @@ impl Thread {
     }
 
     /// Add a rendezvous to the process, returning the handle
-    pub fn give_rendezvous(&self, rendezvous: Arc<RwLock<Rendezvous>>) -> u64 {
+    pub fn give_rendezvous(&self, rendezvous: Arc<RwLock<Rendezvous>>) -> usize {
         // Lock the handles
         let handles = &mut self.process.write().handles;
 
@@ -234,12 +234,12 @@ impl Thread {
             if handle.is_none() {
                 // Found empty slot => Store rendezvous
                 handles[pos] = Some(rendezvous);
-                return pos as u64;
+                return pos;
             }
         }
         // All full => Add new handle
         handles.push(Some(rendezvous));
-        (handles.len() - 1) as u64
+        (handles.len() - 1)
     }
 
     /// Get the physical address and page table level of the memory
@@ -788,3 +788,13 @@ pub fn free_memory_chunk(
     Err(syscalls::SYSCALL_ERROR_THREAD)
 }
 
+pub fn new_rendezvous() -> Result<(usize, usize), usize> {
+    if let Some(thread) = CURRENT_THREAD.read().as_ref() {
+        let rv = Arc::new(RwLock::new(Rendezvous::Empty));
+
+        let handle1 = thread.give_rendezvous(rv.clone());
+        let handle2 = thread.give_rendezvous(rv);
+        return Ok((handle1, handle2));
+    }
+    Err(syscalls::SYSCALL_ERROR_THREAD)
+}

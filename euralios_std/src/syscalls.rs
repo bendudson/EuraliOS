@@ -375,6 +375,26 @@ pub fn malloc(
     }
 }
 
+pub fn new_rendezvous() -> Result<(CommHandle, CommHandle), SyscallError> {
+    let error: u64;
+    let handle1: u32;
+    let handle2: u32;
+    unsafe {
+        asm!("syscall",
+             in("rax") SYSCALL_NEW_RENDEZVOUS,
+             lateout("rax") error,
+             lateout("rdi") handle1,
+             lateout("rsi") handle2,
+             out("rcx") _,
+             out("r11") _);
+    }
+    if error == 0 {
+        Ok((CommHandle(handle1), CommHandle(handle2)))
+    } else {
+        Err(SyscallError(error))
+    }
+}
+
 // Syscall numbers
 pub const SYSCALL_MASK: u64 = 0xFF;
 pub const SYSCALL_FORK_THREAD: u64 = 0;
@@ -387,6 +407,7 @@ pub const SYSCALL_OPEN: u64 = 6;
 pub const SYSCALL_MALLOC: u64 = 7;
 pub const SYSCALL_FREE: u64 = 8;
 pub const SYSCALL_YIELD: u64 = 9;
+pub const SYSCALL_NEW_RENDEZVOUS: u64 = 10;
 
 // Syscall error codes
 pub const SYSCALL_ERROR_MASK : usize = 127; // Lower 7 bits

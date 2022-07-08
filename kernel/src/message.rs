@@ -70,7 +70,7 @@ impl Message {
                     MessageData::Value(value) => *value,
                     MessageData::Rendezvous(rdv) => {
                         ctrl |= MESSAGE_DATA2_RDV | MESSAGE_LONG;
-                        thread.give_rendezvous(rdv.clone())
+                        thread.give_rendezvous(rdv.clone()) as u64
                     }
                     MessageData::Memory(physaddr) => {
                         match thread.give_memory_chunk(*physaddr) {
@@ -90,7 +90,7 @@ impl Message {
                     MessageData::Value(value) => *value,
                     MessageData::Rendezvous(rdv) => {
                         ctrl |= MESSAGE_DATA3_RDV | MESSAGE_LONG;
-                        thread.give_rendezvous(rdv.clone())
+                        thread.give_rendezvous(rdv.clone()) as u64
                     }
                     MessageData::Memory(physaddr) => {
                         match thread.give_memory_chunk(*physaddr) {
