@@ -764,7 +764,7 @@ pub fn new_memory_chunk(
             if memory::create_user_ondemand_pages(
                 thread.page_table_physaddr,
                 start_addr,
-                num_pages).is_err() {
+                num_pages * 4096).is_err() { // size in bytes
                 return Err(syscalls::SYSCALL_ERROR_MEMORY);
             }
 

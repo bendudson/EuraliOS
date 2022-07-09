@@ -300,6 +300,11 @@ pub fn allocate_active_pages(
 /// frames trigger a page fault, and the handler allocates a frame.
 ///
 /// This allows large user heaps to be created without using a lot of memory.
+///
+/// Inputs
+/// ------
+///   size   Size of memory region in bytes
+///
 pub fn create_user_ondemand_pages(
     level_4_physaddr: u64,
     start_addr: VirtAddr,
