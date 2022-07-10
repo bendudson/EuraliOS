@@ -350,7 +350,6 @@ extern "C" fn keyboard_handler_inner(context_addr: usize)
         if let Some(key) = keyboard.process_keyevent(key_event) {
             match key {
                 DecodedKey::Unicode(character) => {
-                    print!("{}", character);
                     let (thread1, thread2) =
                         KEYBOARD_RENDEZVOUS.write().send(
                             None,

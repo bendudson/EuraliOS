@@ -233,6 +233,7 @@ pub const WRITE: u64 = 2; // Long(WRITE, length, handle)
 pub const DATA: u64 = 2;  // Same as write
 pub const OPEN: u64 = 3;
 
+pub const OK: u64 = 32;
 pub const COMM_HANDLE: u64 = 64; // A communication handle
 
 pub const EMPTY: u64 = 128;

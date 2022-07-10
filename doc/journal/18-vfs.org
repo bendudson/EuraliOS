@@ -29,4 +29,67 @@ it's allowed to access. The =open= syscall (and =OPEN= message) should
 have permissions flag, so the ways that the communication handle is
 used can be restricted.
 
+** Gopher
+
+It's a simple protocol, so we can use =telnet= to send and receive:
+#+begin_src shell
+  $ telnet gopher.floodgap.com 70
+  Trying 192.80.49.99...
+  Connected to gopher.floodgap.com.
+  Escape character is '^]'.
+#+end_src
+Pressing =Enter= produces:
+#+begin_src shell
+  iWelcome to Floodgap Systems' official gopher server.		error.host	1
+  iFloodgap has served the gopher community since 1999		error.host	1
+  i(formerly gopher.ptloma.edu).		error.host	1
+  i 		error.host	1
+  iWe run Bucktooth 0.2.9 on xinetd as our server system.		error.host	1
+  igopher.floodgap.com is an IBM Power 520 Express with a 2-way		error.host	1
+  i4.2GHz POWER6 CPU and 8GB of RAM, running AIX 6.1 +patches.		error.host	1
+  iSend gopher@floodgap.com your questions and suggestions.		error.host	1
+  i 		error.host	1
+  i***********************************************************		error.host	1
+  i**              OVER 20 YEARS SERVING YOU!               **		error.host	1
+  i**               Plain text is beautiful!                **		error.host	1
+  i***********************************************************		error.host	1
+  <snip>
+  .
+  Connection closed by foreign host.
+#+end_src
+
+
+** First gopher request
+
+In =gopher/src/main.rs=:
+#+begin_src rust
+  let handle = syscalls::open("/tcp/192.80.49.99/70").expect("Couldn't open");
+
+  let data = [0x0D, 0x0A]; // CR LF
+
+  let result = rcall(&handle,
+                     message::WRITE, (data.len() as u64).into(),
+                     syscalls::MemoryHandle::from_u8_slice(&data).into(),
+                     None);
+
+  debug_println!("Returned: {:?}", result);
+#+end_src
+
+Looking at the packets going through the network card with =tcpdump -r dump.dat= we see:
+#+begin_src shell
+  ARP, Request who-has gopher.floodgap.com (Broadcast) tell 0.0.0.0, length 28
+#+end_src
+and then nothing. No machines on the local network know what hardware address =192.80.49.99= (=gopher.floodgap.com=)
+has, and if they did then telling =0.0.0.0= wouldn't do much good.
+
+Now the ARP request gets the hardware address of the gateway, rather
+than =gopher.floodgap.com= and then sends IP packets to
+=gopher.floodgap.com= through the gateway:
+#+begin_src shell
+ARP, Request who-has 10.0.2.2 (Broadcast) tell 10.0.2.15, length 28
+ARP, Reply 10.0.2.2 is-at 52:55:0a:00:02:02 (oui Unknown), length 50
+IP 10.0.2.15.49152 > gopher.floodgap.com.gopher: Flags [S], seq 1043035874, win 1024, options [mss 1446,wscale 0,sackOK,eol], length 0
+IP gopher.floodgap.com.gopher > 10.0.2.15.49152: Flags [S.], seq 64001, ack 1043035875, win 65535, options [mss 1460], length 0
+IP 10.0.2.15.49152 > gopher.floodgap.com.gopher: Flags [.], ack 1, win 1024, length 0
+#+end_src
 

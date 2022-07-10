@@ -15,7 +15,6 @@ extern crate alloc;
 use alloc::boxed::Box;
 
 use crate::syscalls::{self, SyscallError};
-use crate::debug_println;
 
 /// Spawn a new thread with closure
 ///

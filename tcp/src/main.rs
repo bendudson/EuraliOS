@@ -9,13 +9,17 @@
 extern crate alloc;
 use alloc::collections::BTreeMap;
 use alloc::vec;
+use alloc::vec::Vec;
 use alloc::sync::Arc;
 use core::str;
+
+use spin::RwLock;
+use lazy_static::lazy_static;
 
 use smoltcp::{self, iface::{InterfaceBuilder, NeighborCache, Routes}};
 use smoltcp::phy::DeviceCapabilities;
 use smoltcp::time::Instant;
-use smoltcp::wire::{EthernetAddress, IpCidr, Ipv4Address, IpAddress};
+use smoltcp::wire::{EthernetAddress, IpCidr, Ipv4Cidr, Ipv4Address, IpAddress};
 use core::str::FromStr;
 use smoltcp::socket::{TcpSocket, TcpSocketBuffer};
 
@@ -118,6 +122,10 @@ impl<'a> smoltcp::phy::Device<'a> for EthernetDevice {
 
 pub type Interface = smoltcp::iface::Interface<'static, EthernetDevice>;
 
+lazy_static! {
+    static ref INTERFACE: RwLock<Option<Interface>> = RwLock::new(None);
+}
+
 #[no_mangle]
 fn main() {
     debug_println!("[tcp] Starting");
@@ -173,8 +181,11 @@ fn main() {
                 interface.remove_socket(dhcp_handle);
 
                 debug_print!("[tcp] DHCP: IP {}", config.address);
+                set_ipv4_addr(&mut interface, config.address);
+
                 if let Some(router) = config.router {
                     debug_print!(" Router {}", router);
+                    interface.routes_mut().add_default_ipv4_route(router).unwrap();
                 }
 
                 for addr in config.dns_servers.iter()
@@ -191,6 +202,8 @@ fn main() {
         syscalls::thread_yield();
     }
 
+    // Move the interface into static variable
+    *(INTERFACE.write()) = Some(interface);
 
     // Server loop
     loop {
@@ -256,6 +269,15 @@ fn main() {
     }
 }
 
+/// This function from:
+/// https://github.com/smoltcp-rs/smoltcp/blob/master/examples/dhcp_client.rs#L97
+fn set_ipv4_addr(iface: &mut Interface, cidr: Ipv4Cidr) {
+    iface.update_ip_addrs(|addrs| {
+        let dest = addrs.iter_mut().next().unwrap();
+        *dest = IpCidr::Ipv4(cidr);
+    });
+}
+
 /// Open a path from the root, returning a communication handle
 ///
 /// Note: This function spawns a thread which will then attempt
@@ -288,29 +310,168 @@ fn open_path(path: &str) -> Result<CommHandle, ()> {
 }
 
 /// Open a socket and wait in a loop for messages on given handle
-fn open_socket(ip: IpAddress, port: u16, handle: CommHandle) {
-    debug_println!("[tcp] Connecting to {} port {}", ip, port);
+fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
+    debug_println!("[tcp] Connecting to {} port {}", address, port);
 
-    let tcp_rx_buffer = TcpSocketBuffer::new(vec![0; 1024]);
-    let tcp_tx_buffer = TcpSocketBuffer::new(vec![0; 1024]);
+    let tcp_rx_buffer = TcpSocketBuffer::new(vec![0; 2048]);
+    let tcp_tx_buffer = TcpSocketBuffer::new(vec![0; 2048]);
     let tcp_socket = TcpSocket::new(tcp_rx_buffer, tcp_tx_buffer);
 
+    let mut tcp_handle = {
+        let mut some_interface = INTERFACE.write();
+        let mut interface = (*some_interface).as_mut().unwrap();
+        let tcp_handle = interface.add_socket(tcp_socket);
+
+        if let Err(e) = interface.poll(Instant::from_millis(0)) {
+            debug_println!("Network error: {:?}", e);
+        }
+
+        let (socket, cx) = interface.get_socket_and_context::<TcpSocket>(tcp_handle);
+
+        let local_port = 49152; // Note: must be different
+        if socket.connect(cx, (address, port), local_port).is_err() {
+            debug_println!("[tcp {}/{}] socket.connect failed", address, port);
+            interface.remove_socket(tcp_handle);
+            None
+        } else {
+            debug_println!("[tcp {}/{}] open {} active {} can_send {} can_recv {} may_send {} may_recv {}",
+                           address, port,
+                           socket.is_open(), socket.is_active(),
+                           socket.can_send(), socket.can_recv(),
+                           socket.may_recv(), socket.may_recv(), );
+            Some(tcp_handle)
+        }
+    };
+
     loop {
-        match syscalls::receive(&handle) {
+        match syscalls::receive(&comm_handle) {
+            Ok(syscalls::Message::Long(
+                message::WRITE,
+                MessageData::Value(length),
+                MessageData::MemoryHandle(handle))) => {
+
+                // Get a slice
+                let mut data = handle.as_slice::<u8>(length as usize);
+
+                // Keep trying to send the data
+                loop {
+                    match tcp_handle {
+                        Some(handle) => {
+                            let mut some_interface = INTERFACE.write();
+                            let mut interface = (*some_interface).as_mut().unwrap();
+
+                            if let Err(e) = interface.poll(Instant::from_millis(0)) {
+                                debug_println!("[tcp {}/{}] Network error: {:?}", address, port, e);
+                            }
+
+                            let (socket, cx) = interface.get_socket_and_context::<TcpSocket>(handle);
+
+                            if socket.may_send() {
+                                match socket.send_slice(data) {
+                                    Ok(length) => { // Succeeded in sending some or all the data
+                                        debug_println!("[tcp {}/{}] Sent {} bytes", address, port, length);
+                                        if length == data.len() {
+                                            // All data sent
+                                            syscalls::send(&comm_handle,
+                                                           syscalls::Message::Short(
+                                                               message::OK, 0, 0));
+                                            break;
+                                        }
+                                        // Some data still to send. Get slice containing unsent data
+                                        data = &data[length..];
+                                        // Continue around loop
+                                    }
+                                    Err(e) => {
+                                        debug_println!("[tcp {}/{}] Send failed: {:?}", address, port, e);
+                                        syscalls::send(&comm_handle,
+                                                       syscalls::Message::Short(
+                                                           message::ERROR, 0, 0));
+                                        break;
+                                    }
+                                }
+                            }
+                            // Wait for a bit before trying again
+                            syscalls::thread_yield();
+                        }
+                        None => {
+                            // Return error
+                            syscalls::send(&comm_handle,
+                                           syscalls::Message::Short(
+                                               message::ERROR, 0, 0));
+                            break;
+                        }
+                    }
+                }
+            }
+            Ok(syscalls::Message::Short(
+                message::READ, _, _)) => {
+
+                // Data may be received in pieces. Use a Vec to combine them together
+                let mut received_data: Vec<u8> = Vec::new();
+
+                loop {
+                    match tcp_handle {
+                        Some(handle) => {
+                            let mut some_interface = INTERFACE.write();
+                            let mut interface = (*some_interface).as_mut().unwrap();
+
+                            if let Err(e) = interface.poll(Instant::from_millis(0)) {
+                                debug_println!("[tcp {}/{}] Network error: {:?}", address, port, e);
+                            }
+
+                            let (socket, cx) = interface.get_socket_and_context::<TcpSocket>(handle);
+
+                            if socket.can_recv() {
+                                socket
+                                    .recv(|data| {
+                                        received_data.extend_from_slice(&data);
+                                        debug_println!("Received data: {} -> {}", data.len(), received_data.len());
+                                        (data.len(), ())
+                                    })
+                                    .unwrap();
+                            }
+
+                            if !socket.may_recv() {
+                                // Complete reply received
+
+                                // Copy the data into a memory chunk which can be sent to client
+                                let mem_handle = syscalls::MemoryHandle::from_u8_slice(
+                                    received_data.as_slice());
+                                syscalls::send(
+                                    &comm_handle,
+                                    syscalls::Message::Long(
+                                        message::DATA,
+                                        (received_data.len() as u64).into(),
+                                        mem_handle.into()));
+                                break;
+                            }
+                        }
+                        None => {
+                            // Return error
+                            syscalls::send(&comm_handle,
+                                           syscalls::Message::Short(
+                                               message::ERROR, 0, 0));
+                            break;
+                        }
+                    }
+                    // Wait a bit then try again
+                    syscalls::thread_yield();
+                }
+            }
             Ok(msg) => {
-                debug_println!("[tcp {}/{}] -> {:?}", ip, port, msg);
+                debug_println!("[tcp {}/{}] -> {:?}", address, port, msg);
             }
             Err(syscalls::SYSCALL_ERROR_RECV_BLOCKING) => {
                 // Waiting for a message
                 // => Send an error message
-                syscalls::send(&handle,
+                syscalls::send(&comm_handle,
                                syscalls::Message::Short(
                                    message::ERROR, 0, 0));
                 // Wait and try again
                 syscalls::thread_yield();
             },
             Err(code) => {
-                debug_println!("[tcp {}/{}] Receive error {}", ip, port, code);
+                debug_println!("[tcp {}/{}] Receive error {}", address, port, code);
                 // Wait and try again
                 syscalls::thread_yield();
             }
