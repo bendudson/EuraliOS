@@ -19,16 +19,17 @@ use lazy_static::lazy_static;
 use smoltcp::{self, iface::{InterfaceBuilder, NeighborCache, Routes}};
 use smoltcp::phy::DeviceCapabilities;
 use smoltcp::time::Instant;
-use smoltcp::wire::{EthernetAddress, IpCidr, Ipv4Cidr, Ipv4Address, IpAddress};
+use smoltcp::wire::{EthernetAddress, IpCidr, Ipv4Address, IpAddress};
 use core::str::FromStr;
 use smoltcp::socket::{TcpSocket, TcpSocketBuffer};
 
-use euralios_std::{debug_println, debug_print,
+use euralios_std::{debug_println,
                    syscalls::{self, STDIN, CommHandle},
                    thread,
                    net::MacAddress,
                    message::{self, rcall, nic, MessageData}};
 
+mod dhcp;
 
 /// Represents an ethernet device, which has a driver connected
 /// through a communication handle
@@ -162,45 +163,7 @@ fn main() {
         .neighbor_cache(neighbor_cache)
         .finalize();
 
-    // DHCP
-    // Based on https://github.com/vinc/moros/blob/trunk/src/usr/dhcp.rs
-    use smoltcp::socket::{Dhcpv4Event, Dhcpv4Socket};
-
-    let dhcp_socket = Dhcpv4Socket::new();
-    let dhcp_handle = interface.add_socket(dhcp_socket);
-
-    if let Err(e) = interface.poll(Instant::from_millis(0)) { // This transmits
-        panic!("[tcp] Network Error: {}", e);
-    }
-
-    loop {
-        let event = interface.get_socket::<Dhcpv4Socket>(dhcp_handle).poll();
-        match event {
-            None => {}
-            Some(Dhcpv4Event::Configured(config)) => {
-                interface.remove_socket(dhcp_handle);
-
-                debug_print!("[tcp] DHCP: IP {}", config.address);
-                set_ipv4_addr(&mut interface, config.address);
-
-                if let Some(router) = config.router {
-                    debug_print!(" Router {}", router);
-                    interface.routes_mut().add_default_ipv4_route(router).unwrap();
-                }
-
-                for addr in config.dns_servers.iter()
-                    .filter(|addr| addr.is_some()).map(|addr| addr.unwrap()) {
-                        debug_print!(" DNS {}", addr);
-                    }
-                debug_println!("");
-                break;
-            }
-            Some(Dhcpv4Event::Deconfigured) => {
-            }
-        }
-        // Wait and retry
-        syscalls::thread_yield();
-    }
+    dhcp::configure(&mut interface);
 
     // Move the interface into static variable
     *(INTERFACE.write()) = Some(interface);
@@ -269,15 +232,6 @@ fn main() {
     }
 }
 
-/// This function from:
-/// https://github.com/smoltcp-rs/smoltcp/blob/master/examples/dhcp_client.rs#L97
-fn set_ipv4_addr(iface: &mut Interface, cidr: Ipv4Cidr) {
-    iface.update_ip_addrs(|addrs| {
-        let dest = addrs.iter_mut().next().unwrap();
-        *dest = IpCidr::Ipv4(cidr);
-    });
-}
-
 /// Open a path from the root, returning a communication handle
 ///
 /// Note: This function spawns a thread which will then attempt
@@ -317,9 +271,9 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
     let tcp_tx_buffer = TcpSocketBuffer::new(vec![0; 2048]);
     let tcp_socket = TcpSocket::new(tcp_rx_buffer, tcp_tx_buffer);
 
-    let mut tcp_handle = {
+    let tcp_handle = {
         let mut some_interface = INTERFACE.write();
-        let mut interface = (*some_interface).as_mut().unwrap();
+        let interface = (*some_interface).as_mut().unwrap();
         let tcp_handle = interface.add_socket(tcp_socket);
 
         if let Err(e) = interface.poll(Instant::from_millis(0)) {
@@ -358,7 +312,7 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
                     match tcp_handle {
                         Some(handle) => {
                             let mut some_interface = INTERFACE.write();
-                            let mut interface = (*some_interface).as_mut().unwrap();
+                            let interface = (*some_interface).as_mut().unwrap();
 
                             if let Err(e) = interface.poll(Instant::from_millis(0)) {
                                 debug_println!("[tcp {}/{}] Network error: {:?}", address, port, e);
@@ -413,7 +367,7 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
                     match tcp_handle {
                         Some(handle) => {
                             let mut some_interface = INTERFACE.write();
-                            let mut interface = (*some_interface).as_mut().unwrap();
+                            let interface = (*some_interface).as_mut().unwrap();
 
                             if let Err(e) = interface.poll(Instant::from_millis(0)) {
                                 debug_println!("[tcp {}/{}] Network error: {:?}", address, port, e);
