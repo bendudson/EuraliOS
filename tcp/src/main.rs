@@ -412,6 +412,16 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
                     syscalls::thread_yield();
                 }
             }
+            Ok(syscalls::Message::Short(
+                message::CLOSE, _, _)) => {
+                // If a socket is open then close it
+                if let Some(handle) = tcp_handle {
+                    let mut some_interface = INTERFACE.write();
+                    let interface = (*some_interface).as_mut().unwrap();
+                    interface.remove_socket(handle);
+                }
+                return;
+            }
             Ok(msg) => {
                 debug_println!("[tcp {}/{}] -> {:?}", address, port, msg);
             }

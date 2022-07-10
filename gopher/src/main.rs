@@ -33,10 +33,16 @@ fn gopher(host: &str, path: &str) -> Result<(MemoryHandle, usize), ()> {
         Ok((message::DATA,
             MessageData::Value(length),
             MessageData::MemoryHandle(mem_handle))) => {
+            syscalls::send(&handle,
+                           syscalls::Message::Short(
+                               message::CLOSE, 0, 0));
             return Ok((mem_handle, length as usize));
         }
         result => {
             debug_println!("[gopher] Read returned: {:?}", result);
+            syscalls::send(&handle,
+                           syscalls::Message::Short(
+                               message::CLOSE, 0, 0));
             return Err(());
         }
     }
