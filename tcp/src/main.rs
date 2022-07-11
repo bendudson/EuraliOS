@@ -364,6 +364,8 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
                 // Data may be received in pieces. Use a Vec to combine them together
                 let mut received_data: Vec<u8> = Vec::new();
 
+                let max_yields = 100;
+                let mut num_yields = 0;
                 loop {
                     match tcp_handle {
                         Some(handle) => {
@@ -384,6 +386,29 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
                                         (data.len(), ())
                                     })
                                     .unwrap();
+                            } else {
+                                num_yields += 1;
+                                if num_yields > max_yields {
+                                    // Giving up
+                                    if received_data.len() > 0 {
+                                        // Copy the data into a memory chunk which can be sent to client
+                                        let mem_handle = syscalls::MemoryHandle::from_u8_slice(
+                                            received_data.as_slice());
+                                        syscalls::send(
+                                            &comm_handle,
+                                            syscalls::Message::Long(
+                                                message::DATA,
+                                                (received_data.len() as u64).into(),
+                                                mem_handle.into()));
+                                    } else {
+                                        syscalls::send(&comm_handle,
+                                                       syscalls::Message::Short(
+                                                           message::ERROR, 0, 0));
+                                    }
+                                    break;
+                                }
+                                // Wait a bit then try again
+                                syscalls::thread_yield();
                             }
 
                             if !socket.may_recv() {
@@ -409,8 +434,6 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
                             break;
                         }
                     }
-                    // Wait a bit then try again
-                    syscalls::thread_yield();
                 }
             }
             Ok(syscalls::Message::Short(
