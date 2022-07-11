@@ -5,16 +5,17 @@ extern crate alloc;
 use alloc::boxed::Box;
 use core::str;
 use alloc::vec::Vec;
+use alloc::string::String;
 
 use euralios_std::{debug_println, debug_print,
                    syscalls::{self, MemoryHandle, STDIN},
                    message::{self, rcall, MessageData},
                    thread};
 
-fn gopher(host: &str, path: &str) -> Result<(MemoryHandle, usize), ()> {
+fn gopher(host: &str, selector: &str) -> Result<(MemoryHandle, usize), ()> {
     let handle = syscalls::open(host).expect("Couldn't open");
 
-    let mut path: Vec<u8> = path
+    let mut path: Vec<u8> = selector
         .as_bytes()           // Convert to u8
         .to_vec();
     path.extend_from_slice(&[0x0D, 0x0A]); // Append CR LF
@@ -191,13 +192,39 @@ fn display_text<'a>(
 fn main() {
     debug_println!("[gopher] Hello, world!");
 
-    let mut back_data: Option<(MemoryHandle, usize)> = None;
-    let mut forward_data: Option<(MemoryHandle, usize)> = None;
+    let mut current_host = "192.80.49.99";
+    let mut current_selector: String = String::from("");
+    let mut current_port = "70";
+    let mut current_is_gophermap = true;
     loop {
-
-        let (mem_handle, length) = gopher("/tcp/192.80.49.99/70", "").expect("Couldn't gopher");
+        let mut path: String = String::from("/tcp/");
+        path.push_str(&current_host);
+        path.push_str("/");
+        path.push_str(&current_port);
+        let (mem_handle, length) = gopher(&path, &current_selector).expect("Couldn't gopher");
         let data = str::from_utf8(mem_handle.as_slice::<u8>(length as usize)).expect("invalid utf8");
-        display_text(data, "gopher.floodgap.com", true);
+        match display_text(data, "gopher.floodgap.com", current_is_gophermap) {
+            Command::Quit => {
+                return;
+            }
+            Command::Back => {
+
+            }
+            Command::Forward => {
+
+            }
+            Command::Link(link_str) => {
+                // Link
+                let (display, selector, hostname, port) = {
+                    let mut sections = link_str[1..].split('\t');
+                    (sections.next().unwrap_or(""),
+                     sections.next().unwrap_or(""),
+                     sections.next().unwrap_or(""),
+                     sections.next().unwrap_or(""))};
+                current_selector = String::from(selector);
+                current_is_gophermap = link_str.chars().nth(0) == Some('i');
+            }
+        }
 
     }
 }

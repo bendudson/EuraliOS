@@ -267,8 +267,8 @@ fn open_path(path: &str) -> Result<CommHandle, ()> {
 fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
     debug_println!("[tcp] Connecting to {} port {}", address, port);
 
-    let tcp_rx_buffer = TcpSocketBuffer::new(vec![0; 2048]);
-    let tcp_tx_buffer = TcpSocketBuffer::new(vec![0; 2048]);
+    let tcp_rx_buffer = TcpSocketBuffer::new(vec![0; 4096]);
+    let tcp_tx_buffer = TcpSocketBuffer::new(vec![0; 4096]);
     let tcp_socket = TcpSocket::new(tcp_rx_buffer, tcp_tx_buffer);
 
     let tcp_handle = {
@@ -343,9 +343,10 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
                                         break;
                                     }
                                 }
+                            } else {
+                                // Wait for a bit before trying again
+                                syscalls::thread_yield();
                             }
-                            // Wait for a bit before trying again
-                            syscalls::thread_yield();
                         }
                         None => {
                             // Return error
