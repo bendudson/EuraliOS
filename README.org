@@ -114,7 +114,11 @@ direction...
 - [[file:doc/journal/17-tcp-stack.org][17. TCP stack]] where the [[https://docs.rs/smoltcp/latest/smoltcp/][smoltcp]] crate is used to provide a TCP stack
   in user-space which communicates with the network card driver by
   messaging.
-- [[file:doc/journal/18-vfs.org][18. Virtual File System]]
+- [[file:doc/journal/18-gopher.org][18. Gopher]]: Developing a simple Gopher protocol browser, and in the
+  process improving the Virtual File System (VFS) to handle more
+  complicated OPEN messages, and the TCP program to READ and WRITE
+  sockets.
+- [[./doc/journal/19-timing.org][19. Timing]]: Adding functions to get time since system start
 
 ** Bibliography
 

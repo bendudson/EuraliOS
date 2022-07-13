@@ -93,3 +93,6 @@ IP gopher.floodgap.com.gopher > 10.0.2.15.49152: Flags [S.], seq 64001, ack 1043
 IP 10.0.2.15.49152 > gopher.floodgap.com.gopher: Flags [.], ack 1, win 1024, length 0
 #+end_src
 
+#+CAPTION: Sending data to floodgap by sending WRITE message to the tcp program
+#+NAME: fig-write
+[[./img/18-01-write.png]]

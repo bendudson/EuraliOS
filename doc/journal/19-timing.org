@@ -1,0 +1,124 @@
+* Timing
+
+The TCP connection is currenly quite unreliable: Reading a page often
+hangs while waiting for data to be received, or while sending the
+request: When sending =may_send= remains =false= because the socket is
+in the =SYN_SEND= state waiting for a response which never
+arrives. =smoltcp= never times out or retries because all the times
+we're giving it are zero.
+
+[[https://man7.org/linux/man-pages/man2/clock_gettime.2.html][Linux clock_gettime(2)]]
+
+[[https://0xax.gitbooks.io/linux-insides/content/Timers/linux-timers-7.html][Linux timers]]
+
+[[https://0xax.gitbooks.io/linux-insides/content/Timers/][Linux insides chapter on Timers]]
+
+There are several clock sources on x86, including the [[https://en.wikipedia.org/wiki/Programmable_interval_timer][Programmable
+Interrupt Timer (PIT)]] which is used in EuraliOS to switch processes (See
+[[./01-interrupts-processes.org][section 1]]), the [[https://en.wikipedia.org/wiki/Time_Stamp_Counter][Time Stamp Counter]] which was used in [[./05-memory-returns.org][section 5]] to time
+different frame allocation methods, and the [[https://en.wikipedia.org/wiki/High_Precision_Event_Timer][High Precision Event Timer]]. 
+
+The PIT works on a 1.193182 MHz clock, which counts down and emits an
+interrupt every time its counter reaches zero. The count the PIT
+starts from can be changed, and defaults to 65536 giving an interrupt
+frequency of about 18 Hz.
+
+- PIT ticks per interrupt
+- Sum of PIT ticks
+- Last TSC
+- TSC per PIT tick
+
+In general we might want to vary the PIT ticks per interrupt, for
+example to adjust the time allocated to different processes, or for
+power saving, so we should be able to account for these changes.
+
+Every PIT interrupt we will a) Add the current number of PIT ticks per
+interrupt to the cumulative sum; b) Store the difference between
+current and last TSC, and the current TSC. When a time is requested we
+can get the TSC, and use the ticks since the last PIT interrupt and
+the number of TSC ticks per PIT interrupt to calculate a higher
+precision time than PIT interrupts alone could provide.
+
+Some applications need high resolution timing, without the overheads
+of system calls. The [[https://www.felixcloutier.com/x86/rdtsc][RDTSC]] instruction can be executed by user programs
+if the time stamp disable (TSD) flag in register CR4 is clear, but the
+user program needs to be able to access other information to get a
+time. The [[https://man7.org/linux/man-pages/man7/vdso.7.html][Linux virtual Dynamic Shared Object (vDSO)]] provides such a mechanism,
+by mapping a region of user program's address space to read-only data.
+
+In a new file =kernel/src/time.rs= we can use an [[https://doc.rust-lang.org/std/sync/atomic/struct.AtomicU64.html][AtomicU64]] to store
+the number of PIT clock ticks. Each time an interrupt occurs, the
+=timer_interrupt() function in =interupts.rs= will call this
+=pit_interrupt_notify()= function:
+#+begin_src rust
+  use core::sync::atomic::{AtomicU64, Ordering};
+
+  /// The Programmable Interrupt Timer frequency divider
+  const PIT_TICKS_PER_INTERRUPT: u64 = 65536;
+
+  /// Cumulative number of PIT ticks since start
+  static PIT_TICKS: AtomicU64 = AtomicU64::new(0);
+
+  pub fn pit_interrupt_notify() { 
+    // Increment the number of PIT ticks
+    PIT_TICKS.fetch_add(PIT_TICKS_PER_INTERRUPT, Ordering::Relaxed);
+    ...
+  }
+#+end_src
+In future the number of PIT ticks may vary, but for now it's just
+hard-wired to the value it has on startup.
+
+To get the Time Stamp Counter we'll move the =time_stamp_counter()=
+function used in [[./05-memory-returns.org][section 5]] into =time.rs=. To calibrate the TSC
+we can store the value it had last PIT interrupt, and calculate
+the change in TSC:
+#+begin_src rust
+  /// Previous value of Time Stamp Counter
+  static LAST_TSC: AtomicU64 = AtomicU64::new(0);
+
+  pub fn pit_interrupt_notify() { 
+      ...
+      let new_tsc = time_stamp_counter();
+      let last_tsc = LAST_TSC.swap(new_tsc, Ordering::Relaxed);
+
+      println!("PIT: {:x} -> {:x} : {}", last_tsc, new_tsc, new_tsc - last_tsc);
+  }
+#+end_src
+
+Figure [[fig-pit]] shows that there is some variation in the number of TSC counts
+between PIT interrupts. At least some of this may be because we're running on a
+virtual machine (QEMU) rather than a physical machine. That variation would translate
+into variations in our calibration. 
+
+#+CAPTION: The change in Time Stamp Counter between PIT interrupts
+#+NAME: fig-pit
+[[./img/19-01-PIT.png]]
+
+We can divide the change in TSC by the number of PIT ticks to get a
+=TSC_PER_PIT= calibration. We can use a moving average to reduce the
+variation by averaging the new calibration with the previous:
+#+begin_src rust
+  static TSC_PER_PIT: AtomicU64 = AtomicU64::new(0);
+
+  pub fn pit_interrupt_notify() {
+      ...
+      let new_tsc_per_pit = (new_tsc - last_tsc) / PIT_TICKS_PER_INTERRUPT;
+      let ma_tsc_per_pit = (new_tsc_per_pit + TSC_PER_PIT.load(Ordering::Relaxed)) / 2;
+      TSC_PER_PIT.store(ma_tsc_per_pit, Ordering::Relaxed);
+      println!("TSC per PIT tick: {} => avg {}", new_tsc_per_pit, ma_tsc_per_pit);
+  }
+#+end_src
+
+#+CAPTION: Moving average of the number of TSC counts per PIT interrupt
+#+NAME: fig-tsc-pit
+[[./img/19-02-TSC-per-PIT.png]]
+
+We get values around 2275 +/- 5. Since the PIT clock is 1.193182 MHz,
+that would mean a TSC frequency of about 2.7GHz. That agrees with the
+CPU frequency from my laptop's =/proc/cpuinfo= when it's busy:
+#+begin_src bash
+model name	: Intel(R) Core(TM) i5-7200U CPU @ 2.50GHz
+stepping	: 9
+microcode	: 0x84
+cpu MHz		: 2700.000
+#+end_src

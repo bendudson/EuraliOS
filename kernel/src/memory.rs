@@ -789,23 +789,3 @@ pub fn free_user_stack(
 
     Ok(())
 }
-
-///////////////////////////////////////////////////////////////////////
-
-
-/// Read the processor's Time Stamp Counter
-/// uses RDTSC
-/// https://www.felixcloutier.com/x86/rdtsc
-fn time_stamp_counter() -> u64 {
-    let counter: u64;
-    unsafe{
-        asm!("rdtsc",
-             "shl rdx, 32", // High bits in EDX
-             "mov edx, eax", // Low bits in EAX
-             out("rdx") counter,
-             out("rax") _, // Clobbers RAX
-             options(pure, nomem, nostack)
-        );
-    }
-    counter
-}

@@ -189,7 +189,7 @@ to put these two pieces back together:
       unsafe{
           asm!("rdtsc",
                "shl rdx, 32", // High bits in EDX
-               "mov edx, eax", // Low bits in EAX
+               "or rdx, rax", // Low bits in EAX
                out("rdx") counter,
                out("rax") _, // Clobbers RAX
                options(pure, nomem, nostack)

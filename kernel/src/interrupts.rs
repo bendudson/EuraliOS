@@ -1,5 +1,4 @@
 
-
 use core::arch::asm;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
 use lazy_static::lazy_static;
@@ -9,6 +8,7 @@ use crate::gdt;
 use crate::print;
 use crate::process;
 use crate::memory;
+use crate::time;
 
 lazy_static! {
     static ref IDT: InterruptDescriptorTable = {
@@ -81,6 +81,8 @@ pub struct Context {
 pub const INTERRUPT_CONTEXT_SIZE: usize = 20 * 8;
 
 extern "C" fn timer_handler(context_addr: usize) -> usize {
+    time::pit_interrupt_notify(); // For keeping track of time
+
     // Process scheduler decides which process to schedule
     // Returns the stack pointer to switch to.
     let next_stack = process::schedule_next(context_addr);
@@ -368,6 +370,8 @@ extern "C" fn keyboard_handler_inner(context_addr: usize)
             }
         }
     }
+
+    println!("TIME: {}", time::microseconds_monotonic());
 
     let next_context = if returning {context_addr} else {
         // Schedule a different thread to run

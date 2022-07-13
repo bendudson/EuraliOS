@@ -20,6 +20,7 @@ pub mod process;
 pub mod rendezvous;
 pub mod message;
 pub mod vfs;
+pub mod time;
 
 extern crate alloc; // Memory allocation in stdlib
 

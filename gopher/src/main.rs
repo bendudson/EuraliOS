@@ -222,7 +222,7 @@ fn main() {
                      sections.next().unwrap_or(""),
                      sections.next().unwrap_or(""))};
                 current_selector = String::from(selector);
-                current_is_gophermap = link_str.chars().nth(0) == Some('i');
+                current_is_gophermap = link_str.chars().nth(0) == Some('1');
             }
         }
 
