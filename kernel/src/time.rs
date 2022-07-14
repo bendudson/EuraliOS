@@ -61,19 +61,18 @@ pub fn microseconds_monotonic() -> u64 {
     //                   each PIT tick is 0.83809534452 microseconds
     //             878807 / (1024*1024) = 0.83809566497
     // 
-
     // Calculate total TSC then divide to get microseconds
     // Note: Don't use TSC directly because jitter in tsc_per_pit would lead to
     // non-monotonic outputs
 
-    // Note! This will overflow in about 2 hours : 2**64 / (1024 * 1024 * 2270) microseconds
+    // Note! This next expression will overflow in about 2 hours :
+    //       2**64 / (1024 * 1024 * 2270) microseconds
     //((pit * tsc_per_pit + tsc) * 878807) / (1024*1024 * tsc_per_pit)
-    
-    // 878807 = 437 * 2011
-    
-    const scaled_tsc_rate: u64 = 32;
+
+    const scaled_tsc_rate: u64 = 16;
     let scaled_tsc = (tsc * scaled_tsc_rate) / tsc_per_pit;
 
-    // This will overflow in about 9 years : 2**64 / (2011 * 32) microseconds
-    ((((pit * scaled_tsc_rate + scaled_tsc) * 2011) / 1024) * 437) / (1024 * scaled_tsc_rate)
+    // Factorize 878807 = 437 * 2011
+    // This will overflow in about 142 years : 2**64 / 4096 microseconds
+    ((((pit * scaled_tsc_rate + scaled_tsc) * 2011) / 4096) * 437) / (256 * scaled_tsc_rate)
 }

@@ -122,3 +122,85 @@ stepping	: 9
 microcode	: 0x84
 cpu MHz		: 2700.000
 #+end_src
+
+** Calculating time
+
+For now we just need a function which will calculate time since the
+computer restarted. If the CPU ran at a constant frequency then the
+TSC might be used directly, but clock frequencies can vary in time.
+Instead we'll try using the PIT ticks to provide a monontonically
+increasing time, and the number of TSC ticks since the last interrupt
+to provide a (also monotonic) time offset, calibrated using the
+previous PIT interval. Fetching the values stored by the
+=pit_interrupt_notify()= function:
+#+begin_src rust
+  pub fn microseconds_monotonic() -> u64 {
+      // Number of PIT ticks
+      let pit = PIT_TICKS.load(Ordering::Relaxed);
+      // Number of TSC ticks since last PIT interrupt
+      let tsc = time_stamp_counter() - LAST_TSC.load(Ordering::Relaxed);
+      // Number of TSC counts per PIT tick
+      let tsc_per_pit = TSC_PER_PIT.load(Ordering::Relaxed);
+      ...
+  }
+#+end_src
+
+We can combine the =pit= and =tsc= counters into an effective TSC
+count: =pit * tsc_per_pit + tsc= (note that this is not the same as
+just taking the TSC due to its rate variation). We then need to
+convert PIT ticks into microseconds. The PIT frequency is 1.193181666
+MHz, so the interval between each tick is 0.83809534
+microseconds. Rather than using floating point which would be software
+emulated (the =soft-float= feature in =x86_64-euralios.json=), we can
+try writing integer arithmetic ourselves. Integer multiplication can
+be slow, but division is even slower in general. Dividing by powers of
+2 is a simple and fast bit shift, so we can find a ratio close to
+0.83809534 with a power of two in the denominator. One candidate is
+=878807/(1024*1024)=, which has a value =0.838095(66)= i.e. out by
+about one second every 30 days. Putting this together, a simple
+(naive) way to calculate the number of microseconds is:
+#+begin_src rust
+((pit * tsc_per_pit + tsc) * 878807) / (1024*1024 * tsc_per_pit)
+#+end_src
+
+Unfortunately this has several problems. The most serious is that it
+will overflow 64-bit integers after about 2 hours, which seems
+unacceptably short when =2^64= microseconds is over half a million
+years. This occurs because we calculate an even larger number and then
+divide by =(1024*1024 * tsc_per_pit)= which is about 31 bits, so the
+top 31 of the 64 available bits are not used in the output.
+
+To reduce the number of bits which are thrown away there are (at least) two
+things we can do:
+1. Reduce the amount by which =pit= is multiplied, =tsc_per_pit=
+   currently.  That quantity =pit * tsc_per_pit + tsc= is
+   sub-nanosecond precision, not needed when the output is
+   microseconds. We can choose a scaled TSC rate per PIT tick, for
+   example calculating the initial ticks to 1/16th of a PIT tick.
+2. We can factorize 878807 into smaller factors e.g. 878807 =
+   437 * 2011.  Fortunately it seems to have smaller factors than
+   nearby numbers.  Rather than multiplying/dividing by
+   878807/1048576, a two-step process of multiplying by 2011/2048 and
+   then 437/512 requires fewer bits.
+
+The code is now:
+#+begin_src rust
+  const scaled_tsc_rate: u64 = 16;
+  let scaled_tsc = (tsc * scaled_tsc_rate) / tsc_per_pit;
+  ((((pit * scaled_tsc_rate + scaled_tsc) * 2011) / 4096) * 437) / (256 * scaled_tsc_rate)
+#+end_src
+This still contains one (unavoidable) division by tsc_per_pit, but the
+other two divisions are by powers of 2 and so should compile to bit
+shifts. The largest number we divide by is now 4096, a 12 bit shift.
+The remaining 52 bits will overflow after about 142 years, by which
+point the time will be out by at least half an hour. It's not perfect,
+but that's probably good enough for most applications.
+
+** Making time functions available to user programs
+
+We now have a kernel function to calculate milliseconds, but need to
+make it available to user programs. We could add a syscall, or a
+kernel thread to listen on a Rendezvous, but it might be fun to try a
+different way and at the same time avoid the overhead of a syscall.
+
+
