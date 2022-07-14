@@ -2,6 +2,7 @@
 mod frame_allocator; // In memory/frame_allocator.rs
 use frame_allocator::MultilevelBitmapFrameAllocator;
 mod allocator;
+mod kernel_info;
 
 use x86_64::{
     structures::paging::{Page, PageTable, PhysFrame,
@@ -70,6 +71,9 @@ pub fn init(boot_info: &'static BootInfo) {
 
         allocator::init_heap(&mut mapper, &mut frame_allocator)
             .expect("heap initialization failed");
+
+        kernel_info::init(&mut mapper, &mut frame_allocator, physical_memory_offset)
+            .expect("KernelInfo initialization failed");
 
         // Store boot_info for later calls
         unsafe { MEMORY_INFO = Some(MemoryInfo {
