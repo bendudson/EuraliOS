@@ -239,7 +239,7 @@ impl Thread {
         }
         // All full => Add new handle
         handles.push(Some(rendezvous));
-        (handles.len() - 1)
+        handles.len() - 1
     }
 
     /// Get the physical address and page table level of the memory

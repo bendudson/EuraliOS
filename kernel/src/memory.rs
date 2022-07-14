@@ -1,6 +1,7 @@
 
 mod frame_allocator; // In memory/frame_allocator.rs
 use frame_allocator::MultilevelBitmapFrameAllocator;
+mod allocator;
 
 use x86_64::{
     structures::paging::{Page, PageTable, PhysFrame,
@@ -15,7 +16,6 @@ use x86_64::{
 const THREAD_STACK_PAGE_INDEX: [u8; 3] = [5, 0, 0];
 
 use crate::println;
-use crate::allocator;
 use crate::syscalls;
 use bootloader::BootInfo;
 
@@ -354,7 +354,8 @@ pub fn create_user_ondemand_pages(
         mapper.update_flags(page_range.start,
                             PageTableFlags::PRESENT |
                             PageTableFlags::WRITABLE |
-                            PageTableFlags::USER_ACCESSIBLE);
+                            PageTableFlags::USER_ACCESSIBLE)
+            .map_err(|_| MapToError::FrameAllocationFailed)?;
     }
 
     Ok(())

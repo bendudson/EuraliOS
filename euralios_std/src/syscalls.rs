@@ -426,6 +426,10 @@ pub const SYSCALL_ERROR_MEMALLOC: SyscallError = SyscallError(4); // Memory allo
 pub const SYSCALL_ERROR_PARAM: SyscallError = SyscallError(5); // Invalid parameter
 pub const SYSCALL_ERROR_UTF8: SyscallError = SyscallError(6); // UTF8 conversion error
 pub const SYSCALL_ERROR_NOTFOUND: SyscallError = SyscallError(7);
+pub const SYSCALL_ERROR_THREAD: SyscallError = SyscallError(8);
+pub const SYSCALL_ERROR_MEMORY: SyscallError = SyscallError(9);
+pub const SYSCALL_ERROR_DOUBLEFREE: SyscallError = SyscallError(10);
+pub const SYSCALL_ERROR_NOMEMSLOTS: SyscallError = SyscallError(11);
 
 impl fmt::Display for SyscallError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -438,6 +442,10 @@ impl fmt::Display for SyscallError {
                    SYSCALL_ERROR_PARAM => "Invalid parameter",
                    SYSCALL_ERROR_UTF8 => "UTF8 conversion error",
                    SYSCALL_ERROR_NOTFOUND => "Not found",
+                   SYSCALL_ERROR_THREAD => "Thread error",
+                   SYSCALL_ERROR_MEMORY => "Memory error",
+                   SYSCALL_ERROR_DOUBLEFREE => "Double free",
+                   SYSCALL_ERROR_NOMEMSLOTS => "No memory slots",
                    _ => "Unknown error"
                })
     }
