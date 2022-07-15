@@ -457,7 +457,7 @@ pub fn new_user_thread(
 
         // Create a user pagetable with only kernel pages
         let (user_page_table_ptr, user_page_table_physaddr) =
-            memory::create_kernel_only_pagetable();
+            memory::create_new_user_pagetable();
 
         // Allocate user heap
         if memory::create_user_ondemand_pages(

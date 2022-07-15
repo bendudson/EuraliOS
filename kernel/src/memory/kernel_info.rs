@@ -3,6 +3,7 @@
 //!
 use x86_64::{
     structures::paging::{
+        page::Page, frame::PhysFrame,
         mapper::MapToError, FrameAllocator, Mapper, PageTableFlags, Size4KiB,
     },
     VirtAddr, PhysAddr
@@ -11,17 +12,22 @@ use x86_64::{
 use core::sync::atomic::{AtomicU64, Ordering};
 
 static FRAME_PHYSADDR: AtomicU64 = AtomicU64::new(0);
+
+/// KernelInfo virtual address in kernel address space
 static FRAME_VIRTADDR: AtomicU64 = AtomicU64::new(0);
 
+/// KernelInfo virtual address in user address space
+const KERNELINFO_VIRTADDR: u64 = 0x4fff000;
+
 pub struct KernelInfo {
-    pit_ticks: u64, // Number of PIT ticks since restart
-    last_tsc: u64, // TSC value at last pit_ticks update
-    tsc_per_pit: u64, // Change in TSC ticks per PIT tick
+    // These are set in time::pit_interrupt_notify()
+    pub pit_ticks: u64, // Number of PIT ticks since restart
+    pub last_tsc: u64, // TSC value at last pit_ticks update
+    pub tsc_per_pit: u64, // Change in TSC ticks per PIT tick
 }
 
 /// Initialise a frame to hold the KernelInfo struct
 pub fn init(
-    mapper: &mut impl Mapper<Size4KiB>,
     frame_allocator: &mut impl FrameAllocator<Size4KiB>,
     physical_memory_offset: VirtAddr
 ) -> Result<(), MapToError<Size4KiB>> {
@@ -48,3 +54,22 @@ pub fn get_mut() -> &'static mut KernelInfo {
     unsafe{&mut (*ptr)}
 }
 
+pub fn add_to_user_table(
+    mapper: &mut impl Mapper<Size4KiB>,
+    frame_allocator: &mut impl FrameAllocator<Size4KiB>,
+) -> Result<(), MapToError<Size4KiB>> {
+    let page = Page::containing_address(
+        VirtAddr::new(KERNELINFO_VIRTADDR));
+    let frame = PhysFrame::containing_address(
+        PhysAddr::new(FRAME_PHYSADDR.load(Ordering::Relaxed)));
+
+    unsafe {
+        mapper.map_to(page,
+                      frame,
+                      // Page not writable
+                      PageTableFlags::PRESENT |
+                      PageTableFlags::USER_ACCESSIBLE,
+                      frame_allocator)?.flush();
+    }
+    Ok(())
+}

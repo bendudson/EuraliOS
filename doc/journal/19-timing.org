@@ -13,10 +13,28 @@ we're giving it are zero.
 
 [[https://0xax.gitbooks.io/linux-insides/content/Timers/][Linux insides chapter on Timers]]
 
+http://btorpey.github.io/blog/2014/02/18/clock-sources-in-linux/
+
 There are several clock sources on x86, including the [[https://en.wikipedia.org/wiki/Programmable_interval_timer][Programmable
 Interrupt Timer (PIT)]] which is used in EuraliOS to switch processes (See
 [[./01-interrupts-processes.org][section 1]]), the [[https://en.wikipedia.org/wiki/Time_Stamp_Counter][Time Stamp Counter]] which was used in [[./05-memory-returns.org][section 5]] to time
 different frame allocation methods, and the [[https://en.wikipedia.org/wiki/High_Precision_Event_Timer][High Precision Event Timer]]. 
+
+** The Time Stamp Counter
+
+To get the Time Stamp Counter we'll move the =time_stamp_counter()=
+function used in [[./05-memory-returns.org][section 5]] into =time.rs=.
+
+
+CPUID flags constant_tsc, nonstop_tsc, rdtscp
+
+RDTSCP. Out-of-order execution, cpuid
+
+
+
+
+
+** Calibrating with the PIT
 
 The PIT works on a 1.193182 MHz clock, which counts down and emits an
 interrupt every time its counter reaches zero. The count the PIT
@@ -68,9 +86,8 @@ the number of PIT clock ticks. Each time an interrupt occurs, the
 In future the number of PIT ticks may vary, but for now it's just
 hard-wired to the value it has on startup.
 
-To get the Time Stamp Counter we'll move the =time_stamp_counter()=
-function used in [[./05-memory-returns.org][section 5]] into =time.rs=. To calibrate the TSC
-we can store the value it had last PIT interrupt, and calculate
+
+To calibrate the TSC we can store the value it had last PIT interrupt, and calculate
 the change in TSC:
 #+begin_src rust
   /// Previous value of Time Stamp Counter
@@ -126,11 +143,16 @@ cpu MHz		: 2700.000
 ** Calculating time
 
 For now we just need a function which will calculate time since the
-computer restarted. If the CPU ran at a constant frequency then the
-TSC might be used directly, but clock frequencies can vary in time.
+computer restarted, because =smoltcp= only needs time from an
+arbitrary starting point. If the CPU ran at a constant frequency then
+the TSC might be used directly, but clock frequencies can vary in
+time, and in a multi-core machine each core could have a different TSC.
+Modern CPUs solve this by having a constant TSC syncronised between cores,
+but not on older models.
+
 Instead we'll try using the PIT ticks to provide a monontonically
 increasing time, and the number of TSC ticks since the last interrupt
-to provide a (also monotonic) time offset, calibrated using the
+to provide an (also monotonic) time offset, calibrated using the
 previous PIT interval. Fetching the values stored by the
 =pit_interrupt_notify()= function:
 #+begin_src rust

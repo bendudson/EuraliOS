@@ -2,6 +2,8 @@
 use core::arch::asm;
 use core::sync::atomic::{AtomicU64, Ordering};
 
+use crate::memory;
+
 /// The Programmable Interrupt Timer frequency divider
 const PIT_TICKS_PER_INTERRUPT: u64 = 65536;
 
@@ -42,6 +44,12 @@ pub fn pit_interrupt_notify() {
     let new_tsc_per_pit = (new_tsc - last_tsc) / PIT_TICKS_PER_INTERRUPT;
     let ma_tsc_per_pit = (new_tsc_per_pit + TSC_PER_PIT.load(Ordering::Relaxed)) / 2;
     TSC_PER_PIT.store(ma_tsc_per_pit, Ordering::Relaxed);
+
+    // Store in user-accessible KernelInfo page
+    let info = memory::kernel_info::get_mut();
+    info.pit_ticks = PIT_TICKS.load(Ordering::Relaxed);
+    info.last_tsc = new_tsc;
+    info.tsc_per_pit = ma_tsc_per_pit;
 }
 
 /// Monotonic count of he number of microseconds since restart

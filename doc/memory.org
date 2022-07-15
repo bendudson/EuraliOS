@@ -12,12 +12,15 @@ def page_table_address(indices):
 
 ** Kernel memory layout
 
-- Code
+- Code below (0, 0, 40, 0, 0),  0x5000000 i.e 50Mb maximum
 - Kernel heap (136, 273, 34, 64, 0), 0x_4444_4444_0000.  Set by
   =HEAP_START= and =HEAP_SIZE= constants in =memory/allocator.rs=.
 - Physical memory map
 
 ** User program memory layout
+
+- Kernel info page, (0, 0, 39, 511, 0) to (0, 0, 40, 0, 0), 0x4fff000 to 0x5000000.
+  Read-only, contains information for fast timing functions.
 
 - Code (0, 0, 40, 0, 0) to (0, 2, 0, 0, 0), 0x5000000 to 0x80000000. Set by =USER_CODE_START= and
   =USER_CODE_END= constants in =process.rs=.

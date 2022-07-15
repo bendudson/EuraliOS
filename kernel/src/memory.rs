@@ -2,7 +2,7 @@
 mod frame_allocator; // In memory/frame_allocator.rs
 use frame_allocator::MultilevelBitmapFrameAllocator;
 mod allocator;
-mod kernel_info;
+pub mod kernel_info;
 
 use x86_64::{
     structures::paging::{Page, PageTable, PhysFrame,
@@ -72,7 +72,7 @@ pub fn init(boot_info: &'static BootInfo) {
         allocator::init_heap(&mut mapper, &mut frame_allocator)
             .expect("heap initialization failed");
 
-        kernel_info::init(&mut mapper, &mut frame_allocator, physical_memory_offset)
+        kernel_info::init(&mut frame_allocator, physical_memory_offset)
             .expect("KernelInfo initialization failed");
 
         // Store boot_info for later calls
@@ -171,7 +171,8 @@ fn copy_pagetables(level_4_table: &PageTable) -> (*mut PageTable, u64) {
 
 /// Creates a PageTable containing only kernel pages
 ///
-/// Copies the kernel pagetables into a new set of tables
+/// - Copies the kernel pagetables into a new set of tables
+/// - Adds the KernelInfo read-only page
 ///
 /// Returns
 /// -------
@@ -179,10 +180,22 @@ fn copy_pagetables(level_4_table: &PageTable) -> (*mut PageTable, u64) {
 /// - A pointer to the PageTable (virtual address in kernel mapped pages)
 /// - The physical address which can be written to cr3
 ///
-pub fn create_kernel_only_pagetable() -> (*mut PageTable, u64) {
+pub fn create_new_user_pagetable() -> (*mut PageTable, u64) {
     let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
 
-    copy_pagetables(memory_info.kernel_l4_table)
+    // Copy kernel pages
+    let (user_page_table_ptr, user_page_table_physaddr) =
+        copy_pagetables(memory_info.kernel_l4_table);
+
+    // Add KernelInfo page
+    let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+    let mut mapper = unsafe {
+        OffsetPageTable::new(&mut *user_page_table_ptr,
+                             memory_info.physical_memory_offset)};
+    kernel_info::add_to_user_table(&mut mapper,
+                                   &mut memory_info.frame_allocator);
+
+    (user_page_table_ptr, user_page_table_physaddr)
 }
 
 /// Switch to the specified page table
