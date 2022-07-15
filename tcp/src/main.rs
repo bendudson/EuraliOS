@@ -308,6 +308,8 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
                 let mut data = handle.as_slice::<u8>(length as usize);
 
                 // Keep trying to send the data
+                let max_yields = 100;
+                let mut num_yields = 0;
                 loop {
                     match tcp_handle {
                         Some(handle) => {

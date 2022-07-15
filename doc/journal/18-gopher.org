@@ -96,3 +96,14 @@ IP 10.0.2.15.49152 > gopher.floodgap.com.gopher: Flags [.], ack 1, win 1024, len
 #+CAPTION: Sending data to floodgap by sending WRITE message to the tcp program
 #+NAME: fig-write
 [[./img/18-01-write.png]]
+
+
+** Rendering text pages
+
+Following the first link to the =gopher/proxy= selector, we read the
+text file and just print every line:
+#+CAPTION: Rendering gopher text file (broken)
+#+NAME: fig-broken
+[[./img/18-04-broken.png]]
+
+The Gopher specification is [[https://datatracker.ietf.org/doc/html/rfc1436][RFC 1436]]
