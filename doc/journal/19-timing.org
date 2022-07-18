@@ -226,3 +226,44 @@ kernel thread to listen on a Rendezvous, but it might be fun to try a
 different way and at the same time avoid the overhead of a syscall.
 
 
+We can now try this out with a user program =timing_test=
+#+begin_src rust
+#![no_std]
+#![no_main]
+
+use euralios_std::{debug_println,
+                   syscalls::{self, STDIN},
+                   time};
+
+#[no_mangle]
+fn main() {
+    loop {
+        let _ = syscalls::receive(&STDIN);
+        debug_println!("[timing_test] TSC: {} microseconds: {}",
+                       time::time_stamp_counter(),
+                       time::microseconds_monotonic());
+        syscalls::thread_yield();
+    }
+}
+#+end_src
+which should print the TSC and time in microseconds every time
+it receives a message, for example a key press. A result is shown
+in figure [[fig-timer-test]]:
+
+#+CAPTION:
+#+NAME: fig-timer-test
+[[./img/19-03-timer-test.png]]
+
+In most cases there are two =TIME:= lines for every =[timing_test]=
+line.  The =TIME:= lines are printed from the kernel =interrupts.rs=
+after the character message is sent and before
+=process::schedule_next()= is called.  A key is pressed, message sent,
+a =TIME:= output is printed, the context is switched to the
+timing_test program, it prints a =[timing_test]= line, and then the
+key is released and another =TIME:= line is printed. It looks like
+there's about a 3 or 4ms delay for printing the =TIME:= line,
+switching context, and receiving the message. Printing the
+=[timing_test]= line isn't included because that happens after the
+time is calculated. That seems like a long time, and at some point I'd
+like to understand what's causing that delay: Is is the printing or
+the context switch?

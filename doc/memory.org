@@ -20,7 +20,8 @@ def page_table_address(indices):
 ** User program memory layout
 
 - Kernel info page, (0, 0, 39, 511, 0) to (0, 0, 40, 0, 0), 0x4fff000 to 0x5000000.
-  Read-only, contains information for fast timing functions.
+  Read-only, contains information for fast timing functions. Set by
+  =KERNELINFO_VIRTADDR= in =kernel/src/memory/kernel_info.rs= and =euralios_std/src/time.rs=.
 
 - Code (0, 0, 40, 0, 0) to (0, 2, 0, 0, 0), 0x5000000 to 0x80000000. Set by =USER_CODE_START= and
   =USER_CODE_END= constants in =process.rs=.

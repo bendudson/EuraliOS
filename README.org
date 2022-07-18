@@ -42,6 +42,7 @@ much, but it can do it all at the same time.
 - [X] On-demand memory allocation using page fault handler
 - [X] User space stack and heap memory management
 - [X] RTL8139 network card driver running in user space
+- [X] A vDSO-like fast mechanism for timing functions
 
 There is no filesystem (yet), so user programs are compiled and then
 the ELF files are included in the kernel binary using Rust's
