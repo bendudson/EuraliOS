@@ -49,40 +49,40 @@ fn kernel_thread_main() {
     ].to_vec());
 
     // New input for the rtl8139 driver
-    // let rtl_input = Arc::new(RwLock::new(Rendezvous::Empty));
-    // process::new_user_thread(
-    //     include_bytes!("../../user/rtl8139"),
-    //     process::Params{
-    //         handles: Vec::from([
-    //             // Input
-    //             rtl_input.clone(),
-    //             // VGA output
-    //             vga_rz.clone()
-    //         ]),
-    //         io_privileges: true,
-    //         mounts: vfs.clone()
-    //     });
-    // vfs.mount("/dev/nic", rtl_input);
+    let rtl_input = Arc::new(RwLock::new(Rendezvous::Empty));
+    process::new_user_thread(
+        include_bytes!("../../user/rtl8139"),
+        process::Params{
+            handles: Vec::from([
+                // Input
+                rtl_input.clone(),
+                // VGA output
+                vga_rz.clone()
+            ]),
+            io_privileges: true,
+            mounts: vfs.clone()
+        });
+    vfs.mount("/dev/nic", rtl_input);
 
     // New input for tcp stack
-    // let tcp_input = Arc::new(RwLock::new(Rendezvous::Empty));
-    // process::new_user_thread(
-    //     include_bytes!("../../user/tcp"),
-    //     process::Params{
-    //         handles: Vec::from([
-    //             // Input
-    //             tcp_input.clone(),
-    //             // VGA output
-    //             vga_rz.clone()
-    //         ]),
-    //         io_privileges: false,
-    //         mounts: vfs.clone()
-    //     });
-    // vfs.mount("/tcp", tcp_input);
+    let tcp_input = Arc::new(RwLock::new(Rendezvous::Empty));
+    process::new_user_thread(
+        include_bytes!("../../user/tcp"),
+        process::Params{
+            handles: Vec::from([
+                // Input
+                tcp_input.clone(),
+                // VGA output
+                vga_rz.clone()
+            ]),
+            io_privileges: false,
+            mounts: vfs.clone()
+        });
+    vfs.mount("/tcp", tcp_input);
 
     // Use keyboard input
     process::new_user_thread(
-        include_bytes!("../../user/timing_test"),
+        include_bytes!("../../user/gopher"),
         process::Params{
             handles: Vec::from([
                 // Input
@@ -91,7 +91,7 @@ fn kernel_thread_main() {
                 vga_rz
             ]),
             io_privileges: false,
-            mounts: vfs.clone()
+            mounts: vfs
         });
 
     kernel::hlt_loop();

@@ -26,6 +26,7 @@ use smoltcp::socket::{TcpSocket, TcpSocketBuffer};
 use euralios_std::{debug_println,
                    syscalls::{self, STDIN, CommHandle},
                    thread,
+                   time,
                    net::MacAddress,
                    message::{self, rcall, nic, MessageData}};
 
@@ -263,6 +264,11 @@ fn open_path(path: &str) -> Result<CommHandle, ()> {
     Err(())
 }
 
+/// Returns a random port number in the range 49152–65535.
+fn ephemeral_port_number() -> u16 {
+    (time::time_stamp_counter() % 16384) as u16 + 49152
+}
+
 /// Open a socket and wait in a loop for messages on given handle
 fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
     debug_println!("[tcp] Connecting to {} port {}", address, port);
@@ -276,13 +282,14 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
         let interface = (*some_interface).as_mut().unwrap();
         let tcp_handle = interface.add_socket(tcp_socket);
 
-        if let Err(e) = interface.poll(Instant::from_millis(0)) {
+        if let Err(e) = interface.poll(Instant::from_millis(time::microseconds_monotonic() as i64 / 1000)) {
             debug_println!("Network error: {:?}", e);
         }
 
         let (socket, cx) = interface.get_socket_and_context::<TcpSocket>(tcp_handle);
 
-        let local_port = 49152; // Note: must be different
+        // Random port number for the local port
+        let local_port = ephemeral_port_number();
         if socket.connect(cx, (address, port), local_port).is_err() {
             debug_println!("[tcp {}/{}] socket.connect failed", address, port);
             interface.remove_socket(tcp_handle);
@@ -316,7 +323,7 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
                             let mut some_interface = INTERFACE.write();
                             let interface = (*some_interface).as_mut().unwrap();
 
-                            if let Err(e) = interface.poll(Instant::from_millis(0)) {
+                            if let Err(e) = interface.poll(Instant::from_millis(time::microseconds_monotonic() as i64 / 1000)) {
                                 debug_println!("[tcp {}/{}] Network error: {:?}", address, port, e);
                             }
 
@@ -374,13 +381,14 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
                             let mut some_interface = INTERFACE.write();
                             let interface = (*some_interface).as_mut().unwrap();
 
-                            if let Err(e) = interface.poll(Instant::from_millis(0)) {
+                            if let Err(e) = interface.poll(Instant::from_millis(time::microseconds_monotonic() as i64 / 1000)) {
                                 debug_println!("[tcp {}/{}] Network error: {:?}", address, port, e);
                             }
 
                             let (socket, cx) = interface.get_socket_and_context::<TcpSocket>(handle);
 
                             if socket.can_recv() {
+                                debug_println!("[tcp] socket recv");
                                 socket
                                     .recv(|data| {
                                         received_data.extend_from_slice(&data);
@@ -444,6 +452,14 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
                 if let Some(handle) = tcp_handle {
                     let mut some_interface = INTERFACE.write();
                     let interface = (*some_interface).as_mut().unwrap();
+
+                    // Close the connection
+                    interface.get_socket::<TcpSocket>(handle).abort();
+
+                    if let Err(e) = interface.poll(Instant::from_millis(time::microseconds_monotonic() as i64 / 1000)) {
+                        debug_println!("Network error: {:?}", e);
+                    }
+
                     interface.remove_socket(handle);
                 }
                 return;

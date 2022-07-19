@@ -371,8 +371,6 @@ extern "C" fn keyboard_handler_inner(context_addr: usize)
         }
     }
 
-    println!("TIME: {}", time::microseconds_monotonic());
-
     let next_context = if returning {context_addr} else {
         // Schedule a different thread to run
         process::schedule_next(context_addr)

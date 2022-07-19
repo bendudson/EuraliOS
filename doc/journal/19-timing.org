@@ -1,9 +1,6 @@
 * Timing
 
-The TCP connection is currenly quite unreliable: Reading a page often
-hangs while waiting for data to be received, or while sending the
-request: When sending =may_send= remains =false= because the socket is
-in the =SYN_SEND= state waiting for a response which never
+ waiting for a response which never
 arrives. =smoltcp= never times out or retries because all the times
 we're giving it are zero.
 

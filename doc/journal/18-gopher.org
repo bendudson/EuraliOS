@@ -98,11 +98,123 @@ IP 10.0.2.15.49152 > gopher.floodgap.com.gopher: Flags [.], ack 1, win 1024, len
 [[./img/18-01-write.png]]
 
 
+** Failing to read a second page
+
+The TCP connection is currenly quite unreliable: If we try reading two pages soon
+after each other then the connection hangs while sending the request:
+When sending =may_send= remains =false= because the socket is in the =SYN_SEND= state.
+
+To diagnose this, we can use =tcpdump= to inspect the packets being sent.
+First we have the DHCP requests and replies:
+#+begin_src bash
+17:59:17.645296 IP 0.0.0.0.bootpc > 255.255.255.255.bootps: BOOTP/DHCP, Request from 52:54:00:12:34:56 (oui Unknown), length 262
+17:59:17.645384 IP 10.0.2.2.bootps > 255.255.255.255.bootpc: BOOTP/DHCP, Reply, length 548
+17:59:17.652697 IP 0.0.0.0.bootpc > 255.255.255.255.bootps: BOOTP/DHCP, Request from 52:54:00:12:34:56 (oui Unknown), length 274
+17:59:17.652721 IP 10.0.2.2.bootps > 255.255.255.255.bootpc: BOOTP/DHCP, Reply, length 548
+#+end_src
+then the ARP request to get the gateway hardware address:
+#+begin_src bash
+17:59:17.673175 ARP, Request who-has 10.0.2.2 (Broadcast) tell 10.0.2.15, length 28
+17:59:17.673266 ARP, Reply 10.0.2.2 is-at 52:55:0a:00:02:02 (oui Unknown), length 50
+#+end_src
+then the first request and reply:
+#+begin_src bash
+  17:59:17.732320 IP 10.0.2.15.49152 > gopher.floodgap.com.gopher: Flags [S], seq 1043035874, win 1448, options [mss 1446,wscale 0,sackOK,eol], length 0
+  17:59:17.800152 IP gopher.floodgap.com.gopher > 10.0.2.15.49152: Flags [S.], seq 64001, ack 1043035875, win 65535, options [mss 1460], length 0
+  17:59:17.843614 IP 10.0.2.15.49152 > gopher.floodgap.com.gopher: Flags [.], ack 1, win 1460, length 0
+#+end_src
+where we send a SYN packet (=[S]= flag) to establish a connection;
+=gopher.floodgap.com.gopher= responds with a SYN-ACK (=[S.]=),
+establishing a connection. We then push some data (=[P.]= flag), and
+floodgap acknowledges:
+#+begin_src bash
+  17:59:17.864604 IP 10.0.2.15.49152 > gopher.floodgap.com.gopher: Flags [P.], seq 1:3, ack 1, win 1460, length 2
+  17:59:17.864712 IP gopher.floodgap.com.gopher > 10.0.2.15.49152: Flags [.], ack 3, win 65535, length 0
+#+end_src
+Then floodgap pushes some data and there's a series of acknowledgements "ok..ok..ok" etc:
+#+begin_src bash
+  17:59:17.929359 IP gopher.floodgap.com.gopher > 10.0.2.15.49152: Flags [P.], seq 1:70, ack 3, win 65535, length 69
+  17:59:17.960059 IP 10.0.2.15.49152 > gopher.floodgap.com.gopher: Flags [.], ack 70, win 1460, length 0
+  17:59:17.960178 IP gopher.floodgap.com.gopher > 10.0.2.15.49152: Flags [.], seq 70:1510, ack 3, win 65535, length 1440
+  17:59:17.976770 IP 10.0.2.15.49152 > gopher.floodgap.com.gopher: Flags [.], ack 1510, win 1460, length 0
+  17:59:17.976811 IP gopher.floodgap.com.gopher > 10.0.2.15.49152: Flags [.], seq 1510:2950, ack 3, win 65535, length 1440
+  17:59:17.996857 IP 10.0.2.15.49152 > gopher.floodgap.com.gopher: Flags [.], ack 2950, win 1460, length 0
+  17:59:17.996928 IP gopher.floodgap.com.gopher > 10.0.2.15.49152: Flags [.], seq 2950:4390, ack 3, win 65535, length 1440
+  17:59:18.009477 IP 10.0.2.15.49152 > gopher.floodgap.com.gopher: Flags [.], ack 4390, win 1460, length 0
+#+end_src
+Floodgap is done, so sends a couple of packets with the FIN flag
+(finish, flag =[FP.]=), indicating that the session is finished.
+#+begin_src bash
+  17:59:18.009514 IP gopher.floodgap.com.gopher > 10.0.2.15.49152: Flags [FP.], seq 4390:5424, ack 3, win 65535, length 1034
+  17:59:19.254681 IP gopher.floodgap.com.gopher > 10.0.2.15.49152: Flags [FP.], seq 4390:5424, ack 3, win 65535, length 1034
+#+end_src
+
+We then select a different page to load (or the same page), sending a
+SYN packet to establish a new session:
+#+begin_src bash
+17:59:21.643464 IP 10.0.2.15.49152 > gopher.floodgap.com.gopher: Flags [S], seq 2972242379, win 1448, options [mss 1446,wscale 0,sackOK,eol],
+length 0
+#+end_src
+Floodgap responds saying that the session is finished, and we get into
+an endless cycle of insisting that we want a connection, and Floodgap
+insisting that the session is finished:
+#+begin_src bash
+  17:59:21.643826 IP gopher.floodgap.com.gopher > 10.0.2.15.49152: Flags [F.], seq 5424, ack 3, win 65535, length 0
+  17:59:22.254872 IP gopher.floodgap.com.gopher > 10.0.2.15.49152: Flags [F.], seq 4390, ack 3, win 65535, length 0
+  17:59:22.392248 IP 10.0.2.15.49152 > gopher.floodgap.com.gopher: Flags [S], seq 2972242379, win 1448, options [mss 1446,wscale 0,sackOK,eol], length 0
+  17:59:22.392320 IP gopher.floodgap.com.gopher > 10.0.2.15.49152: Flags [F.], seq 4391, ack 3, win 65535, length 0
+  17:59:23.106789 IP 10.0.2.15.49152 > gopher.floodgap.com.gopher: Flags [S], seq 2972242379, win 1448, options [mss 1446,wscale 0,sackOK,eol], length 0
+  17:59:23.106864 IP gopher.floodgap.com.gopher > 10.0.2.15.49152: Flags [F.], seq 4392, ack 3, win 65535, length 0
+  ...
+#+end_src
+
+I think this is happening because A) we never sent a finish or reset
+packet to floodgap, so never closed our side of the connection; B) we
+used the same port number for both connections (because it's
+hard-wired to 49152). Fixing either of these may solve our problem.
+
+** Aborting the connection
+
+Calling [[https://docs.rs/smoltcp/0.4.0/smoltcp/socket/struct.TcpSocket.html#method.abort][TcpSocket::abort()]] on the socket when closing after receiving
+a =CLOSE= message results in a RST reset packet (=[R.]= flag) being
+sent:
+#+begin_src bash
+  ...
+  22:02:41.534160 IP 10.0.2.15.49152 > gopher.floodgap.com.gopher: Flags [.], ack 17281, win 1460, length 0
+  22:02:41.534293 IP gopher.floodgap.com.gopher > 10.0.2.15.49152: Flags [FP.], seq 17281:18089, ack 19, win 65535, length 808
+  22:02:41.569211 IP 10.0.2.15.49152 > gopher.floodgap.com.gopher: Flags [R.], seq 19, ack 18090, win 1460, length 0
+#+end_src
+This allows another request to be sent, and we can keep reading pages!
+If we try reloading too quickly however, we still find that this reset
+is not sent, and we still get stuck. I suspect this is because a new
+TCP socket is opened on the same port number before smoltcp can send the
+reset packet.
+
+** Using different port numbers
+
+The port used to receive packets when we open a temporary session is
+called an [[https://en.wikipedia.org/wiki/Ephemeral_port][Ephemeral port]], and usually use numbers 49152–65535. To
+generate a random port number for each session for now we can just use
+the time stamp counter. There are 16384 available ports, so the chance
+of any two sessions accidentally sharing a port is low.  The [[https://en.wikipedia.org/wiki/Birthday_problem][Birthday
+problem]] however implies that once we have just 150 sessions, there is
+about a 50% chance that two of them share a port number: The
+probability of them all being different is =1 * (1 - 1/16384) * (1 -
+2/16384) * ...= and can be calculated with:
+#+begin_src python
+  def p(n):
+      result = 1.
+      for i in range(1, n):
+          result *= 1. - i / 16384
+      return result
+#+end_src
+where =n= is the number of sessions.
+
 ** Rendering text pages
 
 Following the first link to the =gopher/proxy= selector, we read the
 text file and just print every line:
-#+CAPTION: Rendering gopher text file (broken)
+#+CAPTION: Rendering gopher text file (apparently broken)
 #+NAME: fig-broken
 [[./img/18-04-broken.png]]
 
