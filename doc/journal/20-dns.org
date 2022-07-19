@@ -1,0 +1,6 @@
+* Domain Name System (DNS)
+
+So far our gopher client is hard-wired to the host
+IP address 192.80.49.99 (=gopher.floodgap.com=) because
+we can't look up names to find other IP addresses.
+

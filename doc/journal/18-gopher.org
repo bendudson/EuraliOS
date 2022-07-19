@@ -194,13 +194,14 @@ reset packet.
 
 The port used to receive packets when we open a temporary session is
 called an [[https://en.wikipedia.org/wiki/Ephemeral_port][Ephemeral port]], and usually use numbers 49152–65535. To
-generate a random port number for each session for now we can just use
-the time stamp counter. There are 16384 available ports, so the chance
-of any two sessions accidentally sharing a port is low.  The [[https://en.wikipedia.org/wiki/Birthday_problem][Birthday
-problem]] however implies that once we have just 150 sessions, there is
-about a 50% chance that two of them share a port number: The
-probability of them all being different is =1 * (1 - 1/16384) * (1 -
-2/16384) * ...= and can be calculated with:
+generate a random port number for each session for we could just use
+the time stamp counter to get a "random" number. There are 16384
+available ports, so the chance of any two sessions accidentally
+sharing a port is low. Unfortunately the [[https://en.wikipedia.org/wiki/Birthday_problem][Birthday problem]] implies that
+once we have just 150 sessions, there is about a 50% chance that two
+of them share a port number: The probability of them all being
+different is =1 * (1 - 1/16384) * (1 - 2/16384) * ...= and can be
+calculated with:
 #+begin_src python
   def p(n):
       result = 1.
@@ -208,14 +209,50 @@ probability of them all being different is =1 * (1 - 1/16384) * (1 -
           result *= 1. - i / 16384
       return result
 #+end_src
-where =n= is the number of sessions.
+where =n= is the number of sessions, and when =n= is about 150, =p(n)=
+is about 0.5.
 
-** Rendering text pages
+There is a [[https://dataplane.org/ephemeralports.html][list of ephemeral port allocation strategies used]] and an
+Internet Engineering Task Force (IETF) [[https://www.rfc-editor.org/info/rfc6056][RFC 6056 on "Recommendations
+for Transport-Protocol Port Randomization"]] which suggests some solutions:
+The problem seems to be a trade-off, with more randomisation perhaps
+improving security but also increasing chances of collisions.
 
-Following the first link to the =gopher/proxy= selector, we read the
-text file and just print every line:
+For now the more robust choice seems to be to just allocate
+sequentially, so we have zero chance of collisions until 16384
+sessions have been opened.  Since it needs to be thread-safe, we can
+use the [[https://doc.rust-lang.org/std/sync/atomic/struct.AtomicU16.html][atomic::AtomicU16]] type:
+#+begin_src rust
+  use core::sync::atomic::{AtomicU16, Ordering};
+
+  fn ephemeral_port_number() -> u16 {
+      static PORT: AtomicU16 = AtomicU16::new(49152);
+      PORT.fetch_update(Ordering::SeqCst, Ordering::SeqCst,
+                        |p| Some(if p == 65535 {49152}
+                                 else {p + 1})).unwrap()
+  }
+#+end_src
+
+** Remaining issues
+
+One relatively minor - though puzzling - issue is that apparently we're
+not rendering text files correctly. Following the first link to the
+=gopher/proxy= selector, we read the text file and just print every
+line and get figure [[fig-broken]]:
+
 #+CAPTION: Rendering gopher text file (apparently broken)
 #+NAME: fig-broken
 [[./img/18-04-broken.png]]
 
-The Gopher specification is [[https://datatracker.ietf.org/doc/html/rfc1436][RFC 1436]]
+The Gopher specification is [[https://datatracker.ietf.org/doc/html/rfc1436][RFC 1436]] but doesn't say very much about how text
+files should be rendered. This is definitely one for later.
+
+The bigger issue is that we can only read files from one IP address,
+corresponding to =floodgap.com=. As nice as that site is, a gopher
+browser which can only visit one IP address isn't much use. To fix
+this we need to be able to convert domain names like =gopher.floodgap.com=
+into IP addresses. We'll do this using the [[https://en.wikipedia.org/wiki/Domain_Name_System][Domain Name System]] in
+[[./20-dns.org][section 20]].
+
+First we'll take a slight detour into timing in the [[./19-timing.org][next section]], so
+that the TCP stack can use times to implement things like timeouts.

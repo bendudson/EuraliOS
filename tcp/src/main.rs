@@ -12,6 +12,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use alloc::sync::Arc;
 use core::str;
+use core::sync::atomic::{AtomicU16, Ordering};
 
 use spin::RwLock;
 use lazy_static::lazy_static;
@@ -264,9 +265,14 @@ fn open_path(path: &str) -> Result<CommHandle, ()> {
     Err(())
 }
 
-/// Returns a random port number in the range 49152–65535.
+/// Returns a port number in the range 49152–65535.
+///
+/// This implementation just uses a sequential allocation
 fn ephemeral_port_number() -> u16 {
-    (time::time_stamp_counter() % 16384) as u16 + 49152
+    static PORT: AtomicU16 = AtomicU16::new(49152);
+    PORT.fetch_update(Ordering::SeqCst, Ordering::SeqCst,
+                      |p| Some(if p == 65535 {49152}
+                               else {p + 1})).unwrap()
 }
 
 /// Open a socket and wait in a loop for messages on given handle
@@ -295,11 +301,6 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
             interface.remove_socket(tcp_handle);
             None
         } else {
-            debug_println!("[tcp {}/{}] open {} active {} can_send {} can_recv {} may_send {} may_recv {}",
-                           address, port,
-                           socket.is_open(), socket.is_active(),
-                           socket.can_send(), socket.can_recv(),
-                           socket.may_recv(), socket.may_recv(), );
             Some(tcp_handle)
         }
     };
