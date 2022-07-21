@@ -736,8 +736,6 @@ pub fn new_memory_chunk(
 ) -> Result<(VirtAddr, PhysAddr), usize> {
     // Get the current thread
     if let Some(thread) = CURRENT_THREAD.read().as_ref() {
-        println!("Thread {} new chunk {} pages",
-                 thread.tid(), num_pages);
 
         // Virtual address of the available page chunk
         let start_addr = match memory::find_available_page_chunk(

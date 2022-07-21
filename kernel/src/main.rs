@@ -81,18 +81,18 @@ fn kernel_thread_main() {
     vfs.mount("/tcp", tcp_input);
 
     // Use keyboard input
-    process::new_user_thread(
-        include_bytes!("../../user/gopher"),
-        process::Params{
-            handles: Vec::from([
-                // Input
-                keyboard_rz,
-                // VGA output
-                vga_rz
-            ]),
-            io_privileges: false,
-            mounts: vfs
-        });
+    // process::new_user_thread(
+    //     include_bytes!("../../user/gopher"),
+    //     process::Params{
+    //         handles: Vec::from([
+    //             // Input
+    //             keyboard_rz,
+    //             // VGA output
+    //             vga_rz
+    //         ]),
+    //         io_privileges: false,
+    //         mounts: vfs
+    //     });
 
     kernel::hlt_loop();
 }

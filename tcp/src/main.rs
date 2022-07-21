@@ -32,10 +32,11 @@ use euralios_std::{debug_println,
                    message::{self, rcall, nic, MessageData}};
 
 mod dhcp;
+mod dns;
 
 /// Represents an ethernet device, which has a driver connected
 /// through a communication handle
-struct EthernetDevice {
+pub struct EthernetDevice {
     handle: Arc<syscalls::CommHandle>
 }
 
@@ -46,7 +47,7 @@ impl EthernetDevice {
 }
 
 /// Receive token contains packet data
-struct RxToken {
+pub struct RxToken {
     length: usize,
     data: syscalls::MemoryHandle
 }
@@ -62,7 +63,7 @@ impl smoltcp::phy::RxToken for RxToken {
 }
 
 
-struct TxToken {
+pub struct TxToken {
     handle: Arc<syscalls::CommHandle>
 }
 
@@ -126,7 +127,7 @@ impl<'a> smoltcp::phy::Device<'a> for EthernetDevice {
 pub type Interface = smoltcp::iface::Interface<'static, EthernetDevice>;
 
 lazy_static! {
-    static ref INTERFACE: RwLock<Option<Interface>> = RwLock::new(None);
+    pub static ref INTERFACE: RwLock<Option<Interface>> = RwLock::new(None);
 }
 
 #[no_mangle]
@@ -169,6 +170,16 @@ fn main() {
 
     // Move the interface into static variable
     *(INTERFACE.write()) = Some(interface);
+
+    let domain = "www.google.com";
+    match dns::resolve(&domain) {
+        Ok(addr) => {
+            debug_println!("{} has address {}", domain, addr);
+        }
+        Err(e) => {
+            debug_println!("Could not resolve host: {:?}", e);
+        }
+    }
 
     // Server loop
     loop {
@@ -268,7 +279,7 @@ fn open_path(path: &str) -> Result<CommHandle, ()> {
 /// Returns a port number in the range 49152–65535.
 ///
 /// This implementation just uses a sequential allocation
-fn ephemeral_port_number() -> u16 {
+pub fn ephemeral_port_number() -> u16 {
     static PORT: AtomicU16 = AtomicU16::new(49152);
     PORT.fetch_update(Ordering::SeqCst, Ordering::SeqCst,
                       |p| Some(if p == 65535 {49152}
@@ -288,7 +299,7 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
         let interface = (*some_interface).as_mut().unwrap();
         let tcp_handle = interface.add_socket(tcp_socket);
 
-        if let Err(e) = interface.poll(Instant::from_millis(time::microseconds_monotonic() as i64 / 1000)) {
+        if let Err(e) = interface.poll(Instant::from_micros(time::microseconds_monotonic() as i64)) {
             debug_println!("Network error: {:?}", e);
         }
 
@@ -324,7 +335,7 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
                             let mut some_interface = INTERFACE.write();
                             let interface = (*some_interface).as_mut().unwrap();
 
-                            if let Err(e) = interface.poll(Instant::from_millis(time::microseconds_monotonic() as i64 / 1000)) {
+                            if let Err(e) = interface.poll(Instant::from_micros(time::microseconds_monotonic() as i64)) {
                                 debug_println!("[tcp {}/{}] Network error: {:?}", address, port, e);
                             }
 
@@ -382,7 +393,7 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
                             let mut some_interface = INTERFACE.write();
                             let interface = (*some_interface).as_mut().unwrap();
 
-                            if let Err(e) = interface.poll(Instant::from_millis(time::microseconds_monotonic() as i64 / 1000)) {
+                            if let Err(e) = interface.poll(Instant::from_micros(time::microseconds_monotonic() as i64)) {
                                 debug_println!("[tcp {}/{}] Network error: {:?}", address, port, e);
                             }
 
@@ -457,7 +468,7 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
                     // Close the connection
                     interface.get_socket::<TcpSocket>(handle).abort();
 
-                    if let Err(e) = interface.poll(Instant::from_millis(time::microseconds_monotonic() as i64 / 1000)) {
+                    if let Err(e) = interface.poll(Instant::from_micros(time::microseconds_monotonic() as i64)) {
                         debug_println!("Network error: {:?}", e);
                     }
 
