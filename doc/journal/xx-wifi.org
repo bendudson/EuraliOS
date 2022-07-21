@@ -1,0 +1,8 @@
+* WiFi
+
+https://forum.osdev.org/viewtopic.php?f=1&t=32406
+
+https://wiki.osdev.org/802.11
+
+Thinkpad: Network controller: Intel Corporation Wireless 8265 / 8275 (rev 78)
+

@@ -1,44 +1,20 @@
-* Virtual File System
+* Gopher
 
-In [[./13-return-to-sender.org][section 13]] we implemented a very basic Virtual File System (VFS),
-which has allowed programs to open particular paths e.g "/dev/nic" to
-get a communication handle.
+[[https://en.wikipedia.org/wiki/Gopher_(protocol)][Gopher]] is a simple protocol which was introduced in 1991 and at one
+time was an alternative to HTTP and the WWW. It is still in use as a
+text-based way to browse information over the internet. It uses TCP
+port 70, and one of the main gopher servers is =gopher.floodgap.com=.
 
-Opening "/tcp/192.80.49.99/70" should result in the tcp server opening
-a new socket, connecting to the given address (192.80.49.99,
-gopher.floodgap.com) and port (70). The returned communication handle
-should allow sending (writing) and receiving (reading) data through
-that socket.
-
-1. The client calls the =open= syscall with the "/tcp/192.80.49.99/70" string
-2. The kernel checks the client's VFS, choosing the mount point which
-   matches the longest part of the string, in this case "/tcp".
-2. The kernel sends an =OPEN= message to the rendezvous at that mount
-   point, passing the rest of the string, e.g. "142.250.188.4:80".
-3. The =tcp= process receives the =OPEN= message, returning a new
-   handle for this connection. Inside the =tcp= process a new thread
-   might be spawned to service the new connection.
-4. The kernel returns the new handle to the client
-
-At some point we'll have to add permissions to this mechanism, to
-prevent users from modifying each others' files or messing up the
-system. In EuraliOS this will be mainly capabilities based: A process
-can only access a resource if it has a communication handle to it, and
-each process can be given its own separate VFS with only the resources
-it's allowed to access. The =open= syscall (and =OPEN= message) should
-have permissions flag, so the ways that the communication handle is
-used can be restricted.
-
-** Gopher
-
-It's a simple protocol, so we can use =telnet= to send and receive:
+It's a simple protocol which doesn't really require a browser to use:
+We can use =telnet= to send and receive messages and see how this
+works. We open a connection to =gopher.floodgap.com= on port 70:
 #+begin_src shell
   $ telnet gopher.floodgap.com 70
   Trying 192.80.49.99...
   Connected to gopher.floodgap.com.
   Escape character is '^]'.
 #+end_src
-Pressing =Enter= produces:
+And then pressing =Enter= produces:
 #+begin_src shell
   iWelcome to Floodgap Systems' official gopher server.		error.host	1
   iFloodgap has served the gopher community since 1999		error.host	1
@@ -57,7 +33,76 @@ Pressing =Enter= produces:
   .
   Connection closed by foreign host.
 #+end_src
+If we want a different document then we enter the "selector" string
+before sending the CR-LF. For example typing =gopher/welcome= then =Enter= should
+produce:
+#+begin_src shell
+  Floodgap HELP: What is Gopher?
+  updated 27 December 2000
 
+     gopher  n.  1. Any of various short tailed, burrowing mammals of
+     the family Geomyidae, of North America.  2. (Amer. colloq.)
+     Native or inhabitant of Minnesota: the Gopher State.
+     3. (Amer. colloq.) One who runs errands, does odd-jobs, fetches
+     or delivers documents for office staff.  4. (computer tech.)
+     Software following a simple protocol for tunneling through a TCP/IP
+     internet.
+
+  Welcome to Gopherspace!
+#+end_src
+
+
+** Virtual File System
+
+In [[./13-return-to-sender.org][section 13]] we implemented a very basic Virtual File System (VFS),
+which has allowed programs to open particular paths e.g "/dev/nic" to
+get a communication handle.
+
+Opening "/tcp/192.80.49.99/70" should result in the tcp server opening
+a new socket, connecting to the given address (192.80.49.99,
+gopher.floodgap.com) and port (70). The returned communication handle
+should allow sending (writing) and receiving (reading) data through
+that socket.
+
+One way to do this would put everything behind one syscall:
+
+1. The client calls the =open= syscall with the "/tcp/192.80.49.99/70" string
+2. The kernel checks the client's VFS, choosing the mount point which
+   matches the longest part of the string, in this case "/tcp".
+3. The kernel sends an =OPEN= message to the rendezvous at that mount
+   point, passing the rest of the string, e.g. "192.80.49.99/70".
+4. The =tcp= process receives the =OPEN= message, returning a new
+   handle for this connection. Inside the =tcp= process a new thread
+   might be spawned to service the new connection.
+5. The kernel returns the new handle to the client
+
+Unfortunately this gets more complicated than hoped, so in the spirit
+of making the kernel as lazy as possible we make the standard library do most of the work:
+
+1. The client calls the =open= syscall with the "/tcp/192.80.49.99/70" string
+2. The kernel checks the client's VFS, choosing the mount point which
+   matches the longest part of the string, in this case "/tcp".
+3. The kernel returns a communication handle to that rendezvous to
+   the client, along with the number of characters matched (4 in this case).
+4. The client sends an =OPEN= message using the new handle, passing
+   the rest of the string, e.g. "192.80.49.99/70".
+5. The =tcp= process receives the =OPEN= message, returning a new
+   handle for this connection. Inside the =tcp= process a new thread
+   might be spawned to service the new connection.
+6. The kernel returns the new handle to the client
+
+This now involves three syscalls: the original =open=, a =malloc= call
+to create a chunk to store the path, and a =sendreceive= call to
+send the =OPEN= message.
+
+At some point we'll have to add permissions to this mechanism, to
+prevent users from modifying each others' files or messing up the
+system. In EuraliOS this will be mainly capabilities based: A process
+can only access a resource if it has a communication handle to it, and
+each process can be given its own separate VFS with only the resources
+it's allowed to access. The =open= syscall (and =OPEN= message) should
+have permissions flag, so the ways that the communication handle is
+used can be restricted.
 
 ** First gopher request
 
@@ -96,6 +141,16 @@ IP 10.0.2.15.49152 > gopher.floodgap.com.gopher: Flags [.], ack 1, win 1024, len
 #+CAPTION: Sending data to floodgap by sending WRITE message to the tcp program
 #+NAME: fig-write
 [[./img/18-01-write.png]]
+
+
+#+CAPTION:
+#+NAME: fig-read
+[[./img/18-02-read.png]]
+
+
+#+CAPTION:
+#+NAME: fig-gopher
+[[./img/18-03-gopher.png]]
 
 
 ** Failing to read a second page

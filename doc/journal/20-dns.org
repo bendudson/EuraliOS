@@ -4,3 +4,26 @@ So far our gopher client is hard-wired to the host
 IP address 192.80.49.99 (=gopher.floodgap.com=) because
 we can't look up names to find other IP addresses.
 
+
+DNS sockets were [[https://github.com/smoltcp-rs/smoltcp/commit/da1a2b2df0eafebb7fb92c00e56e88d533daa446][recently added to smoltcp]] but are not yet in
+a released version
+
+
+#+begin_src shell
+  00:53:40.493500 IP 0.0.0.0.bootpc > 255.255.255.255.bootps: BOOTP/DHCP, Request from 52:54:00:12:34:56 (oui Unknown), length 262
+  00:53:40.493585 IP 10.0.2.2.bootps > 255.255.255.255.bootpc: BOOTP/DHCP, Reply, length 548
+  00:53:40.554433 IP 0.0.0.0.bootpc > 255.255.255.255.bootps: BOOTP/DHCP, Request from 52:54:00:12:34:56 (oui Unknown), length 274
+  00:53:40.554502 IP 10.0.2.2.bootps > 255.255.255.255.bootpc: BOOTP/DHCP, Reply, length 548
+#+end_src
+
+#+begin_src shell
+00:53:40.670505 ARP, Request who-has 10.0.2.2 (Broadcast) tell 10.0.2.15, length 28
+00:53:40.670571 ARP, Reply 10.0.2.2 is-at 52:55:0a:00:02:02 (oui Unknown), length 50
+#+end_src
+
+#+begin_src shell
+00:53:40.728456 IP 10.0.2.15.49152 > dns.google.domain: 49153+ A? www.google.com. (32)
+00:53:40.746304 IP dns.google.domain > 10.0.2.15.49152: 49153 1/0/0 A 172.217.164.100 (48)
+#+end_src
+
+

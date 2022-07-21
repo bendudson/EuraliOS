@@ -1,13 +1,133 @@
 * TCP network stack
 
-we can use the [[https://docs.rs/smoltcp/latest/smoltcp/][smoltcp]] crate to add a network stack.
+In the [[./16-arp.org][last section]] we implemented a simple Address Resolution
+Protocol (ARP) program, which used the network driver to get hardware
+addresses from IP addresses.  That is one part of a network stack, but
+developing a robust and reasonably complete network stack is a huge
+undertaking of its own. Fortunately someone has already done this in
+=no_std= Rust, so we'll use the [[https://docs.rs/smoltcp/latest/smoltcp/][smoltcp]] crate to add a network stack
+to EuraliOS.
+
+We'll create a new program =tcp=
 #+begin_src bash
   cargo new tcp
 #+end_src
 
-The traits to implement a physical layer are
-https://github.com/smoltcp-rs/smoltcp/blob/master/src/phy/mod.rs
+The traits to implement a physical layer which [[https://docs.rs/smoltcp/latest/smoltcp/][smoltcp]] can use are
+[[https://github.com/smoltcp-rs/smoltcp/blob/master/src/phy/mod.rs][defined here]]. A =smoltcp::phy::Device= needs to implement
+=capabilities()=, =receive()= and =transmit()= functions. Those should
+return objects which implement =smoltcp::phy::RxToken= and
+=smoltcp::phy::TxToken= traits.  =RxToken= represents received data
+which can be obtained with a =consume()= method; =TxToken='s
+=consume()= function takes data and sends it.
+
+The TCP program will communicate with the network card driver, so the
+only thing the =Device= needs to contain is a communication handle:
+#+begin_src rust
+  struct EthernetDevice {
+      handle: Arc<syscalls::CommHandle>
+  }
+
+  impl EthernetDevice {
+    fn new(handle: syscalls::CommHandle) -> Self {
+        EthernetDevice{handle:Arc::new(handle)}
+    }
+  }
+#+end_src
+We wrap the handle in an =Arc= because we're going to need multiple
+references to it in the tokens. We can initialise it by first opening
+a handle for the NIC and passing in the handle:
+#+begin_src rust
+  let handle = syscalls::open("/dev/nic").expect("Couldn't open /dev/nic");
+  let device = EthernetDevice::new(handle);
+#+end_src
+
+The =Device= trait is
+#+begin_src rust
+  impl<'a> smoltcp::phy::Device<'a> for EthernetDevice {
+      type RxToken = RxToken;
+      type TxToken = TxToken;
+
+      fn capabilities(&self) -> DeviceCapabilities {
+          ...
+      }
+
+      fn receive(&'a mut self) -> Option<(Self::RxToken, Self::TxToken)> {
+          ...
+      }
+
+      fn transmit(&'a mut self) -> Option<Self::TxToken> {
+          ...
+      }
+#+end_src
+The capabilities method should tell TCP something about the
+capabilities of the specific network card being used. For now we'll
+just hard-wire some safe defaults for the maximum packet size, and
+maximum number of packets in a "burst":
+#+begin_src rust
+  fn capabilities(&self) -> DeviceCapabilities {
+      let mut caps = DeviceCapabilities::default();
+      caps.max_transmission_unit = 1500;
+      caps.max_burst_size = Some(1);
+      caps
+  }
+#+end_src
+
+** Transmitting data
+
+To transmit data the caller uses =transmit()= to get a =TxToken=, and then
+the =consume()= method on the =TxToken=. Since we don't know how much data
+will be sent, all we can do in =transmit()= is copy the communication handle:
+#+begin_src rust
+  fn transmit(&'a mut self) -> Option<Self::TxToken> {
+      Some(TxToken{handle: self.handle.clone()})
+  }
+#+end_src
+where =TxToken= is just:
+#+begin_src rust
+  struct TxToken {
+      handle: Arc<syscalls::CommHandle>
+  }
+#+end_src
+
+The actual communication is performed when the =consume()= method is
+called. That is given the length (in =u8= chars) and a function to be
+called to fill the buffer:
+#+begin_src rust
+impl smoltcp::phy::TxToken for TxToken {
+    fn consume<R, F>(mut self,
+                     _timestamp: Instant,
+                     length: usize, f: F
+    ) -> smoltcp::Result<R> where F: FnOnce(&mut [u8]) -> smoltcp::Result<R> {
+        // Allocate memory buffer
+        let (mut buffer, _) = syscalls::malloc(length as u64, 0).unwrap();
+
+        // Call function to fill buffer
+        let res = f(buffer.as_mut_slice::<u8>(length));
+
+        if res.is_ok() {
+            // Transmit, sending buffer to NIC driver
+            syscalls::send(
+                self.handle.as_ref(),
+                message::Message::Long(
+                    message::WRITE,
+                    (length as u64).into(),
+                    buffer.into()));
+        }
+        res
+    }
+}
+#+end_src
+
+** Dynamic Host Configuration Protocol (DHCP)
+
+The DHCP protocol is a standard way to configure devices on a local
+network.  It provides a way to discover the network gateway, DNS
+server, and be assigned an IP address.
 
 #+CAPTION: Using smoltcp to configure IP settings with DHCP
 #+NAME: fig-dhcp
 [[./img/17-01-dhcp.png]]
+
+In the [[./18-gopher.org][next section]] we'll try out TCP by writing a simple [[https://en.wikipedia.org/wiki/Gopher_(protocol)][Gopher]]
+protocol browser.

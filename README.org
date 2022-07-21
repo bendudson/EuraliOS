@@ -126,6 +126,11 @@ direction...
 - [[./doc/journal/20-dns.org][20. Domain Name System (DNS)]], adding the ability to look up IP addresses
   from host names.
 
+** Notes
+
+- [[./doc/journal/xx-usb.org][USB]] (xHCI)
+- [[./doc/journal/xx-wifi.org][WiFi]]
+
 ** Bibliography
 
 Useful reference material includes:
