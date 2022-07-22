@@ -1,0 +1,51 @@
+* VGA driver and terminals
+
+The time has come to improve the text output, so that we can do more
+complicated things with text, and have multiple processes writing text
+output without interfering with each other like =rtl8139= and =gopher=
+in the [[./20-dns.org][last section]].
+
+The terminal consists of both input and output: when a user is
+interacting with a program the keyboard & mouse input should go to
+that program, and anything the program outputs should be shown on
+screen. We therefore need some kind of multiplexer which will take one
+console (combination of input & output) and split it into multiple
+[[https://en.wikipedia.org/wiki/Virtual_console][virtual consoles]].
+
+A sketch of how this might work is shown below:
+#+begin_src
+        <vga>   <keyboard/mouse>
+          |            |
+           < vconsole >
+                |
+      ------------------------
+      |       |       |
+    debug   login1  login2 ...
+              |
+            shell
+#+end_src
+The =vga= program should provide an interface for writing text to
+screen, but only needs to handle one screen. The =vconsole=
+multiplexer will catch keys like =Ctrl + F1=, =Ctrl + F2= and switch
+the input & output between multiple sets of input/output pairs: One
+could be a debug/status screen, and others connected to instances of a
+=login= program. That program will be responsible for restricting user
+capabilities, mainly by customising the Virtual File System (VFS) that
+the user sees. When a user logs in a shell would be connected, which
+might have further multiplexing for =Ctrl + Tab= switching between
+processes, or for arranging multiple programs on screen at once.
+
+To enable all this to happen we need a way to specify where on the
+screen text should be drawn, what color it should be, whether it
+blinks etc. Fortunately there is an ANSI standard for doing this.
+
+** ANSI escape codes
+
+[[https://en.wikipedia.org/wiki/ANSI_escape_code][ANSI escape codes]] are used to change the position and color
+of the cursor on text-based terminals.
+
+https://github.com/rust-osdev/ansi_rgb
+
+** VGA device driver
+
+https://github.com/rust-osdev/vga

@@ -42,6 +42,8 @@ much, but it can do it all at the same time.
 - [X] On-demand memory allocation using page fault handler
 - [X] User space stack and heap memory management
 - [X] RTL8139 network card driver running in user space
+- [X] TCP network stack using [[https://docs.rs/smoltcp/latest/smoltcp/][smoltcp]] in user space, with DHCP and DNS
+- [X] A simple [[https://en.wikipedia.org/wiki/Gopher_(protocol)][Gopher]] browser
 - [X] A vDSO-like fast mechanism for timing functions
 
 There is no filesystem (yet), so user programs are compiled and then
@@ -128,6 +130,7 @@ direction...
 
 ** Notes
 
+- [[./doc/journal/xx-shell.org][A shell]]
 - [[./doc/journal/xx-usb.org][USB]] (xHCI)
 - [[./doc/journal/xx-wifi.org][WiFi]]
 

@@ -1,0 +1,14 @@
+* Shell
+
+Some possible ways to add a shell:
+1. Port [[https://github.com/redox-os/ion][Ion]] from [[https://www.redox-os.org/][Redox-OS]].
+
+2. Use an embedded scripting language with =no_std=
+   implementation in Rust
+
+   There are [[https://github.com/rust-unofficial/awesome-rust#scripting][lists]] of [[https://github.com/alilleybrinker/langs-in-rust][languages in Rust]]
+
+   - [[https://github.com/rhaiscript/rhai][Rhai]]
+
+3. Implement something simple to start with, with just the
+   basic functionality needed
