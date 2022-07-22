@@ -7,6 +7,8 @@
 //! See RFC 1035 for implementation details
 
 extern crate alloc;
+use alloc::collections::BTreeMap;
+use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use bit_field::BitField;
@@ -130,6 +132,10 @@ lazy_static! {
     /// A vector of DNS servers. Currently only the last pushed is used
     /// Start with the Google DNS server as fallback
     static ref SERVERS: RwLock<Vec<IpAddress>> = RwLock::new(vec![IpAddress::v4(8, 8, 8, 8)]);
+
+    /// Cache of host name to IP address lookup
+    /// NOTE: These entries should also have an expiry time
+    static ref CACHE: RwLock<BTreeMap<String, IpAddress>> = RwLock::new(BTreeMap::new());
 }
 
 /// Add a DNS server which can be used to resolve hostnames
@@ -137,8 +143,19 @@ pub fn add_server(address: IpAddress) {
     SERVERS.write().push(address);
 }
 
+/// Find the IP address of a given host name
+///
+/// Uses CACHE to store previous lookups, and uses the DNS server last
+/// added to SERVERS.
 pub fn resolve(name: &str) -> Result<IpAddress, ResponseCode> {
     // Check the cache
+    {
+        let cache = CACHE.read();
+        if let Some(addr) = cache.get(name) {
+            // Here could check expiry time
+            return Ok(addr.clone());
+        }
+    }
 
     // Get the IP address of a DNS server
     let dns_address = {
@@ -209,7 +226,11 @@ pub fn resolve(name: &str) -> Result<IpAddress, ResponseCode> {
                                 let n = message.datagram.len();
                                 let rdata = &message.datagram[(n - 4)..];
 
-                                Ok(IpAddress::from(Ipv4Address::from_bytes(rdata)))
+                                let addr = IpAddress::from(Ipv4Address::from_bytes(rdata));
+                                // Put into the cache
+                                CACHE.write().insert(String::from(name), addr.clone());
+
+                                Ok(addr)
                             }
                             rcode => {
                                 Err(rcode)
