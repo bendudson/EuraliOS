@@ -11,6 +11,7 @@ use alloc::collections::BTreeMap;
 use alloc::vec;
 use alloc::vec::Vec;
 use alloc::sync::Arc;
+use alloc::string::String;
 use core::str;
 use core::sync::atomic::{AtomicU16, Ordering};
 
@@ -171,16 +172,6 @@ fn main() {
     // Move the interface into static variable
     *(INTERFACE.write()) = Some(interface);
 
-    let domain = "www.google.com";
-    match dns::resolve(&domain) {
-        Ok(addr) => {
-            debug_println!("{} has address {}", domain, addr);
-        }
-        Err(e) => {
-            debug_println!("Could not resolve host: {:?}", e);
-        }
-    }
-
     // Server loop
     loop {
         match syscalls::receive(&STDIN) {
@@ -253,8 +244,8 @@ fn main() {
 fn open_path(path: &str) -> Result<CommHandle, ()> {
     if let Some(ind) = path.find('/') {
         // Split and copy into Strings which can be moved to a new thread
-        let ip = IpAddress::from_str(&path[..ind])
-            .map_err(|e| {debug_println!("[tcp] Invalid host address: {:?}", e);})?;
+        let host_str = String::from(&path[..ind]);
+
         let port: u16 =  ((&path[(ind+1)..])
                                  .trim_matches(|c:char| c == '/' ||
                                                c.is_whitespace()))
@@ -266,6 +257,24 @@ fn open_path(path: &str) -> Result<CommHandle, ()> {
 
         // Start a thread with one of the handles
         thread::spawn(move || {
+            // Get the IP address
+            let ip = match IpAddress::from_str(&host_str) {
+                Ok(ip) => ip,
+                Err(_) => {
+                    // Not an IP address, so assume it's a host name to be resolved
+                    match dns::resolve(&host_str) {
+                        Ok(addr) => {
+                            debug_println!("[tcp] {} has address {}", &host_str, addr);
+                            addr
+                        }
+                        Err(e) => {
+                            debug_println!("[tcp] Could not resolve host {}: {:?}", &host_str, e);
+                            return;
+                        }
+                    }
+                }
+            };
+
             open_socket(ip, port, handle);
         });
 
