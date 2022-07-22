@@ -6,6 +6,7 @@ use alloc::boxed::Box;
 use core::str;
 use alloc::vec::Vec;
 use alloc::string::String;
+use alloc::string::ToString;
 
 use euralios_std::{debug_println, debug_print,
                    syscalls::{self, MemoryHandle, STDIN},
@@ -188,41 +189,95 @@ fn display_text<'a>(
     }
 }
 
+/// Describes a page which can be visited
+struct Page {
+    host: String, // e.g. "gopher.floodgap.com"
+    selector: String, // e.g. ""
+    port: u16, // e.g. 70
+    is_map: bool // Is this a gophermap?
+}
+
+impl Page {
+    fn new(host: &str, selector: &str, port: u16, is_map: bool)
+           -> Self {
+        Page{host: String::from(host),
+             selector: String::from(selector),
+             port,
+             is_map}
+    }
+}
+
 #[no_mangle]
 fn main() {
-    debug_println!("[gopher] Hello, world!");
+    // A vector of previous pages visited
+    let mut back: Vec<Page> = Vec::new();
 
-    let mut current_host = "192.80.49.99";
-    let mut current_selector: String = String::from("");
-    let mut current_port = "70";
-    let mut current_is_gophermap = true;
+    // Pages in the forward direction
+    let mut forward: Vec<Page> = Vec::new();
+
+    // Set the landing page
+    let mut current_page = Page::new(
+        "gopher.floodgap.com", "", 70, true);
     loop {
         let mut path: String = String::from("/tcp/");
-        path.push_str(&current_host);
+        path.push_str(&current_page.host);
         path.push_str("/");
-        path.push_str(&current_port);
-        let (mem_handle, length) = gopher(&path, &current_selector).expect("Couldn't gopher");
+        path.push_str(&current_page.port.to_string());
+
+        let (mem_handle, length) = gopher(&path, &current_page.selector).expect("Couldn't gopher");
         let data = str::from_utf8(mem_handle.as_slice::<u8>(length as usize)).expect("invalid utf8");
-        match display_text(data, "gopher.floodgap.com", current_is_gophermap) {
+
+        current_page = match display_text(data,
+                                          &current_page.host,
+                                          current_page.is_map) {
             Command::Quit => {
+                debug_println!("[gopher] Bye!");
                 return;
             }
             Command::Back => {
-
+                // Remove last page from history
+                if let Some(page) = back.pop() {
+                    // Save the current page so we can go forward
+                    forward.push(current_page);
+                    page
+                } else {
+                    // Can't go back
+                    current_page
+                }
             }
             Command::Forward => {
-
+                if let Some(page) = forward.pop() {
+                    back.push(current_page);
+                    page
+                } else {
+                    // Can't go forward
+                    current_page
+                }
             }
             Command::Link(link_str) => {
                 // Link
-                let (display, selector, hostname, port) = {
+                let (display, selector, hostname, port_str) = {
                     let mut sections = link_str[1..].split('\t');
                     (sections.next().unwrap_or(""),
                      sections.next().unwrap_or(""),
                      sections.next().unwrap_or(""),
                      sections.next().unwrap_or(""))};
-                current_selector = String::from(selector);
-                current_is_gophermap = link_str.chars().nth(0) == Some('1');
+
+                if let Ok(port) = port_str.parse::<u16>() {
+                    // Save the curent page and reset forward pages
+                    back.push(current_page);
+                    forward.clear();
+
+                    Page::new(hostname,
+                              selector,
+                              port,
+                              // Is it a gophermap?
+                              link_str.chars().nth(0) == Some('1'))
+                } else {
+                    // Invalid port => Stay on current page
+                    debug_println!("[gopher] invalid port {}", port_str);
+                    current_page
+                }
             }
         }
 

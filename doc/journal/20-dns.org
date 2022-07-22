@@ -26,4 +26,27 @@ a released version
 00:53:40.746304 IP dns.google.domain > 10.0.2.15.49152: 49153 1/0/0 A 172.217.164.100 (48)
 #+end_src
 
+#+CAPTION:
+#+NAME: fig-dns
+[[./img/20-01-dns.png]]
 
+
+
+** Extending the gopher browser
+
+Now that we can connect to other servers by using their hostname
+rather than IP address, we can extend the =gopher= program so
+that it can follow links to other severs.
+
+#+CAPTION: Browsing to hngopher from floodgap.com
+#+NAME: fig-hngopher
+[[./img/20-02-hngopher.png]]
+
+In figure [[fig-hngopher]] you can see a message from =rtl8139= mixed in
+with the gopher page. That's because all processes are currently using
+=debug_println!= to write to screen.  Before we develop any more
+programs which output to screen we need to do something about this: we
+need a way to separate outputs into workspaces/terminals/windows that
+we can switch between. We'll start doing this next, by moving the VGA
+driver from kernel into userspace and extending what it can do in the
+[[./21-vga.org][next section]].
