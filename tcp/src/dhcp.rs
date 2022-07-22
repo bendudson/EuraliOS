@@ -1,7 +1,7 @@
 //! Dynamic Host Configuration Protocol (DHCP)
 //! Configure IP, DNS and gatway
 
-use smoltcp::wire::{IpCidr, Ipv4Cidr};
+use smoltcp::wire::{IpCidr, Ipv4Cidr, IpAddress};
 use smoltcp::socket::{Dhcpv4Event, Dhcpv4Socket};
 use smoltcp::time::Instant;
 
@@ -9,6 +9,7 @@ use euralios_std::{debug_println, debug_print,
                    syscalls};
 
 use crate::Interface;
+use crate::dns;
 
 pub fn configure(interface: &mut Interface) {
     // DHCP
@@ -39,6 +40,7 @@ pub fn configure(interface: &mut Interface) {
                 for addr in config.dns_servers.iter()
                     .filter(|addr| addr.is_some()).map(|addr| addr.unwrap()) {
                         debug_print!(" DNS {}", addr);
+                        dns::add_server(IpAddress::from(addr));
                     }
                 debug_println!("");
                 break;

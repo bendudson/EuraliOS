@@ -123,11 +123,16 @@ impl Message {
     }
 }
 
+/// Port number to connect to on DNS server
+const DNS_PORT: u16 = 53;
+
 lazy_static! {
+    /// A vector of DNS servers. Currently only the last pushed is used
+    /// Start with the Google DNS server as fallback
     static ref SERVERS: RwLock<Vec<IpAddress>> = RwLock::new(vec![IpAddress::v4(8, 8, 8, 8)]);
 }
 
-// Add a DNS server which can be used to resolve hostnames
+/// Add a DNS server which can be used to resolve hostnames
 pub fn add_server(address: IpAddress) {
     SERVERS.write().push(address);
 }
@@ -135,9 +140,16 @@ pub fn add_server(address: IpAddress) {
 pub fn resolve(name: &str) -> Result<IpAddress, ResponseCode> {
     // Check the cache
 
-    let dns_port = 53;
-    let dns_address = IpAddress::v4(8, 8, 8, 8);
-    let server = IpEndpoint::new(dns_address, dns_port);
+    // Get the IP address of a DNS server
+    let dns_address = {
+        let servers = SERVERS.read();
+        match servers.last() {
+            Some(addr) => addr.clone(),
+            None => {return Err(ResponseCode::NotImplemented);}
+        }
+    };
+
+    let server = IpEndpoint::new(dns_address, DNS_PORT);
 
     // Get a local port for the connection
     let local_port = crate::ephemeral_port_number();
