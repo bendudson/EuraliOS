@@ -61,8 +61,17 @@ are mapped into registers on the graphics card.
 
 ** Accessing video memory
 
+The =vga= library expects to find the VGA buffer at the virtual
+address identity mapped to the physical address i.e. the range
+=0xA0000 ..= 0xBFFFF= (inclusive). We could add a special case, and
+map these pages into the user program. It would be better though if we
+could make this a memory chunk which could be passed between
+processes: The kernel might pass this to an =init= user program, which
+then might choose which driver to load and pass the memory chunk
+to. That means we need to modify the =vga= library so the vga memory
+can start at an arbitrary virtual address.
 
-0xA0000 -> 0xBFFFF
+
 
 ** ANSI escape codes
 

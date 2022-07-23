@@ -378,37 +378,29 @@ pub fn create_user_ondemand_pages(
     Ok(())
 }
 
-/// Allocates a consecutive set of frames
+/// Map a consecutive set of pages to a consecutive set of frames
 ///
-/// start_addr      Starting virtual address in page table
+/// level_4_physaddr  The physical address of the L4 pagetable
+/// start_page      First page in the sequence
+/// start_frame     First frame in the sequence
 /// num_frames      Number of consecutive frames
-/// max_physaddr    Maximum physical address
-///                 e.g 32-bit addressable 0xFFFF_FFFF
-pub fn create_consecutive_pages(
+fn map_consecutive_pages(
     level_4_physaddr: u64,
-    start_addr: VirtAddr,
-    num_frames: u64,
-    max_physaddr: u64)
+    start_page: Page,
+    start_frame: PhysFrame,
+    num_frames: u64)
     -> Result<PhysAddr, MapToError<Size4KiB>> {
 
-    let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
-    let frame_allocator = &mut memory_info.frame_allocator;
-
-    // Try to allocate a consecutive set of frames
-    let start_frame = frame_allocator
-        .allocate_consecutive_frames(num_frames, max_physaddr)
-        .ok_or(MapToError::FrameAllocationFailed)?;
-
     let frame_range = PhysFrame::range(start_frame, start_frame + num_frames);
+    let page_range = Page::range(start_page, start_page + num_frames);
 
-    let page_range = {
-        let start_page = Page::containing_address(start_addr);
-        Page::range(start_page, start_page + num_frames)
-    };
+    let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
 
     let l4_table: &mut PageTable = unsafe {
         &mut *(memory_info.physical_memory_offset
                + level_4_physaddr).as_mut_ptr()};
+
+    let frame_allocator = &mut memory_info.frame_allocator;
 
     let mut mapper = unsafe {
         OffsetPageTable::new(l4_table,
@@ -432,6 +424,60 @@ pub fn create_consecutive_pages(
         };
     }
     Ok(start_frame.start_address())
+}
+
+/// Allocates a consecutive set of frames
+///
+/// start_addr      Starting virtual address in page table
+/// num_frames      Number of consecutive frames
+/// max_physaddr    Maximum physical address
+///                 e.g 32-bit addressable 0xFFFF_FFFF
+pub fn create_consecutive_pages(
+    level_4_physaddr: u64,
+    start_addr: VirtAddr,
+    num_frames: u64,
+    max_physaddr: u64)
+    -> Result<PhysAddr, MapToError<Size4KiB>> {
+
+    // Try to allocate a consecutive set of frames
+    let start_frame = {
+        let memory_info = unsafe {MEMORY_INFO.as_mut().unwrap()};
+        let frame_allocator = &mut memory_info.frame_allocator;
+
+        frame_allocator
+            .allocate_consecutive_frames(num_frames, max_physaddr)
+            .ok_or(MapToError::FrameAllocationFailed)?
+    };
+
+    let start_page = Page::containing_address(start_addr);
+
+    map_consecutive_pages(level_4_physaddr,
+                          start_page,
+                          start_frame,
+                          num_frames)
+}
+
+/// Create a mapping to a specific range of physical memory
+///
+/// Doesn't do any frame allocation, so assumes that it's ok
+/// to use the memory. Used for mapping a memory chunk to
+/// VGA memory.
+pub fn create_physical_range_pages(
+    level_4_physaddr: u64,
+    start_virtaddr: VirtAddr,
+    num_frames: u64,
+    start_physaddr: PhysAddr)
+    -> Result<PhysAddr, MapToError<Size4KiB>> {
+
+    let start_page = Page::from_start_address(start_virtaddr)
+        .map_err(|_| MapToError::FrameAllocationFailed)?;
+    let start_frame = PhysFrame::from_start_address(start_physaddr)
+        .map_err(|_| MapToError::FrameAllocationFailed)?;
+
+    map_consecutive_pages(level_4_physaddr,
+                          start_page,
+                          start_frame,
+                          num_frames)
 }
 
 ///////////////////////////////////////////////////////////////////////
