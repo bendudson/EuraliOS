@@ -12,7 +12,7 @@ run : user
 	cargo run --release --bin kernel
 
 # List of user programs to build
-user: user/pci user/rtl8139 user/arp user/tcp user/gopher user/timing_test
+user: user/pci user/rtl8139 user/arp user/tcp user/gopher user/timing_test user/vga
 
 user/% : FORCE
 	cargo build --release --bin $*

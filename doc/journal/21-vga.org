@@ -39,13 +39,34 @@ To enable all this to happen we need a way to specify where on the
 screen text should be drawn, what color it should be, whether it
 blinks etc. Fortunately there is an ANSI standard for doing this.
 
+** VGA device driver
+
+We probably need a very basic VGA driver in the kernel, at least for
+now, as a fallback and for debugging any startup issues. The choice
+then is between making that kernel driver more complete, or creating a
+new VGA driver which runs in user space. In the long run something
+like [[https://wiki.osdev.org/GOP][UEFI GOP]] is probably the way to go for high-resolution graphics,
+so extended VGA support will become optional rather than baked into
+the kernel. I'd like to keep the kernel as minimal as possible, so this
+will be a user-space driver.
+
+There is a Rust [[https://crates.io/crates/vga][vga crate]] which is [[https://github.com/rust-osdev/vga][hosted on github]] and includes both
+text (up to 80x25) and graphics modes (up to 640x480x16). It
+depends on some other crates, including [[https://crates.io/crates/font8x8][font8x8]] which provides
+8x8 pixel unicode characters.
+
+VGA (and all other graphics drivers that I know of) depend heavily on
+Direct Memory Access (DMA): the CPU writes to memory addresses, which
+are mapped into registers on the graphics card.
+
+** Accessing video memory
+
+
+0xA0000 -> 0xBFFFF
+
 ** ANSI escape codes
 
 [[https://en.wikipedia.org/wiki/ANSI_escape_code][ANSI escape codes]] are used to change the position and color
 of the cursor on text-based terminals.
 
 https://github.com/rust-osdev/ansi_rgb
-
-** VGA device driver
-
-https://github.com/rust-osdev/vga

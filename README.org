@@ -127,6 +127,7 @@ direction...
   (vDSO)]] does.
 - [[./doc/journal/20-dns.org][20. Domain Name System (DNS)]], adding the ability to look up IP addresses
   from host names.
+- [[./doc/journal/21-vga.org][21. VGA driver]] in user space
 
 ** Notes
 
