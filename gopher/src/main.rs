@@ -122,11 +122,30 @@ fn display_text<'a>(
 
         // Get user input
         let mut selected_link: Option<&str> = None;
+        let mut selected_id: usize = 0;
         loop {
             match syscalls::receive(&STDIN) {
                 Ok(syscalls::Message::Short(
                     syscalls::MESSAGE_TYPE_CHAR, ch, _)) => {
                     // Received a character
+
+                    if ch >= ('0' as u64) && ch <= ('9' as u64) {
+                        // Character between 0 and 9 selects a link
+                        // Successive characters allow choosing links > 9
+
+                        selected_id = (10 * selected_id) +
+                            ((ch as usize) - ('0' as usize));
+
+                        if selected_id < links.len() {
+                            debug_println!("Link {}: {}", selected_id, links[selected_id]);
+                            selected_link = Some(&links[selected_id]);
+                        } else {
+                            debug_println!("Link {} not on page.", selected_id);
+                            selected_link = None;
+                        }
+                        continue;
+                    }
+
                     match char::from_u32(ch as u32) {
                         // up/down => Change page
                         // WASD or IJKL
@@ -151,6 +170,7 @@ fn display_text<'a>(
                             if let Some(line) = selected_link {
                                 return Command::Link(line);
                             }
+                            debug_println!("Enter a number to select a link");
                         }
                         // Left/right => history forward/back
                         Some('a') | Some('j') => {
@@ -163,23 +183,18 @@ fn display_text<'a>(
                         Some('q') => {
                             return Command::Quit;
                         }
-                        Some('h') | Some('?') => {
-                            // Help
+                        Some(_) => {
+                            // Unrecognised character -> Print help
                             debug_println!("Help: Page up (w or i); Page down (s or k); Select link (0-9); Confirm (Enter)");
                             debug_println!("      Go back (a or j); Forward (d or l); Quit (q)");
-                        }
-                        Some(c) => {
-                            // Character between 0 and 9 selects a link
-                            let selected = ((c as u32) - ('0' as u32)) as usize;
-                            if selected >= 0 && selected < links.len() {
-                                debug_println!("Link {}: {}", selected, links[selected]);
-                                selected_link = Some(&links[selected]);
-                            }
                         }
                         None => {
                             // Unknown code. Ignore
                         }
                     }
+                    // Reset link ID
+                    selected_id = 0;
+                    selected_link = None;
                 }
                 _ => {
                     // Ignore
