@@ -1,5 +1,5 @@
 [package]
-name = "vga"
+name = "vga_driver"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,4 +7,4 @@ edition = "2021"
 
 [dependencies]
 euralios_std = { path = "../euralios_std" }
-vga = "0.2.7"
+vga = { path = "../external/vga" }

@@ -2,7 +2,6 @@
 #![no_main]
 
 extern crate alloc;
-use alloc::boxed::Box;
 use core::str;
 use alloc::vec::Vec;
 use alloc::string::String;
@@ -10,8 +9,7 @@ use alloc::string::ToString;
 
 use euralios_std::{debug_println, debug_print,
                    syscalls::{self, MemoryHandle, STDIN},
-                   message::{self, rcall, MessageData},
-                   thread};
+                   message::{self, rcall, MessageData}};
 
 fn gopher(host: &str, selector: &str) -> Result<(MemoryHandle, usize), ()> {
     let handle = syscalls::open(host).expect("Couldn't open");
@@ -42,9 +40,9 @@ fn gopher(host: &str, selector: &str) -> Result<(MemoryHandle, usize), ()> {
         }
         result => {
             debug_println!("[gopher] Read returned: {:?}", result);
-            syscalls::send(&handle,
-                           syscalls::Message::Short(
-                               message::CLOSE, 0, 0));
+            _ = syscalls::send(&handle,
+                               syscalls::Message::Short(
+                                   message::CLOSE, 0, 0));
             return Err(());
         }
     }
@@ -83,10 +81,9 @@ fn display_text<'a>(
         // Draw the page
         if gophermap {
             // Indent lines, add numbers, type to links
-            for (line_nr, line) in
+            for line in
                 (&lines[start_line..end_line])
-                .iter()
-                .enumerate() {
+                .iter() {
                     // First character determines type
                     match line.chars().nth(0) {
                         Some('i') => {
@@ -271,7 +268,7 @@ fn main() {
             }
             Command::Link(link_str) => {
                 // Link
-                let (display, selector, hostname, port_str) = {
+                let (_display, selector, hostname, port_str) = {
                     let mut sections = link_str[1..].split('\t');
                     (sections.next().unwrap_or(""),
                      sections.next().unwrap_or(""),

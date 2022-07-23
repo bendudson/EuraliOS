@@ -59,10 +59,10 @@ pub fn microseconds_monotonic() -> u64 {
     //       2**64 / (1024 * 1024 * 2270) microseconds
     //((pit * tsc_per_pit + tsc) * 878807) / (1024*1024 * tsc_per_pit)
 
-    const scaled_tsc_rate: u64 = 16;
-    let scaled_tsc = (tsc * scaled_tsc_rate) / tsc_per_pit;
+    const SCALED_TSC_RATE: u64 = 16;
+    let scaled_tsc = (tsc * SCALED_TSC_RATE) / tsc_per_pit;
 
     // Factorize 878807 = 437 * 2011
     // This will overflow in about 142 years : 2**64 / 4096 microseconds
-    ((((pit * scaled_tsc_rate + scaled_tsc) * 2011) / 4096) * 437) / (256 * scaled_tsc_rate)
+    ((((pit * SCALED_TSC_RATE + scaled_tsc) * 2011) / 4096) * 437) / (256 * SCALED_TSC_RATE)
 }

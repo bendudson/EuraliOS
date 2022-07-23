@@ -1,0 +1,21 @@
+#+begin_src
+                   _
+                  | |
+  __ _  ___  _ __ | |__   ___ _ __
+ / _` |/ _ \| '_ \| '_ \ / _ \ '__|
+| (_| | (_) | |_) | | | |  __/ |
+ \__, |\___/| .__/|_| |_|\___|_|
+  __/ |     | |
+ |___/      |_|
+#+end_src
+
+This is a user program which opens gopher pages. When started it loads
+the front page of =gopher.floodgap.com=.
+
+
+** How does it work?
+
+This program reads data using the =tcp= device:
+#+begin_src shell
+  /tcp/hostname/port
+#+end_src

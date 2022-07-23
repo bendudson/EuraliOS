@@ -69,7 +69,7 @@ pub struct TxToken {
 }
 
 impl smoltcp::phy::TxToken for TxToken {
-    fn consume<R, F>(mut self,
+    fn consume<R, F>(self,
                      _timestamp: Instant,
                      length: usize, f: F
     ) -> smoltcp::Result<R> where F: FnOnce(&mut [u8]) -> smoltcp::Result<R> {
@@ -336,8 +336,6 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
                 let mut data = handle.as_slice::<u8>(length as usize);
 
                 // Keep trying to send the data
-                let max_yields = 100;
-                let mut num_yields = 0;
                 loop {
                     match tcp_handle {
                         Some(handle) => {
@@ -348,7 +346,7 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
                                 debug_println!("[tcp {}/{}] Network error: {:?}", address, port, e);
                             }
 
-                            let (socket, cx) = interface.get_socket_and_context::<TcpSocket>(handle);
+                            let socket = interface.get_socket::<TcpSocket>(handle);
 
                             if socket.may_send() {
                                 match socket.send_slice(data) {
