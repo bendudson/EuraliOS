@@ -148,3 +148,6 @@ Other relevant links
 - [[https://osblog.stephenmarz.com/index.html][The Adventures of OS: Making a RISC-V Operating System using Rust]]
 - [[https://github.com/nuta/resea][The resea micro-kernel based OS]] written in C
 - [[https://github.com/nuta/kerla/][The kerla monolithic kernel]] written in Rust
+- [[https://github.com/thepowersgang/rust_os][The "Tifflin" kernel]] written in Rust
+- [[https://github.com/IsaacWoods/poplar][Poplar]] operating system in Rust
+

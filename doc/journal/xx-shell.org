@@ -9,6 +9,7 @@ Some possible ways to add a shell:
    There are [[https://github.com/rust-unofficial/awesome-rust#scripting][lists]] of [[https://github.com/alilleybrinker/langs-in-rust][languages in Rust]]
 
    - [[https://github.com/rhaiscript/rhai][Rhai]]
+   - [[https://github.com/rune-rs/rune][Rune]]
 
 3. Implement something simple to start with, with just the
    basic functionality needed
