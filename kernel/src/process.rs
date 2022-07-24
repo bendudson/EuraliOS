@@ -350,10 +350,15 @@ pub fn set_current_thread(thread: Box<Thread>) {
 /// -------
 /// The TID of the new thread
 ///
+/// Note: returning Box<Thread> to be scheduled
+/// leads to panic in VirtAddr::new(). Cause unknown,
+/// exposing memory/stack bug?
+///
 pub fn new_kernel_thread(
     function: fn()->(),
     mut handles: Vec<Arc<RwLock<Rendezvous>>>
-) -> Box<Thread> {
+) -> u64 {
+
     // Create a new process table entry
     //
     // Note this is first created on the stack, then moved into a Box
@@ -404,7 +409,9 @@ pub fn new_kernel_thread(
     //       because the stack moves down in memory
     context.rsp = new_thread.user_stack_end as usize;
 
-    new_thread
+    let tid = new_thread.tid;
+    schedule_thread(new_thread);
+    tid
 }
 
 /// Wrapper which runs a closure with a specified page table
@@ -565,7 +572,7 @@ pub fn new_user_thread(
             context.rax = USER_HEAP_START as usize;
             context.rcx = USER_HEAP_SIZE as usize;
 
-            return Ok(new_thread);
+            Ok(new_thread)
         });
     }
     Err("Could not parse ELF")

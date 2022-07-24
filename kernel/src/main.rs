@@ -121,8 +121,7 @@ fn kernel_entry(boot_info: &'static BootInfo) -> ! {
 
     // Launch the main kernel thread
     // which will be scheduled and take over from here
-    process::schedule_thread(
-        process::new_kernel_thread(kernel_thread_main, Vec::new()));
+    process::new_kernel_thread(kernel_thread_main, Vec::new());
 
     kernel::hlt_loop();
 }
