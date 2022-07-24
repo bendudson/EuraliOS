@@ -350,7 +350,10 @@ pub fn set_current_thread(thread: Box<Thread>) {
 /// -------
 /// The TID of the new thread
 ///
-pub fn new_kernel_thread(function: fn()->(), mut handles: Vec<Arc<RwLock<Rendezvous>>>) -> u64 {
+pub fn new_kernel_thread(
+    function: fn()->(),
+    mut handles: Vec<Arc<RwLock<Rendezvous>>>
+) -> Box<Thread> {
     // Create a new process table entry
     //
     // Note this is first created on the stack, then moved into a Box
@@ -401,13 +404,7 @@ pub fn new_kernel_thread(function: fn()->(), mut handles: Vec<Arc<RwLock<Rendezv
     //       because the stack moves down in memory
     context.rsp = new_thread.user_stack_end as usize;
 
-    let tid = new_thread.tid;
-
-    println!("New kernel thread {}", new_thread);
-    // Add to the scheduler
-    schedule_thread(new_thread);
-
-    tid
+    new_thread
 }
 
 /// Wrapper which runs a closure with a specified page table
@@ -444,7 +441,7 @@ pub struct Params {
 pub fn new_user_thread(
     bin: &[u8],
     params: Params
-) -> Result<u64, &'static str> {
+) -> Result<Box<Thread>, &'static str> {
     // Check the header
     const ELF_MAGIC: [u8; 4] = [0x7f, b'E', b'L', b'F'];
 
@@ -568,12 +565,7 @@ pub fn new_user_thread(
             context.rax = USER_HEAP_START as usize;
             context.rcx = USER_HEAP_SIZE as usize;
 
-            let tid = new_thread.tid;
-
-            println!("New Thread {}", new_thread);
-
-            schedule_thread(new_thread);
-            return Ok(tid);
+            return Ok(new_thread);
         });
     }
     Err("Could not parse ELF")

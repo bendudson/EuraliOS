@@ -31,16 +31,17 @@ fn kernel_thread_main() {
 
     // Start PCI program with new input and VGA output
     let pci_input = Arc::new(RwLock::new(Rendezvous::Empty));
-    process::new_user_thread(
-        include_bytes!("../../user/pci"),
-        process::Params{
-            handles: Vec::from([
-                pci_input.clone(),
-                vga_rz.clone()
-            ]),
-            io_privileges: true,
-            mounts: vfs::VFS::new()
-        });
+    process::schedule_thread(
+        process::new_user_thread(
+            include_bytes!("../../user/pci"),
+            process::Params{
+                handles: Vec::from([
+                    pci_input.clone(),
+                    vga_rz.clone()
+                ]),
+                io_privileges: true,
+                mounts: vfs::VFS::new()
+            }).unwrap());
 
     // Create a Virtual File System
     let mut vfs = vfs::VFS::from([
@@ -50,53 +51,55 @@ fn kernel_thread_main() {
 
     // New input for the rtl8139 driver
     let rtl_input = Arc::new(RwLock::new(Rendezvous::Empty));
-    process::new_user_thread(
-        include_bytes!("../../user/rtl8139"),
-        process::Params{
-            handles: Vec::from([
-                // Input
-                rtl_input.clone(),
-                // VGA output
-                vga_rz.clone()
-            ]),
-            io_privileges: true,
-            mounts: vfs.clone()
-        });
+    process::schedule_thread(
+        process::new_user_thread(
+            include_bytes!("../../user/rtl8139"),
+            process::Params{
+                handles: Vec::from([
+                    // Input
+                    rtl_input.clone(),
+                    // VGA output
+                    vga_rz.clone()
+                ]),
+                io_privileges: true,
+                mounts: vfs.clone()
+            }).unwrap());
     vfs.mount("/dev/nic", rtl_input);
 
     // New input for tcp stack
     let tcp_input = Arc::new(RwLock::new(Rendezvous::Empty));
-    process::new_user_thread(
-        include_bytes!("../../user/tcp"),
-        process::Params{
-            handles: Vec::from([
-                // Input
-                tcp_input.clone(),
-                // VGA output
-                vga_rz.clone()
-            ]),
-            io_privileges: false,
-            mounts: vfs.clone()
-        });
+    process::schedule_thread(
+        process::new_user_thread(
+            include_bytes!("../../user/tcp"),
+            process::Params{
+                handles: Vec::from([
+                    // Input
+                    tcp_input.clone(),
+                    // VGA output
+                    vga_rz.clone()
+                ]),
+                io_privileges: false,
+                mounts: vfs.clone()
+            }).unwrap());
     vfs.mount("/tcp", tcp_input);
 
     // Use keyboard input
-    process::new_user_thread(
-        include_bytes!("../../user/gopher"),
-        process::Params{
-            handles: Vec::from([
-                // Input
-                keyboard_rz,
-                // VGA output
-                vga_rz
-            ]),
-            io_privileges: false,
-            mounts: vfs
-        });
+    process::schedule_thread(
+        process::new_user_thread(
+            include_bytes!("../../user/gopher"),
+            process::Params{
+                handles: Vec::from([
+                    // Input
+                    keyboard_rz,
+                    // VGA output
+                    vga_rz
+                ]),
+                io_privileges: false,
+                mounts: vfs
+            }).unwrap());
 
     kernel::hlt_loop();
 }
-
 
 /// Function called by the bootloader
 /// via _start entry point declared in entry_point! above
@@ -118,7 +121,8 @@ fn kernel_entry(boot_info: &'static BootInfo) -> ! {
 
     // Launch the main kernel thread
     // which will be scheduled and take over from here
-    process::new_kernel_thread(kernel_thread_main, Vec::new());
+    process::schedule_thread(
+        process::new_kernel_thread(kernel_thread_main, Vec::new()));
 
     kernel::hlt_loop();
 }

@@ -192,7 +192,7 @@ pub fn create_new_user_pagetable() -> (*mut PageTable, u64) {
     let mut mapper = unsafe {
         OffsetPageTable::new(&mut *user_page_table_ptr,
                              memory_info.physical_memory_offset)};
-    kernel_info::add_to_user_table(&mut mapper,
+    _ = kernel_info::add_to_user_table(&mut mapper,
                                    &mut memory_info.frame_allocator);
 
     (user_page_table_ptr, user_page_table_physaddr)
