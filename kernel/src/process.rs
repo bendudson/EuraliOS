@@ -774,6 +774,41 @@ pub fn new_memory_chunk(
     Err(syscalls::SYSCALL_ERROR_THREAD)
 }
 
+/// A memory chunk which maps a specific range of
+/// physical memory
+///
+/// No frame allocation, so assumes that the physical
+/// memory is ok to use.
+///
+/// # Arguments
+///
+/// * `thread` - The thread which will have the new chunk mapped
+/// * `num_pages` - Number of 4k pages
+/// * `start_physaddr` - Starting physical address.
+///                      Must be page aligned
+///
+pub fn special_memory_chunk(
+    thread: &Thread,
+    num_pages: u64,
+    start_physaddr: u64
+) -> Result<(VirtAddr, PhysAddr), usize> {
+    // Virtual address of the available page chunk
+    let start_virtaddr = match memory::find_available_page_chunk(
+        thread.page_table_physaddr) {
+        Some(value) => value,
+        None => return Err(syscalls::SYSCALL_ERROR_MEMORY)
+    };
+
+    match memory::create_physical_range_pages(
+        thread.page_table_physaddr,
+        start_virtaddr,
+        num_pages,
+        PhysAddr::new(start_physaddr)) {
+        Ok(physaddr) => Ok((start_virtaddr, physaddr)),
+        Err(_) => Err(syscalls::SYSCALL_ERROR_MEMORY)
+    }
+}
+
 /// Free a memory chunk previously allocated with new_memory_chunk
 pub fn free_memory_chunk(
     address: VirtAddr

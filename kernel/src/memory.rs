@@ -407,8 +407,6 @@ fn map_consecutive_pages(
                              memory_info.physical_memory_offset)};
 
     for (page, frame) in page_range.zip(frame_range) {
-        println!("Page: {:?} -> Frame: {:?}", page, frame);
-
         unsafe {
             mapper.map_to_with_table_flags(page,
                                            frame,

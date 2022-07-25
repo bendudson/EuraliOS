@@ -18,6 +18,22 @@ pub enum MessageData {
     Memory(PhysAddr)
 }
 
+impl From<u64> for MessageData {
+    fn from (value: u64) -> Self {
+        MessageData::Value(value)
+    }
+}
+impl From<Arc<RwLock<Rendezvous>>> for MessageData {
+    fn from (rv: Arc<RwLock<Rendezvous>>) -> Self {
+        MessageData::Rendezvous(rv)
+    }
+}
+impl From<PhysAddr> for MessageData {
+    fn from (physaddr: PhysAddr) -> Self {
+        MessageData::Memory(physaddr)
+    }
+}
+
 /// Messages can be either Short or Long
 ///
 /// Short messages just contain values
@@ -46,6 +62,13 @@ const MESSAGE_DATA3_ERR: u64 = 3 << 11;
 
 const MESSAGE_DATA3_TYPE: u64 =
     MESSAGE_DATA3_RDV | MESSAGE_DATA3_MEM | MESSAGE_DATA3_ERR; // Bit mask
+
+/// General message types
+pub const READ: u64 = 1;  // Short(READ, offset, length
+pub const WRITE: u64 = 2; // Long(WRITE, length, handle)
+pub const DATA: u64 = 2;  // Same as write
+pub const OPEN: u64 = 3;
+pub const CLOSE: u64 = 4;
 
 impl Message {
     /// Convert a Message into values which will be returned to user
