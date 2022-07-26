@@ -20,3 +20,10 @@ user/% : FORCE
 	cp target/x86_64-euralios/release/$* user/
 
 FORCE:
+
+# Some shortcuts which build all documentation
+doc: FORCE
+	cargo doc --document-private-items
+
+doc-open:
+	cargo doc --document-private-items --open

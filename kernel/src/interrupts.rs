@@ -41,7 +41,7 @@ pub fn init_idt() {
 /// Structure representing values pushed on the stack when an interrupt occurs
 ///
 /// CPU registers in x86-64 mode
-///   https://wiki.osdev.org/CPU_Registers_x86-64
+///   <https://wiki.osdev.org/CPU_Registers_x86-64>
 ///
 /// Note: Is repr(packed) needed? No padding should be inserted
 ///       since all fields are usize.
@@ -105,7 +105,7 @@ extern "C" fn timer_handler(context_addr: usize) -> usize {
 /// Notes:
 ///  - The calling convention ("x86-interrupt") doesn't have any effect,
 ///    apart from satisfying the type checker in IDT `set_stack_index`,
-///    because the function is [naked].
+///    because the function is `naked`.
 ///  - A naked function is used so that we can control which registers
 ///    are read and written. During a context switch we want to pop
 ///    different values to those pushed.
@@ -113,7 +113,7 @@ extern "C" fn timer_handler(context_addr: usize) -> usize {
 ///    should be the same as TIMER_INTERRUPT_INDEX, unique to each thread.
 ///
 /// Macro wrapper adapted from MOROS by Vincent Ollivier
-/// https://github.com/vinc/moros/blob/trunk/src/sys/idt.rs#L123
+/// <https://github.com/vinc/moros/blob/trunk/src/sys/idt.rs#L123>
 #[macro_export]
 macro_rules! interrupt_wrap {
     ($func: ident => $wrapper:ident) => {

@@ -17,7 +17,7 @@ static TSC_PER_PIT: AtomicU64 = AtomicU64::new(0);
 
 /// Read the processor's Time Stamp Counter
 /// uses RDTSC
-/// https://www.felixcloutier.com/x86/rdtsc
+/// <https://www.felixcloutier.com/x86/rdtsc>
 fn time_stamp_counter() -> u64 {
     let counter: u64;
     unsafe{

@@ -1,3 +1,5 @@
+//! Non-buffering communication mechanism
+
 use alloc::boxed::Box;
 use crate::process::Thread;
 use crate::syscalls;
@@ -22,7 +24,12 @@ pub enum Rendezvous {
 }
 
 impl Rendezvous {
+    /// Send a message to a Rendezvous. Blocking or non-blocking
     ///
+    /// If a `Box<Thread>` is provided then it is suspended until
+    /// the message is received i.e. blocking.
+    ///
+    /// Causes state transition:
     /// 1. Empty -> Sending, return (None, None)
     /// 3. Sending -> Sending, return (sending thread, None)
     ///    Error returned to thread
@@ -81,6 +88,7 @@ impl Rendezvous {
         }
     }
 
+    /// Blocking receive a message
     ///
     /// 1. Empty -> Receiving, return (None, None)
     /// 2. Sending -> Empty, return (receiving thread, sending thread)
@@ -132,6 +140,10 @@ impl Rendezvous {
         }
     }
 
+    /// Send a message and block on receive from the same thread
+    ///
+    /// When a Rendezvous is shared between multiple threads, for example
+    /// a server, this ensures that the reply goes to the correct thread.
     ///
     /// 1. Empty -> SendReceiving, return (None, None)
     /// 3. Sending -> Sending, return (sending thread, None)

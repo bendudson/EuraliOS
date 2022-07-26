@@ -15,7 +15,7 @@ use crate::println;
 
 /// Return the index of a non-zero bit
 ///
-/// Uses the BSF instruction: https://www.felixcloutier.com/x86/bsf
+/// Uses the BSF instruction: <https://www.felixcloutier.com/x86/bsf>
 ///
 /// Assumes that at least one bit is not zero
 fn nonzero_bit_index(bitmap: u32) -> u32 {

@@ -188,7 +188,7 @@ impl Device {
     /// Perform a software reset
     ///
     /// Note: Comments from the OSDev wiki
-    ///       https://wiki.osdev.org/RTL8139
+    ///      <https://wiki.osdev.org/RTL8139>
     fn reset(&mut self) -> Result<(), &'static str> {
 
         // Send 0x00 to the CONFIG_1 register (0x52) to set the LWAKE +

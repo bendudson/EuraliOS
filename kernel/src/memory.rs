@@ -372,7 +372,8 @@ pub fn create_user_ondemand_pages(
                             PageTableFlags::PRESENT |
                             PageTableFlags::WRITABLE |
                             PageTableFlags::USER_ACCESSIBLE)
-            .map_err(|_| MapToError::FrameAllocationFailed)?;
+            .map_err(|_| MapToError::FrameAllocationFailed)?
+            .flush(); // Update page table
     }
 
     Ok(())
@@ -813,6 +814,7 @@ pub fn allocate_missing_ondemand_frame(
 
     if entry.flags() != (PageTableFlags::PRESENT |
                          PageTableFlags::USER_ACCESSIBLE) {
+        println!("Unexpected flags: {:?} addr: {:?}", entry.flags(), addr);
         return Err("Error: Unexpected table flags");
     }
 

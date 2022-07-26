@@ -1,3 +1,5 @@
+//! Manages the Global Descriptor Table (GDT) and Task State Segment (TSS)
+
 use x86_64::VirtAddr;
 use x86_64::structures::tss::TaskStateSegment;
 

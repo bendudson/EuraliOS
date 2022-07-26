@@ -1,7 +1,7 @@
 //! EuraliOS TCP stack
 //!
 //! Based on code from MOROS
-//! https://github.com/vinc/moros/blob/trunk/src/sys/net/mod.rs
+//! <https://github.com/vinc/moros/blob/trunk/src/sys/net/mod.rs>
 
 #![no_std]
 #![no_main]

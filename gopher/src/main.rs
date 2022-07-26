@@ -102,7 +102,7 @@ fn display_text<'a>(
                             links.push(line);
                             debug_println!("{}", line[1..].split('\t').next().unwrap_or(""));
                         }
-                        Some(c) => {
+                        Some(_) => {
                             debug_println!("{:?}", line);
                         }
                         None => {

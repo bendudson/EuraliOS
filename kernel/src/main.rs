@@ -8,7 +8,7 @@ use core::panic::PanicInfo;
 use kernel::println;
 use bootloader::{BootInfo, entry_point};
 extern crate alloc;
-use alloc::{vec::Vec, sync::Arc, string::String};
+use alloc::{vec::Vec, sync::Arc};
 use spin::RwLock;
 
 use kernel::memory;

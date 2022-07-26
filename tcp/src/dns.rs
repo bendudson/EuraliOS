@@ -1,8 +1,8 @@
 //! Domain Name System (DNS)
 //!
 //! This code was adapted from the MOROS operating system
-//! https://github.com/vinc/moros/blob/trunk/src/usr/host.rs
-//! Copyright (c) 2019-2022 Vincent Ollivier (https://vinc.cc/)
+//! <https://github.com/vinc/moros/blob/trunk/src/usr/host.rs>
+//! Copyright (c) 2019-2022 Vincent Ollivier (<https://vinc.cc/>)
 //!
 //! See RFC 1035 for implementation details
 

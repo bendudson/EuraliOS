@@ -5,7 +5,7 @@ use core::fmt;
 /// Represent a Media Access Control (MAC) address
 ///
 /// Interface similar to mac_address crate
-/// https://docs.rs/mac_address/latest/mac_address/struct.MacAddress.html
+/// <https://docs.rs/mac_address/latest/mac_address/struct.MacAddress.html>
 pub struct MacAddress {
     octet: [u8; 6]
 }

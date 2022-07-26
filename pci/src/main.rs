@@ -1,11 +1,11 @@
 //! EuraliOS PCI bus driver
 //!
 //!Code based on
-//!  - MOROS : https://github.com/vinc/moros/blob/trunk/src/sys/pci.rs
-//!  - Theseus : https://github.com/theseus-os/Theseus/blob/theseus_main/kernel/pci/src/lib.rs
+//!  - MOROS : <https://github.com/vinc/moros/blob/trunk/src/sys/pci.rs>
+//!  - Theseus : <https://github.com/theseus-os/Theseus/blob/theseus_main/kernel/pci/src/lib.rs>
 //!
 //! Reference:
-//! - OSdev: http://wiki.osdev.org/PCI#PCI_Device_Structure
+//! - OSdev: <http://wiki.osdev.org/PCI#PCI_Device_Structure>
 
 #![no_std]
 #![no_main]

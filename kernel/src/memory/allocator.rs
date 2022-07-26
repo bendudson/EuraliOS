@@ -1,3 +1,9 @@
+//! Kernel heap allocator
+//!
+//! Uses the `linked_list_allocator` crate to manage a fixed size heap
+//! Used to store kernel data structures, including:
+//! - Thread objects (in Box<Thread>)
+//! - Stacks for kernel threads
 
 use x86_64::{
     structures::paging::{

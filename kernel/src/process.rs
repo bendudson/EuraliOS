@@ -109,7 +109,7 @@ impl Process {
 /// Per-thread state
 ///
 ///
-/// https://samwho.dev/blog/context-switching-on-x86/
+/// <https://samwho.dev/blog/context-switching-on-x86/>
 ///
 /// Notes:
 ///  - Box::new(Thread { .. }) first constructs a new Thread
@@ -456,7 +456,7 @@ pub fn new_user_thread(
         return Err("Expected ELF binary");
     }
     // Use the object crate to parse the ELF file
-    // https://crates.io/crates/object
+    // <https://crates.io/crates/object>
     if let Ok(obj) = object::File::parse(bin) {
 
         // Create a user pagetable with only kernel pages

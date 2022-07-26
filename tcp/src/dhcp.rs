@@ -11,9 +11,10 @@ use euralios_std::{debug_println, debug_print,
 use crate::Interface;
 use crate::dns;
 
+/// DHCP configuration on given interface
+///
+/// Based on <https://github.com/vinc/moros/blob/trunk/src/usr/dhcp.rs>
 pub fn configure(interface: &mut Interface) {
-    // DHCP
-    // Based on https://github.com/vinc/moros/blob/trunk/src/usr/dhcp.rs
 
     let dhcp_socket = Dhcpv4Socket::new();
     let dhcp_handle = interface.add_socket(dhcp_socket);
@@ -53,8 +54,10 @@ pub fn configure(interface: &mut Interface) {
     }
 }
 
+/// Set the IPv4 address of an interface
+///
 /// This function from:
-/// https://github.com/smoltcp-rs/smoltcp/blob/master/examples/dhcp_client.rs#L97
+/// <https://github.com/smoltcp-rs/smoltcp/blob/master/examples/dhcp_client.rs#L97>
 fn set_ipv4_addr(iface: &mut Interface, cidr: Ipv4Cidr) {
     iface.update_ip_addrs(|addrs| {
         let dest = addrs.iter_mut().next().unwrap();

@@ -91,7 +91,7 @@ const SYSCALL_KERNEL_STACK_OFFSET: u64 = 1024;
 ///
 /// Note: This depends on the order of the GDT table
 ///
-/// https://nfil.dev/kernel/rust/coding/rust-kernel-to-userspace-and-back/
+/// <https://nfil.dev/kernel/rust/coding/rust-kernel-to-userspace-and-back/>
 pub fn init() {
     let handler_addr = handle_syscall as *const () as u64;
     unsafe {
@@ -127,13 +127,13 @@ pub fn init() {
         // Write TSS address into kernel GS MSR
         //
         // On a syscall SWAPGS will put this into GS. The layout of
-        // the TSS is here: https://wiki.osdev.org/Task_State_Segment
+        // the TSS is here: <https://wiki.osdev.org/Task_State_Segment>
         // The first IST slot is at an offset of 0x24 and there are 7
         // available.
         asm!(
             // Want to move RDX into MSR but wrmsr takes EDX:EAX i.e. EDX
             // goes to high 32 bits of MSR, and EAX goes to low order bits
-            // https://www.felixcloutier.com/x86/wrmsr
+            // <https://www.felixcloutier.com/x86/wrmsr>
             "mov eax, edx",
             "shr rdx, 32", // Shift high bits into EDX
             "wrmsr",
@@ -159,8 +159,8 @@ extern "C" fn handle_syscall() {
         asm!(
             // Here should switch stack to avoid messing with user stack
             // swapgs seems to be a way to do this
-            // - https://github.com/redox-os/kernel/blob/master/src/arch/x86_64/interrupt/syscall.rs#L65
-            // - https://www.felixcloutier.com/x86/swapgs
+            // - <https://github.com/redox-os/kernel/blob/master/src/arch/x86_64/interrupt/syscall.rs#L65>
+            // - <https://www.felixcloutier.com/x86/swapgs>
 
             "swapgs", // Put the TSS address into GS (stored in syscalls::init)
             "mov gs:{tss_temp}, rsp", // Save user stack pointer in TSS entry
