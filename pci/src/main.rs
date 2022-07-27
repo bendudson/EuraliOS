@@ -227,12 +227,6 @@ fn main() {
         match syscalls::receive(&STDIN) {
             Ok(message) => {
                 match message {
-                    // A character e.g. from keyboard
-                    syscalls::Message::Short(
-                        syscalls::MESSAGE_TYPE_CHAR, ch, _) => {
-                        debug_println!("[pci] Character: {}", ch);
-                    }
-
                     // Find a device with given vendor and device ID
                     // and return a message to the same Rendezvous
                     syscalls::Message::Short(

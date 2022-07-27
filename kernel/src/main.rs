@@ -74,7 +74,7 @@ fn kernel_thread_main() {
     // Send a message to VGA process containing the chunk.
     // When received the chunk will be mapped into address space
     vga_input.write().send(None, Message::Long(
-        message::DATA,
+        message::VIDEO_MEMORY,
         (0xC0000 - 0xA0000).into(),
         physaddr.into()
     ));

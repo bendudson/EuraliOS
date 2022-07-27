@@ -67,8 +67,11 @@ const MESSAGE_DATA3_TYPE: u64 =
 pub const READ: u64 = 1;  // Short(READ, offset, length
 pub const WRITE: u64 = 2; // Long(WRITE, length, handle)
 pub const DATA: u64 = 2;  // Same as write
-pub const OPEN: u64 = 3;
-pub const CLOSE: u64 = 4;
+pub const CHAR: u64 = 3;
+pub const OPEN: u64 = 4;
+pub const CLOSE: u64 = 5;
+
+pub const VIDEO_MEMORY: u64 = 6;
 
 impl Message {
     /// Convert a Message into values which will be returned to user

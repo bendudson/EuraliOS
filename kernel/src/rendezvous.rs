@@ -6,16 +6,15 @@ use crate::syscalls;
 use crate::message::Message;
 use core::mem;
 
-// Standard message types
-pub const MESSAGE_TYPE_CHAR: u64 = 0;
-
+/// Represents a blocking communication channel
+///
 /// A Rendezvous is in one of three states:
 ///  1. Empty
 ///  2. Receiving (or Reading). Optionally from a specific thread
 ///  3. Sending (or Writing)
 ///  4. Sending, expecting a reply
-/// In states 2-5 there is a Thread waiting
-/// for a matching call.
+/// In states 2 and 4 there is a Thread waiting
+/// for a matching call, and in state 3 the sender may wait.
 pub enum Rendezvous {
     Empty,
     Sending(Option<Box<Thread>>, Message),

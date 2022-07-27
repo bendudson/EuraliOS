@@ -451,5 +451,3 @@ impl fmt::Display for SyscallError {
     }
 }
 
-// Standard message types
-pub const MESSAGE_TYPE_CHAR: u64 = 0;

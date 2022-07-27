@@ -123,7 +123,7 @@ fn display_text<'a>(
         loop {
             match syscalls::receive(&STDIN) {
                 Ok(syscalls::Message::Short(
-                    syscalls::MESSAGE_TYPE_CHAR, ch, _)) => {
+                    message::CHAR, ch, _)) => {
                     // Received a character
 
                     if ch >= ('0' as u64) && ch <= ('9' as u64) {

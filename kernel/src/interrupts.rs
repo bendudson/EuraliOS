@@ -312,8 +312,8 @@ impl InterruptIndex {
 
 use alloc::sync::Arc;
 use spin::RwLock;
-use crate::rendezvous::{Rendezvous, MESSAGE_TYPE_CHAR};
-use crate::message::Message;
+use crate::rendezvous::Rendezvous;
+use crate::message::{self, Message};
 
 lazy_static! {
     static ref KEYBOARD_RENDEZVOUS: Arc<RwLock<Rendezvous>> =
@@ -355,7 +355,7 @@ extern "C" fn keyboard_handler_inner(context_addr: usize)
                     let (thread1, thread2) =
                         KEYBOARD_RENDEZVOUS.write().send(
                             None,
-                            Message::Short(MESSAGE_TYPE_CHAR,
+                            Message::Short(message::CHAR,
                                            character as u64, 0));
                     // thread1 should be scheduled to run next
                     if let Some(t) = thread2 {
