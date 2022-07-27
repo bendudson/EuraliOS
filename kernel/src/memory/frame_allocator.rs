@@ -279,6 +279,10 @@ impl MultilevelBitmapFrameAllocator {
     }
 
     pub fn deallocate_frame(&mut self, frame: PhysFrame) {
+        if frame.start_address() < self.frame_phys_addr {
+            // Not managed by this frame allocator
+            return;
+        }
         let frame_number = (frame.start_address() - self.frame_phys_addr) / 4096;
         self.return_frame(frame_number);
     }
