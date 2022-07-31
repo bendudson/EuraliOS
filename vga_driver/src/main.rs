@@ -275,7 +275,9 @@ fn main() {
         match syscalls::receive(&STDIN) {
             // Open a new writer
             Ok(Message::Long(
-                message::OPEN, _length, _path)) => {
+                message::OPEN, _, _)) |
+            Ok(Message::Short(
+                message::OPEN, _, _)) => {
 
                 // Make a pair of Rendezvous for communication
                 let (handle, client_handle) = syscalls::new_rendezvous()

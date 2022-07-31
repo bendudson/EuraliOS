@@ -9,6 +9,7 @@ members = [
     "tcp",
     "gopher",
     "timing_test",
-    "vga_driver"
+    "vga_driver",
+    "init"
 ]
 

@@ -27,21 +27,22 @@ entry_point!(kernel_entry);
 /// which is started once basic kernel functions have
 /// been initialised in kernel_entry
 fn kernel_thread_main() {
-    let keyboard_rz = interrupts::keyboard_rendezvous();
-    let vga_rz = vga_buffer::start_listener();
-
     // Create a Virtual File System
     let mut vfs = vfs::VFS::new();
 
-    // Start PCI program with new input and VGA output
+    // Get the keyboard input
+    let keyboard_rz = interrupts::keyboard_rendezvous();
+    vfs.mount("/keyboard", keyboard_rz.clone());
+
+    // Start PCI program
     let pci_input = Arc::new(RwLock::new(Rendezvous::Empty));
     process::schedule_thread(
         process::new_user_thread(
             include_bytes!("../../user/pci"),
             process::Params{
                 handles: Vec::from([
-                    pci_input.clone(),
-                    vga_rz.clone()
+                    pci_input.clone()
+                    // No output
                 ]),
                 io_privileges: true,
                 mounts: vfs.clone()
@@ -62,6 +63,8 @@ fn kernel_thread_main() {
             mounts: vfs.clone()
         }).unwrap();
 
+    vfs.mount("/vga", vga_input.clone());
+
     // Allocate a memory chunk mapping video memory
     let (virtaddr, _) = process::special_memory_chunk(
         &vga_thread,
@@ -80,6 +83,22 @@ fn kernel_thread_main() {
     ));
 
     process::schedule_thread(vga_thread);
+
+    // User-space init process
+    // Pass keyboard and VGA driver handles
+    process::schedule_thread(
+        process::new_user_thread(
+            include_bytes!("../../user/init"),
+            process::Params{
+                handles: Vec::from([
+                    // Input from keyboard
+                    keyboard_rz,
+                    // Output to VGA
+                    vga_input
+                ]),
+                io_privileges: true,
+                mounts: vfs.clone()
+            }).unwrap());
 
     // // New input for the rtl8139 driver
     // let rtl_input = Arc::new(RwLock::new(Rendezvous::Empty));

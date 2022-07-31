@@ -10,6 +10,7 @@ pub mod message;
 pub mod ports;
 pub mod thread;
 pub mod time;
+pub mod io;
 
 use core::panic::PanicInfo;
 #[panic_handler]
