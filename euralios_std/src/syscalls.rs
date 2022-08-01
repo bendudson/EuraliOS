@@ -1,7 +1,5 @@
 use core::arch::asm;
-use core::fmt;
-use core::ptr;
-use core::slice;
+use core::{fmt, ptr, slice, clone::Clone};
 
 pub use crate::message::{self, Message};
 use crate::debug_println;
@@ -31,6 +29,27 @@ impl Drop for CommHandle {
         if self.0 == 0 {
             return; // Already taken
         }
+    }
+}
+
+impl Clone for CommHandle {
+    /// Makes a copy of a communication handle
+    fn clone(&self) -> Self {
+        let error: u64;
+        let new_handle: u32;
+        unsafe {
+            asm!("syscall",
+                 in("rax") SYSCALL_COPY_RENDEZVOUS,
+                 in("rdi") self.0, // First argument
+                 lateout("rax") error,
+                 lateout("rdi") new_handle,
+                 out("rcx") _,
+                 out("r11") _);
+        }
+        if error != 0 {
+            panic!("CommHandle::clone({:X}) error {}", self.0, error);
+        }
+        CommHandle(new_handle)
     }
 }
 
@@ -75,8 +94,7 @@ impl MemoryHandle {
         return self.0;
     }
     /// Take the value out of the handle
-    /// Note: When the handle is dropped the memory
-    ///       the memory will not be freed
+    /// Note: When the handle is dropped the memory will not be freed
     pub unsafe fn take(&mut self) -> u64 {
         let handle = self.0;
         self.0 = 0;
@@ -415,6 +433,7 @@ pub const SYSCALL_MALLOC: u64 = 7;
 pub const SYSCALL_FREE: u64 = 8;
 pub const SYSCALL_YIELD: u64 = 9;
 pub const SYSCALL_NEW_RENDEZVOUS: u64 = 10;
+pub const SYSCALL_COPY_RENDEZVOUS: u64 = 11;
 
 // Syscall error codes
 pub const SYSCALL_ERROR_MASK : usize = 127; // Lower 7 bits

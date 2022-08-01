@@ -21,6 +21,7 @@
 //!  8   free(mem_handle)
 //!  9   yield()
 //! 10   new_rendezvous() -> (handle, handle)
+//! 11   copy_rendezvous(handle) -> handle
 //!
 //! Potential future syscalls
 //! -------------------------
@@ -28,12 +29,12 @@
 //! - launch_process(..)         Start a new process
 //!
 //! - wait(time)                 Stop thread for set time
-//! - yield() -> ()              Thread yields control
 //! - thread_kill(u64) -> bool   Kill the specified thread. Must be in the same process.
 //! - unique_id() -> u64         Return a unique number
 //!
 //! - mount(str, handle)         Attach a process to a vfs node
-//!
+//! - umount(str)                Unmount
+//! - close(handle)              Drop a Rendezvous
 
 // Syscall numbers
 pub const SYSCALL_MASK: u64 = 0xFF;
@@ -48,6 +49,7 @@ pub const SYSCALL_MALLOC: u64 = 7;
 pub const SYSCALL_FREE: u64 = 8;
 pub const SYSCALL_YIELD: u64 = 9;
 pub const SYSCALL_NEW_RENDEZVOUS: u64 = 10;
+pub const SYSCALL_COPY_RENDEZVOUS: u64 = 11;
 
 // Syscall error codes
 pub const SYSCALL_ERROR_MASK : usize = 127; // Lower 7 bits
@@ -277,6 +279,7 @@ extern "C" fn dispatch_syscall(context_ptr: *mut Context, syscall_id: u64,
         SYSCALL_FREE => sys_free(context_ptr, arg1),
         SYSCALL_YIELD => sys_yield(context_ptr),
         SYSCALL_NEW_RENDEZVOUS => sys_new_rendezvous(context_ptr),
+        SYSCALL_COPY_RENDEZVOUS => sys_copy_rendezvous(context_ptr, arg1),
         _ => println!("Unknown syscall {:?} {} {} {}",
                       context_ptr, syscall_id, arg1, arg2)
     }
@@ -497,3 +500,29 @@ fn sys_new_rendezvous(context_ptr: *mut Context) {
         }
     }
 }
+
+/// Make a copy of a Rendezvous
+///
+/// Takes handle as first argument (syscall RDI)
+/// Returns new handle in RDI
+fn sys_copy_rendezvous(context_ptr: *mut Context, handle: u64) {
+    let context = unsafe {&mut (*context_ptr)};
+
+    if let Some(mut thread) = process::take_current_thread() {
+        let current_tid = thread.tid();
+        thread.set_context(context_ptr);
+
+        // Thread::rendezvous() returns a clone
+        if let Some(rdv) = thread.rendezvous(handle) {
+            let new_handle = thread.give_rendezvous(rdv);
+            // Return
+            context.rax = 0; // Success!
+            context.rdi = new_handle;
+        } else {
+            // Missing handle
+            thread.return_error(SYSCALL_ERROR_INVALID_HANDLE);
+        }
+        process::set_current_thread(thread);
+    }
+}
+
