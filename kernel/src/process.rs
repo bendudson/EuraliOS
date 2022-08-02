@@ -277,6 +277,11 @@ impl Thread {
             self.page_table_physaddr,
             physaddr)
     }
+
+    /// Get a clone of the VFS mount points
+    pub fn vfs(&self) -> vfs::VFS {
+        self.process.read().mounts.clone()
+    }
 }
 
 use core::fmt;

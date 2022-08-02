@@ -22,11 +22,10 @@
 //!  9   yield()
 //! 10   new_rendezvous() -> (handle, handle)
 //! 11   copy_rendezvous(handle) -> handle
+//! 12   exec(flags, ELF, stdin/stdout, vfs)
 //!
 //! Potential future syscalls
 //! -------------------------
-//!
-//! - launch_process(..)         Start a new process
 //!
 //! - wait(time)                 Stop thread for set time
 //! - thread_kill(u64) -> bool   Kill the specified thread. Must be in the same process.
@@ -50,6 +49,7 @@ pub const SYSCALL_FREE: u64 = 8;
 pub const SYSCALL_YIELD: u64 = 9;
 pub const SYSCALL_NEW_RENDEZVOUS: u64 = 10;
 pub const SYSCALL_COPY_RENDEZVOUS: u64 = 11;
+pub const SYSCALL_EXEC: u64 = 12;
 
 // Syscall error codes
 pub const SYSCALL_ERROR_MASK : usize = 127; // Lower 7 bits
@@ -66,9 +66,15 @@ pub const SYSCALL_ERROR_MEMORY: usize = 9;
 pub const SYSCALL_ERROR_DOUBLEFREE: usize = 10;
 pub const SYSCALL_ERROR_NOMEMSLOTS: usize = 11; // No memory chunk slots
 
+// Exec permission flags
+pub const EXEC_PERM_IO: u64 = 1;
+
 use crate::{print, println};
 use core::arch::asm;
 use core::{slice, str};
+extern crate alloc;
+use alloc::vec::Vec;
+
 use x86_64::VirtAddr;
 
 use crate::process;
@@ -280,6 +286,7 @@ extern "C" fn dispatch_syscall(context_ptr: *mut Context, syscall_id: u64,
         SYSCALL_YIELD => sys_yield(context_ptr),
         SYSCALL_NEW_RENDEZVOUS => sys_new_rendezvous(context_ptr),
         SYSCALL_COPY_RENDEZVOUS => sys_copy_rendezvous(context_ptr, arg1),
+        SYSCALL_EXEC => sys_exec(context_ptr, syscall_id, arg1 as *const u8, arg2, arg3 as *const u8),
         _ => println!("Unknown syscall {:?} {} {} {}",
                       context_ptr, syscall_id, arg1, arg2)
     }
@@ -509,7 +516,6 @@ fn sys_copy_rendezvous(context_ptr: *mut Context, handle: u64) {
     let context = unsafe {&mut (*context_ptr)};
 
     if let Some(mut thread) = process::take_current_thread() {
-        let current_tid = thread.tid();
         thread.set_context(context_ptr);
 
         // Thread::rendezvous() returns a clone
@@ -526,3 +532,94 @@ fn sys_copy_rendezvous(context_ptr: *mut Context, handle: u64) {
     }
 }
 
+/// Create a new process
+///
+/// # Input
+///
+///  - Pointer to ELF binary data  (Arg1, syscall RDI)
+///  - Length of ELF binary data (high 32 bits of syscall_id)
+///  - STDIN & STDOUT rendezvous handles (Arg2, syscall RSI)
+///  - Pointer to parameter string (Arg3, syscall RDX)
+///  - Length of parameter string (16 bits of syscall_id)
+///  - Flags controlling permissions (8 bits of syscall_id)
+///    - I/O privileges: EXEC_PERM_IO
+///    - Thread fork?
+///    - Malloc?
+///    - Exec?
+fn sys_exec(
+    context_ptr: *mut Context,
+    syscall_id: u64,
+    bin: *const u8, // Binary data (ELF format)
+    stdio: u64, // The stdin/stdout rendezvous handles
+    param: *const u8) {
+
+    let context = unsafe {&mut (*context_ptr)};
+
+    // Low 8 bits of syscall_id contain syscall number
+    // Remaining 48 bits are used to store the length
+    // of the bin and param parameters, and the
+    // capability flags.
+    let bin_length = syscall_id >> 32; // High 32 bits
+    let param_length = (syscall_id >> 16) & 0xFFFF;
+    let flags = (syscall_id >> 8) & 0xFF;
+
+    // Handles
+    let stdin_handle = (stdio >> 32) & 0xFFFF_FFFF; // High 32 bits
+    let stdout_handle = stdio & 0xFFFF_FFFF; // Low 32 bits
+
+    if let Some(mut thread) = process::take_current_thread() {
+        thread.set_context(context_ptr);
+
+        // Get the Rendezvous handles for stdin & stdout
+        let stdin = if let Some(rdv) = thread.take_rendezvous(stdin_handle) {
+            rdv
+        } else {
+            // Invalid handle
+            thread.return_error(SYSCALL_ERROR_INVALID_HANDLE);
+            process::set_current_thread(thread);
+            return;
+        };
+
+        let stdout = if let Some(rdv) = thread.take_rendezvous(stdout_handle) {
+            rdv
+        } else {
+            // Invalid handle
+            thread.return_error(SYSCALL_ERROR_INVALID_HANDLE);
+            process::set_current_thread(thread);
+            return;
+        };
+
+        // Check I/O privileges. Caller must have I/O privileges
+        let io_privileges = (flags & EXEC_PERM_IO == EXEC_PERM_IO) &&
+            ((context.rflags & 0x3000) == 0x3000);
+
+        // Get the VFS for this process
+        // This will be set from the param string
+        // For now the same as parent
+        let mounts = thread.vfs();
+
+        match process::new_user_thread(
+            // Binary ELF data
+            unsafe{slice::from_raw_parts(bin, bin_length as usize)},
+            // Parameters
+            process::Params {
+                handles: Vec::from([
+                    stdin, stdout
+                ]),
+                io_privileges,
+                mounts
+            }) {
+            Ok(new_thread) => {
+                let tid = new_thread.tid() as usize;
+                process::schedule_thread(new_thread);
+                context.rax = 0; // Success!
+                context.rdi = tid; // Thread ID in rdi
+            }
+            Err(msg) => {
+                println!("sys_exec error: {}", msg);
+                thread.return_error(SYSCALL_ERROR_THREAD);
+            }
+        }
+        process::set_current_thread(thread);
+    }
+}

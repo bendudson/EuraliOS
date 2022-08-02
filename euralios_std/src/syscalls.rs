@@ -434,6 +434,7 @@ pub const SYSCALL_FREE: u64 = 8;
 pub const SYSCALL_YIELD: u64 = 9;
 pub const SYSCALL_NEW_RENDEZVOUS: u64 = 10;
 pub const SYSCALL_COPY_RENDEZVOUS: u64 = 11;
+pub const SYSCALL_EXEC: u64 = 12;
 
 // Syscall error codes
 pub const SYSCALL_ERROR_MASK : usize = 127; // Lower 7 bits
