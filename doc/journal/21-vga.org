@@ -72,6 +72,56 @@ to. That means we need to modify the =vga= library so the vga memory
 can start at an arbitrary virtual address.
 
 
+** Running the VGA program from Init
+
+#+begin_src rust
+  // Start the VGA driver
+  syscalls::exec(
+      include_bytes!("../../user/vga_driver"),
+      syscalls::EXEC_PERM_IO, // I/O permissions
+      vga_com2.clone(),
+      vga_com2);
+#+end_src
+
+#+begin_src rust
+  // Assemble a slice then copy to a Vec in the kernel heap
+  let bin_vec = unsafe{slice::from_raw_parts(bin, bin_length as usize)}.to_vec();
+#+end_src
+
+When this tries to allocate memory for the `vga_program` ELF binary
+the allocation fails, shown in figure [[fig-kernel-panic]].
+
+#+CAPTION: Kernel panic when allocating memory
+#+NAME: fig-kernel-panic
+[[./img/21-01-kernel-panic.png]]
+
+This is because the kernel heap is only 100kb, so part of the
+solution is to just increase the kernel heap size. It would be good to avoid
+a kernel panic by first checking if memory can be allocated:
+#+begin_src rust
+  // Assemble a slice pointing to user data
+  let bin_slice = unsafe{slice::from_raw_parts(bin, bin_length as usize)};
+
+  let mut bin_vec : Vec<u8> = Vec::new();
+  // Reserve space
+  if bin_vec.try_reserve_exact(bin_slice.len()).is_err() {
+      // Could not allocate memory
+      println!("[kernel] Couldn't allocate {} bytes for Exec from thread {}", bin_slice.len(), thread.tid());
+      thread.return_error(SYSCALL_ERROR_MEMORY);
+      process::set_current_thread(thread);
+      return;
+  }
+  // Copy data into vector, which is now large enough
+  bin_vec.extend(bin_slice.iter());
+#+end_src
+
+Now we get the slightly more useful result in figure [[fig-user-panic]]:
+The kernel can't allocate enough memory, so returns with an error
+message; the user program (=init=) panics but other programs (=pci=)
+continue.
+#+CAPTION: User panic when allocating memory
+#+NAME: fig-user-panic
+[[./img/21-02-user-panic.png]]
 
 ** ANSI escape codes
 

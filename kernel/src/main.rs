@@ -14,7 +14,6 @@ use spin::RwLock;
 use kernel::memory;
 use kernel::syscalls;
 use kernel::process;
-use kernel::vga_buffer;
 use kernel::interrupts;
 use kernel::rendezvous::Rendezvous;
 use kernel::vfs;
@@ -50,55 +49,39 @@ fn kernel_thread_main() {
 
     vfs.mount("/pci", pci_input);
 
-    // VGA user-space device driver
-    let vga_input = Arc::new(RwLock::new(Rendezvous::Empty));
-    let vga_thread = process::new_user_thread(
-        include_bytes!("../../user/vga_driver"),
+    // User-space init process
+    let init_screen = Arc::new(RwLock::new(Rendezvous::Empty));
+    let init_thread = process::new_user_thread(
+        include_bytes!("../../user/init"),
         process::Params{
             handles: Vec::from([
-                vga_input.clone(),
-                // No STDOUT
+                // Input from keyboard
+                keyboard_rz,
+                // Output used to pass data
+                init_screen.clone()
             ]),
             io_privileges: true,
             mounts: vfs.clone()
         }).unwrap();
 
-    vfs.mount("/vga", vga_input.clone());
-
     // Allocate a memory chunk mapping video memory
     let (virtaddr, _) = process::special_memory_chunk(
-        &vga_thread,
+        &init_thread,
         32,  // Pages, 128k. 0xC0000 - 0xA0000
         0xA0000).unwrap();
 
     // Remove chunk from table so it can be sent
-    let (physaddr, _) = vga_thread.take_memory_chunk(virtaddr).unwrap();
+    let (physaddr, _) = init_thread.take_memory_chunk(virtaddr).unwrap();
 
-    // Send a message to VGA process containing the chunk.
+    // Send a message to init process containing the chunk.
     // When received the chunk will be mapped into address space
-    vga_input.write().send(None, Message::Long(
+    init_screen.write().send(None, Message::Long(
         message::VIDEO_MEMORY,
         (0xC0000 - 0xA0000).into(),
         physaddr.into()
     ));
 
-    process::schedule_thread(vga_thread);
-
-    // User-space init process
-    // Pass keyboard and VGA driver handles
-    process::schedule_thread(
-        process::new_user_thread(
-            include_bytes!("../../user/init"),
-            process::Params{
-                handles: Vec::from([
-                    // Input from keyboard
-                    keyboard_rz,
-                    // Output to VGA
-                    vga_input
-                ]),
-                io_privileges: true,
-                mounts: vfs.clone()
-            }).unwrap());
+    process::schedule_thread(init_thread);
 
     // // New input for the rtl8139 driver
     // let rtl_input = Arc::new(RwLock::new(Rendezvous::Empty));
@@ -181,7 +164,7 @@ fn kernel_entry(boot_info: &'static BootInfo) -> ! {
 #[cfg(not(test))]  // If not in QEMU test mode
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    println!("{}", info);
+    println!("Kernel panic: {}", info);
     kernel::hlt_loop();
 }
 

@@ -450,6 +450,14 @@ pub struct Params {
     pub mounts: vfs::VFS
 }
 
+/// Create a new user thread
+///
+/// # Arguments
+///
+/// * `bin`    - ELF binary containing the program.
+///              Note: This must be accessible in the kernel page tables
+/// * `params` - A collection of parameters. Used so that the calling
+///              site is clearer in what parameters are being set.
 pub fn new_user_thread(
     bin: &[u8],
     params: Params

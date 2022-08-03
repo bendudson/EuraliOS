@@ -598,9 +598,33 @@ fn sys_exec(
         // For now the same as parent
         let mounts = thread.vfs();
 
+        // Copy the ELF data. The data needs to be accessible
+        // within the kernel page table, but the given pointer
+        // is mapped in the calling user program's address space.
+        // Options are:
+        //   1. Create new mappings. This avoids copying but is
+        //      more complicated.
+        //   2. Copy the data into the kernel heap. This needs to
+        //      ensure that there is enough memory available.
+
+        // Assemble a slice pointing to user data
+        let bin_slice = unsafe{slice::from_raw_parts(bin, bin_length as usize)};
+
+        let mut bin_vec : Vec<u8> = Vec::new();
+        // Reserve space
+        if bin_vec.try_reserve_exact(bin_slice.len()).is_err() {
+            // Could not allocate memory
+            println!("[kernel] Couldn't allocate {} bytes for Exec from thread {}", bin_slice.len(), thread.tid());
+            thread.return_error(SYSCALL_ERROR_MEMORY);
+            process::set_current_thread(thread);
+            return;
+        }
+        // Copy data into vector, which is now large enough
+        bin_vec.extend(bin_slice.iter());
+
         match process::new_user_thread(
-            // Binary ELF data
-            unsafe{slice::from_raw_parts(bin, bin_length as usize)},
+            // Binary ELF data, now stored in kernel heap
+            bin_vec.as_slice(),
             // Parameters
             process::Params {
                 handles: Vec::from([

@@ -420,6 +420,50 @@ pub fn new_rendezvous() -> Result<(CommHandle, CommHandle), SyscallError> {
     }
 }
 
+/// Execute a new process
+///
+/// # Arguments
+///
+/// * `bin`    - A slice containing ELF binary data
+/// * `flags`  - Permission flags
+/// * `stdin`  - The new process' STDIN communication handle
+/// * `stdout` - The new process' STDOUT communication handle.
+///
+/// Returns the thread ID if successful, or a `SyscallError`
+pub fn exec(
+    bin: &[u8],
+    flags: u8,
+    mut stdin: CommHandle,
+    mut stdout: CommHandle) -> Result<u64, SyscallError> {
+
+    let error: u64;
+    let tid: u64;
+    unsafe {
+        asm!("syscall",
+             // RAX contains | bin length (32) | param length (16) | flags (8) | syscall (8)
+             in("rax") SYSCALL_EXEC | ((flags as u64) << 8) | ((bin.len() as u64) << 32),
+             // RDI contains pointer to ELF binary data
+             in("rdi") bin.as_ptr() as usize,
+             // RSI contains STDIN & STDOUT handles
+             in("rsi") ((stdin.take() as u64) << 32) | (stdout.take() as u64),
+             // RDX will contain a pointer to a parameter string
+             in("rdx") 0,
+             lateout("rax") error,
+             lateout("rdi") tid,
+             out("rcx") _,
+             out("r11") _);
+    }
+    if error == 0 {
+        // Return new thread ID
+        Ok(tid)
+    } else {
+        Err(SyscallError(error))
+    }
+}
+
+// Exec permission flags
+pub const EXEC_PERM_IO: u8 = 1;
+
 // Syscall numbers
 pub const SYSCALL_MASK: u64 = 0xFF;
 pub const SYSCALL_FORK_THREAD: u64 = 0;
