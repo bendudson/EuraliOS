@@ -123,6 +123,13 @@ continue.
 #+NAME: fig-user-panic
 [[./img/21-02-user-panic.png]]
 
+
+
+#+CAPTION: Starting TCP stack with output to VGA driver
+#+NAME: fig-writer-sys
+[[./img/21-03-writer-sys.png]]
+
+
 ** ANSI escape codes
 
 [[https://en.wikipedia.org/wiki/ANSI_escape_code][ANSI escape codes]] are used to change the position and color

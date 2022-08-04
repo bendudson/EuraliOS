@@ -341,8 +341,6 @@ pub fn open(path: &str) -> Result<CommHandle, SyscallError> {
     if error == 0 {
         // Found mount point
         let subpath = &path[match_len..];
-        debug_println!("open '{}' matched {} -> '{}'",
-                       path, match_len, subpath);
 
         if subpath.len() != 0 {
             // Send unmatched part of the path to the given handle
@@ -360,7 +358,7 @@ pub fn open(path: &str) -> Result<CommHandle, SyscallError> {
                     return Ok(handle);
                 }
                 msg => {
-                    debug_println!("rcall reply {:?}", msg);
+                    debug_println!("Unexpected rcall reply {:?}", msg);
                     return Err(SYSCALL_ERROR_NOTFOUND);
                 }
             }
@@ -461,6 +459,27 @@ pub fn exec(
     }
 }
 
+pub fn mount(path: &str, mut handle: CommHandle) -> Result<(), SyscallError> {
+    let error: u64;
+    unsafe {
+        asm!("syscall",
+             // RAX contains | handle (32) | empty (24) | syscall (8)
+             in("rax") SYSCALL_MOUNT | ((handle.take() as u64) << 32),
+             // RDI contains pointer to string data
+             in("rdi") path.as_ptr() as usize,
+             // RSI contains string length
+             in("rsi") path.len(),
+             lateout("rax") error,
+             out("rcx") _,
+             out("r11") _);
+    }
+    if error == 0 {
+        Ok(())
+    } else {
+        Err(SyscallError(error))
+    }
+}
+
 // Exec permission flags
 pub const EXEC_PERM_IO: u8 = 1;
 
@@ -479,6 +498,7 @@ pub const SYSCALL_YIELD: u64 = 9;
 pub const SYSCALL_NEW_RENDEZVOUS: u64 = 10;
 pub const SYSCALL_COPY_RENDEZVOUS: u64 = 11;
 pub const SYSCALL_EXEC: u64 = 12;
+pub const SYSCALL_MOUNT: u64 = 13;
 
 // Syscall error codes
 pub const SYSCALL_ERROR_MASK : usize = 127; // Lower 7 bits

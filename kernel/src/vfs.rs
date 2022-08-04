@@ -28,8 +28,8 @@ impl VFS {
     /// Add a mount point to the VFS
     pub fn mount(&mut self,
                  path: &str,
-                 handle: Arc<RwLock<Rendezvous>>) {
-        self.0.write().push((String::from(path), handle));
+                 rendezvous: Arc<RwLock<Rendezvous>>) {
+        self.0.write().push((String::from(path), rendezvous));
     }
 
     /// Open a path, returning a handle to read/write and the

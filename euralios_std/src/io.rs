@@ -42,3 +42,9 @@ macro_rules! fprint {
     ($handle:expr, $($arg:tt)*) => ($crate::io::_print(
         $handle, format_args!($($arg)*)));
 }
+
+#[macro_export]
+macro_rules! fprintln {
+    ($handle:expr) => ($crate::fprint!($handle, "\n"));
+    ($handle:expr, $($arg:tt)*) => ($crate::fprint!($handle, "{}\n", format_args!($($arg)*)));
+}

@@ -11,7 +11,7 @@
 #![no_main]
 
 use core::arch::asm;
-use euralios_std::{debug_println, syscalls, message::pci,
+use euralios_std::{println, syscalls, message::pci,
                    syscalls::STDIN};
 use core::fmt;
 
@@ -216,7 +216,7 @@ fn main() {
                 PciLocation{bus,
                             slot,
                             function:0}).get_device() {
-                debug_println!("[pci] Device {}", device);
+                println!("[pci] Device {}", device);
                 devices.push(device);
             }
         }
@@ -234,7 +234,7 @@ fn main() {
                         let vendor_id = (vendor & 0xFFFF) as u16;
                         let device_id = (device & 0xFFFF) as u16;
 
-                        debug_println!("[pci] Finding device [{:04X}:{:04X}]",
+                        println!("[pci] Finding device [{:04X}:{:04X}]",
                                        vendor_id, device_id);
 
                         if let Some(device) = devices.iter().find(
@@ -301,7 +301,7 @@ fn main() {
                 syscalls::thread_yield();
             },
             Err(code) => {
-                debug_println!("[pci] Receive error {}", code);
+                println!("[pci] Receive error {}", code);
                 // Wait and try again
                 syscalls::thread_yield();
             }

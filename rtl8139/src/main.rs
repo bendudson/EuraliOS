@@ -2,7 +2,7 @@
 #![no_main]
 
 use core::ptr;
-use euralios_std::{debug_println,
+use euralios_std::{println,
                    syscalls::{self, MemoryHandle, STDIN},
                    net::MacAddress,
                    message::{self, rcall, pci, MessageData},
@@ -13,7 +13,7 @@ use core::str;
 
 #[no_mangle]
 fn main() {
-    debug_println!("[rtl8139] Starting driver");
+    println!("[rtl8139] Starting driver");
 
     let handle = syscalls::open("/pci").expect("Couldn't open pci");
 
@@ -23,10 +23,10 @@ fn main() {
                                           None).unwrap();
     let address = md_address.value();
     if msg_type != pci::ADDRESS {
-        debug_println!("[rtl8139] Device not found. Exiting.");
+        println!("[rtl8139] Device not found. Exiting.");
         return;
     }
-    debug_println!("[rtl8139] Found at address: {:08X}", address);
+    println!("[rtl8139] Found at address: {:08X}", address);
 
     // Enable bus mastering so the card can access main memory
     syscalls::send(&handle, syscalls::Message::Short(
@@ -38,7 +38,7 @@ fn main() {
                                 Some(pci::BAR)).unwrap();
     let bar0 = md_bar0.value();
     let ioaddr = (bar0 & 0xFFFC) as u16;
-    debug_println!("[rtl8139] BAR0: {:08X}. I/O addr: {:04X}", bar0, ioaddr);
+    println!("[rtl8139] BAR0: {:08X}. I/O addr: {:04X}", bar0, ioaddr);
 
     let mut device = {
         // Allocate memory for receive buffer
@@ -60,14 +60,14 @@ fn main() {
                active_tx_id: 0}};
 
     match device.reset() {
-        Ok(()) => debug_println!("[rtl8139] Device reset OK"),
+        Ok(()) => println!("[rtl8139] Device reset OK"),
         Err(message) => {
-            debug_println!("[rtl8139] Device failed to reset: {}", message);
+            println!("[rtl8139] Device failed to reset: {}", message);
             return;
         }
     }
 
-    debug_println!("[rtl8139] MAC address {}", device.mac_address());
+    println!("[rtl8139] MAC address {}", device.mac_address());
 
     // Server loop. Note: Single threaded for now
     loop {
@@ -111,7 +111,7 @@ fn main() {
                                     address.as_u64(), 0));
                     }
                     _ => {
-                        debug_println!("[rtl8139] unknown message {:?}", message);
+                        println!("[rtl8139] unknown message {:?}", message);
                     }
                 }
             }
@@ -125,7 +125,7 @@ fn main() {
                 syscalls::thread_yield();
             },
             Err(code) => {
-                debug_println!("[rtl8139] Receive error {}", code);
+                println!("[rtl8139] Receive error {}", code);
                 // Wait and try again
                 syscalls::thread_yield();
             }
@@ -271,7 +271,7 @@ impl Device {
             == CR_BUFFER_EMPTY {
                 return None
             }
-        debug_println!("[rtl8139] Received packet");
+        println!("[rtl8139] Received packet");
 
         let capr = inportw(self.ioaddr + REG_CAPR);
         let cbr = inportw(self.ioaddr + REG_CBR);
@@ -281,7 +281,7 @@ impl Device {
 
         let header = unsafe{*((self.rx_buffer.as_u64() + offset) as *const u16)};
         if header & ROK != ROK {
-            debug_println!("    => Packet not ok");
+            println!("    => Packet not ok");
             outportw(self.ioaddr + REG_CAPR, cbr);
             return None;
         }
@@ -318,7 +318,7 @@ impl Device {
     ///
     fn send_packet(&mut self, length: u16, handle: MemoryHandle) -> Result<(), ()> {
         if length > TX_BUFFER_LEN {
-            debug_println!("Packet too large to transmit: {} bytes", length);
+            println!("[rtl8139] Packet too large to transmit: {} bytes", length);
             return Err(());
         }
 
@@ -346,7 +346,7 @@ impl Device {
         // Move to the next buffer in round robin
         self.active_tx_id = (self.active_tx_id + 1) % 4;
 
-        debug_println!("[rtl8139] Sent packet {} bytes", length);
+        println!("[rtl8139] Sent packet {} bytes", length);
 
         Ok(())
     }

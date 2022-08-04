@@ -25,6 +25,12 @@ use vga::writers::{Screen, ScreenCharacter,
 /// to video (VGA) memory. This is to avoid having to read from video
 /// memory when deactivating.  When activated the contents of the
 /// memory buffer are copied to video memory.
+///
+/// # Notes
+///
+///  * LF '\n' moves the cursor to the start of the new line
+///    i.e. includes a CR.
+///
 pub struct Writer<'a, S: Screen + TextWriter> {
     row: usize,
     column: usize,
@@ -188,6 +194,7 @@ impl<'a, S: Screen + TextWriter> Writer<'a, S> {
                                     }
                                     self.row = S::HEIGHT - 1;
                                 }
+                                self.column = 0; // NOTE: Also CR
                             }
                             b'\r' => { // Carriage Return (CR)
                                 self.column = 0;

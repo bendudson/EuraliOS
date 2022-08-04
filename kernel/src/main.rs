@@ -33,22 +33,6 @@ fn kernel_thread_main() {
     let keyboard_rz = interrupts::keyboard_rendezvous();
     vfs.mount("/keyboard", keyboard_rz.clone());
 
-    // Start PCI program
-    let pci_input = Arc::new(RwLock::new(Rendezvous::Empty));
-    process::schedule_thread(
-        process::new_user_thread(
-            include_bytes!("../../user/pci"),
-            process::Params{
-                handles: Vec::from([
-                    pci_input.clone()
-                    // No output
-                ]),
-                io_privileges: true,
-                mounts: vfs.clone()
-            }).unwrap());
-
-    vfs.mount("/pci", pci_input);
-
     // User-space init process
     let init_screen = Arc::new(RwLock::new(Rendezvous::Empty));
     let init_thread = process::new_user_thread(
@@ -82,40 +66,6 @@ fn kernel_thread_main() {
     ));
 
     process::schedule_thread(init_thread);
-
-    // // New input for the rtl8139 driver
-    // let rtl_input = Arc::new(RwLock::new(Rendezvous::Empty));
-    // process::schedule_thread(
-    //     process::new_user_thread(
-    //         include_bytes!("../../user/rtl8139"),
-    //         process::Params{
-    //             handles: Vec::from([
-    //                 // Input
-    //                 rtl_input.clone(),
-    //                 // VGA output
-    //                 vga_rz.clone()
-    //             ]),
-    //             io_privileges: true,
-    //             mounts: vfs.clone()
-    //         }).unwrap());
-    // vfs.mount("/dev/nic", rtl_input);
-
-    // // New input for tcp stack
-    // let tcp_input = Arc::new(RwLock::new(Rendezvous::Empty));
-    // process::schedule_thread(
-    //     process::new_user_thread(
-    //         include_bytes!("../../user/tcp"),
-    //         process::Params{
-    //             handles: Vec::from([
-    //                 // Input
-    //                 tcp_input.clone(),
-    //                 // VGA output
-    //                 vga_rz.clone()
-    //             ]),
-    //             io_privileges: false,
-    //             mounts: vfs.clone()
-    //         }).unwrap());
-    // vfs.mount("/tcp", tcp_input);
 
     // // Use keyboard input
     // process::schedule_thread(

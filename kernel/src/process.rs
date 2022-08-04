@@ -718,8 +718,6 @@ pub fn open_path(
     path: &str) -> Result<(usize, usize), usize> {
 
     if let Some(current_thread) = CURRENT_THREAD.read().as_ref() {
-        println!("Thread {} opening {}", current_thread.tid, path);
-
         let mut process = current_thread.process.write();
 
         if let Some((rv, match_len)) = process.mounts.open(path) {

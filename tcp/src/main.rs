@@ -25,7 +25,7 @@ use smoltcp::wire::{EthernetAddress, IpCidr, Ipv4Address, IpAddress};
 use core::str::FromStr;
 use smoltcp::socket::{TcpSocket, TcpSocketBuffer};
 
-use euralios_std::{debug_println,
+use euralios_std::{println,
                    syscalls::{self, STDIN, CommHandle},
                    thread,
                    time,
@@ -114,7 +114,7 @@ impl<'a> smoltcp::phy::Device<'a> for EthernetDevice {
             }
             Ok((message::EMPTY, _, _)) => None,
             value => {
-                debug_println!("[tcp] received unexpected {:?}", value);
+                println!("[tcp] received unexpected {:?}", value);
                 None
             }
         }
@@ -133,7 +133,7 @@ lazy_static! {
 
 #[no_mangle]
 fn main() {
-    debug_println!("[tcp] Starting");
+    println!("[tcp] Starting");
 
     let handle = syscalls::open("/dev/nic").expect("Couldn't open /dev/nic");
 
@@ -143,7 +143,7 @@ fn main() {
                             Some(message::nic::MAC_ADDRESS)).unwrap();
 
     let mac_address = MacAddress::from_u64(ret.value());
-    debug_println!("[tcp] MAC address: {}", mac_address);
+    println!("[tcp] MAC address: {}", mac_address);
 
     // Wrap the communication handle in a type implementing
     // smoltcp's Device trait.
@@ -186,7 +186,7 @@ fn main() {
                                 if let Ok(path) = str::from_utf8(u8_slice) {
                                     let path = path.trim_matches(|c:char| c == '/' ||
                                                                  c.is_whitespace());
-                                    debug_println!("[tcp] Opening path '{}'", path);
+                                    println!("[tcp] Opening path '{}'", path);
 
                                     if let Ok(handle) = open_path(path) {
                                         syscalls::send(&STDIN,
@@ -199,14 +199,14 @@ fn main() {
                                                            message::ERROR_INVALID_VALUE, 0, 0));
                                     }
                                 } else {
-                                    debug_println!("[tcp] open invalid utf8 path");
+                                    println!("[tcp] open invalid utf8 path");
                                     syscalls::send(&STDIN,
                                                    syscalls::Message::Short(
                                                        message::ERROR_INVALID_UTF8, 0, 0));
                                 }
                             }
                             _ => {
-                                debug_println!("[tcp] open invalid message format");
+                                println!("[tcp] open invalid message format");
                                 syscalls::send(&STDIN,
                                                syscalls::Message::Short(
                                                    message::ERROR_INVALID_FORMAT, 0, 0));
@@ -214,7 +214,7 @@ fn main() {
                         }
                     }
                     _ => {
-                        debug_println!("[tcp] unknown message {:?}", message);
+                        println!("[tcp] unknown message {:?}", message);
                     }
                 }
             }
@@ -228,7 +228,7 @@ fn main() {
                 syscalls::thread_yield();
             },
             Err(code) => {
-                debug_println!("[tcp] Receive error {}", code);
+                println!("[tcp] Receive error {}", code);
                 // Wait and try again
                 syscalls::thread_yield();
             }
@@ -249,11 +249,11 @@ fn open_path(path: &str) -> Result<CommHandle, ()> {
         let port: u16 =  ((&path[(ind+1)..])
                                  .trim_matches(|c:char| c == '/' ||
                                                c.is_whitespace()))
-            .parse().map_err(|e| {debug_println!("[tcp] Invalid port: {:?}", e);})?;
+            .parse().map_err(|e| {println!("[tcp] Invalid port: {:?}", e);})?;
 
         // Make a new communication handle pair
         let (handle, client_handle) = syscalls::new_rendezvous()
-            .map_err(|e| {debug_println!("[tcp] Couldn't create Rendezvous {:?}", e);})?;
+            .map_err(|e| {println!("[tcp] Couldn't create Rendezvous {:?}", e);})?;
 
         // Start a thread with one of the handles
         thread::spawn(move || {
@@ -264,11 +264,11 @@ fn open_path(path: &str) -> Result<CommHandle, ()> {
                     // Not an IP address, so assume it's a host name to be resolved
                     match dns::resolve(&host_str) {
                         Ok(addr) => {
-                            debug_println!("[tcp] {} has address {}", &host_str, addr);
+                            println!("[tcp] {} has address {}", &host_str, addr);
                             addr
                         }
                         Err(e) => {
-                            debug_println!("[tcp] Could not resolve host {}: {:?}", &host_str, e);
+                            println!("[tcp] Could not resolve host {}: {:?}", &host_str, e);
                             return;
                         }
                     }
@@ -281,7 +281,7 @@ fn open_path(path: &str) -> Result<CommHandle, ()> {
         // Return the other handle to the client
         return Ok(client_handle);
     }
-    debug_println!("[tcp] Error: open_path '{}' doesn't contain '/'", path);
+    println!("[tcp] Error: open_path '{}' doesn't contain '/'", path);
     Err(())
 }
 
@@ -297,7 +297,7 @@ pub fn ephemeral_port_number() -> u16 {
 
 /// Open a socket and wait in a loop for messages on given handle
 fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
-    debug_println!("[tcp] Connecting to {} port {}", address, port);
+    println!("[tcp] Connecting to {} port {}", address, port);
 
     let tcp_rx_buffer = TcpSocketBuffer::new(vec![0; 4096]);
     let tcp_tx_buffer = TcpSocketBuffer::new(vec![0; 4096]);
@@ -309,7 +309,7 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
         let tcp_handle = interface.add_socket(tcp_socket);
 
         if let Err(e) = interface.poll(Instant::from_micros(time::microseconds_monotonic() as i64)) {
-            debug_println!("Network error: {:?}", e);
+            println!("Network error: {:?}", e);
         }
 
         let (socket, cx) = interface.get_socket_and_context::<TcpSocket>(tcp_handle);
@@ -317,7 +317,7 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
         // Random port number for the local port
         let local_port = ephemeral_port_number();
         if socket.connect(cx, (address, port), local_port).is_err() {
-            debug_println!("[tcp {}/{}] socket.connect failed", address, port);
+            println!("[tcp {}/{}] socket.connect failed", address, port);
             interface.remove_socket(tcp_handle);
             None
         } else {
@@ -343,7 +343,7 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
                             let interface = (*some_interface).as_mut().unwrap();
 
                             if let Err(e) = interface.poll(Instant::from_micros(time::microseconds_monotonic() as i64)) {
-                                debug_println!("[tcp {}/{}] Network error: {:?}", address, port, e);
+                                println!("[tcp {}/{}] Network error: {:?}", address, port, e);
                             }
 
                             let socket = interface.get_socket::<TcpSocket>(handle);
@@ -351,7 +351,7 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
                             if socket.may_send() {
                                 match socket.send_slice(data) {
                                     Ok(length) => { // Succeeded in sending some or all the data
-                                        debug_println!("[tcp {}/{}] Sent {} bytes", address, port, length);
+                                        println!("[tcp {}/{}] Sent {} bytes", address, port, length);
                                         if length == data.len() {
                                             // All data sent
                                             syscalls::send(&comm_handle,
@@ -364,7 +364,7 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
                                         // Continue around loop
                                     }
                                     Err(e) => {
-                                        debug_println!("[tcp {}/{}] Send failed: {:?}", address, port, e);
+                                        println!("[tcp {}/{}] Send failed: {:?}", address, port, e);
                                         syscalls::send(&comm_handle,
                                                        syscalls::Message::Short(
                                                            message::ERROR, 0, 0));
@@ -401,17 +401,17 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
                             let interface = (*some_interface).as_mut().unwrap();
 
                             if let Err(e) = interface.poll(Instant::from_micros(time::microseconds_monotonic() as i64)) {
-                                debug_println!("[tcp {}/{}] Network error: {:?}", address, port, e);
+                                println!("[tcp {}/{}] Network error: {:?}", address, port, e);
                             }
 
                             let (socket, cx) = interface.get_socket_and_context::<TcpSocket>(handle);
 
                             if socket.can_recv() {
-                                debug_println!("[tcp] socket recv");
+                                println!("[tcp] socket recv");
                                 socket
                                     .recv(|data| {
                                         received_data.extend_from_slice(&data);
-                                        debug_println!("Received data: {} -> {}", data.len(), received_data.len());
+                                        println!("Received data: {} -> {}", data.len(), received_data.len());
                                         (data.len(), ())
                                     })
                                     .unwrap();
@@ -476,7 +476,7 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
                     interface.get_socket::<TcpSocket>(handle).abort();
 
                     if let Err(e) = interface.poll(Instant::from_micros(time::microseconds_monotonic() as i64)) {
-                        debug_println!("Network error: {:?}", e);
+                        println!("Network error: {:?}", e);
                     }
 
                     interface.remove_socket(handle);
@@ -484,7 +484,7 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
                 return;
             }
             Ok(msg) => {
-                debug_println!("[tcp {}/{}] -> {:?}", address, port, msg);
+                println!("[tcp {}/{}] -> {:?}", address, port, msg);
             }
             Err(syscalls::SYSCALL_ERROR_RECV_BLOCKING) => {
                 // Waiting for a message
@@ -496,7 +496,7 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
                 syscalls::thread_yield();
             },
             Err(code) => {
-                debug_println!("[tcp {}/{}] Receive error {}", address, port, code);
+                println!("[tcp {}/{}] Receive error {}", address, port, code);
                 // Wait and try again
                 syscalls::thread_yield();
             }

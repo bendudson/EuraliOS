@@ -19,7 +19,7 @@ use smoltcp::time::Instant;
 use spin::RwLock;
 use lazy_static::lazy_static;
 
-use euralios_std::{time, syscalls, debug_println};
+use euralios_std::{time, syscalls, println};
 
 use crate::INTERFACE;
 
@@ -198,7 +198,7 @@ pub fn resolve(name: &str) -> Result<IpAddress, ResponseCode> {
             let interface = (*some_interface).as_mut().unwrap();
 
             if let Err(e) = interface.poll(Instant::from_micros(time::microseconds_monotonic() as i64)) {
-                debug_println!("Network Error: {}", e);
+                println!("Network Error: {}", e);
                 return Err(ResponseCode::UnknownError);
             }
 

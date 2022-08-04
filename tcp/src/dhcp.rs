@@ -5,7 +5,7 @@ use smoltcp::wire::{IpCidr, Ipv4Cidr, IpAddress};
 use smoltcp::socket::{Dhcpv4Event, Dhcpv4Socket};
 use smoltcp::time::Instant;
 
-use euralios_std::{debug_println, debug_print,
+use euralios_std::{println, print,
                    syscalls};
 
 use crate::Interface;
@@ -30,20 +30,20 @@ pub fn configure(interface: &mut Interface) {
             Some(Dhcpv4Event::Configured(config)) => {
                 interface.remove_socket(dhcp_handle);
 
-                debug_print!("[tcp] DHCP: IP {}", config.address);
+                print!("[tcp] DHCP: IP {}", config.address);
                 set_ipv4_addr(interface, config.address);
 
                 if let Some(router) = config.router {
-                    debug_print!(" Router {}", router);
+                    print!(" Router {}", router);
                     interface.routes_mut().add_default_ipv4_route(router).unwrap();
                 }
 
                 for addr in config.dns_servers.iter()
                     .filter(|addr| addr.is_some()).map(|addr| addr.unwrap()) {
-                        debug_print!(" DNS {}", addr);
+                        print!(" DNS {}", addr);
                         dns::add_server(IpAddress::from(addr));
                     }
-                debug_println!("");
+                println!("");
                 break;
             }
             Some(Dhcpv4Event::Deconfigured) => {
