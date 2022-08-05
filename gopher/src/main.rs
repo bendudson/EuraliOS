@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 use alloc::string::String;
 use alloc::string::ToString;
 
-use euralios_std::{debug_println, debug_print,
+use euralios_std::{println, print,
                    syscalls::{self, MemoryHandle, STDIN},
                    message::{self, rcall, MessageData}};
 
@@ -24,7 +24,7 @@ fn gopher(host: &str, selector: &str) -> Result<(MemoryHandle, usize), ()> {
                        syscalls::MemoryHandle::from_u8_slice(path.as_slice()).into(),
                        None);
 
-    debug_println!("[gopher] Write returned: {:?}", result);
+    println!("[gopher] Write returned: {:?}", result);
 
     match rcall(&handle,
                 message::READ, 0.into(),
@@ -39,7 +39,7 @@ fn gopher(host: &str, selector: &str) -> Result<(MemoryHandle, usize), ()> {
             return Ok((mem_handle, length as usize));
         }
         result => {
-            debug_println!("[gopher] Read returned: {:?}", result);
+            println!("[gopher] Read returned: {:?}", result);
             _ = syscalls::send(&handle,
                                syscalls::Message::Short(
                                    message::CLOSE, 0, 0));
@@ -88,22 +88,22 @@ fn display_text<'a>(
                     match line.chars().nth(0) {
                         Some('i') => {
                             // Print text up to the first tab
-                            debug_println!("      {}", line[1..].split('\t').next().unwrap_or(""));
+                            println!("      {}", line[1..].split('\t').next().unwrap_or(""));
                         }
                         Some('0') => {
                             // Text file
-                            debug_print!("{}-TXT ", links.len());
+                            print!("{}-TXT ", links.len());
                             links.push(line);
-                            debug_println!("{}", line[1..].split('\t').next().unwrap_or(""));
+                            println!("{}", line[1..].split('\t').next().unwrap_or(""));
                         }
                         Some('1') => {
                             // Gopher menu
-                            debug_print!("{}-DIR ", links.len());
+                            print!("{}-DIR ", links.len());
                             links.push(line);
-                            debug_println!("{}", line[1..].split('\t').next().unwrap_or(""));
+                            println!("{}", line[1..].split('\t').next().unwrap_or(""));
                         }
                         Some(_) => {
-                            debug_println!("{:?}", line);
+                            println!("{:?}", line);
                         }
                         None => {
                         }
@@ -112,9 +112,9 @@ fn display_text<'a>(
         } else {
             // A text file, no links. Just print lines and line number at the end
             for line in (&lines[start_line..end_line]).iter() {
-                debug_println!("{}", line);
+                println!("{}", line);
             }
-            debug_println!("Line {}-{}/{} ---- {} ----", start_line, end_line, lines.len(), title);
+            println!("Line {}-{}/{} ---- {} ----", start_line, end_line, lines.len(), title);
         }
 
         // Get user input
@@ -134,10 +134,10 @@ fn display_text<'a>(
                             ((ch as usize) - ('0' as usize));
 
                         if selected_id < links.len() {
-                            debug_println!("Link {}: {}", selected_id, links[selected_id]);
+                            println!("Link {}: {}", selected_id, links[selected_id]);
                             selected_link = Some(&links[selected_id]);
                         } else {
-                            debug_println!("Link {} not on page.", selected_id);
+                            println!("Link {} not on page.", selected_id);
                             selected_link = None;
                         }
                         continue;
@@ -167,7 +167,7 @@ fn display_text<'a>(
                             if let Some(line) = selected_link {
                                 return Command::Link(line);
                             }
-                            debug_println!("Enter a number to select a link");
+                            println!("Enter a number to select a link");
                         }
                         // Left/right => history forward/back
                         Some('a') | Some('j') => {
@@ -182,8 +182,8 @@ fn display_text<'a>(
                         }
                         Some(_) => {
                             // Unrecognised character -> Print help
-                            debug_println!("Help: Page up (w or i); Page down (s or k); Select link (0-9); Confirm (Enter)");
-                            debug_println!("      Go back (a or j); Forward (d or l); Quit (q)");
+                            println!("Help: Page up (w or i); Page down (s or k); Select link (0-9); Confirm (Enter)");
+                            println!("      Go back (a or j); Forward (d or l); Quit (q)");
                         }
                         None => {
                             // Unknown code. Ignore
@@ -243,7 +243,7 @@ fn main() {
                                           &current_page.host,
                                           current_page.is_map) {
             Command::Quit => {
-                debug_println!("[gopher] Bye!");
+                println!("[gopher] Bye!");
                 return;
             }
             Command::Back => {
@@ -287,7 +287,7 @@ fn main() {
                               link_str.chars().nth(0) == Some('1'))
                 } else {
                     // Invalid port => Stay on current page
-                    debug_println!("[gopher] invalid port {}", port_str);
+                    println!("[gopher] invalid port {}", port_str);
                     current_page
                 }
             }

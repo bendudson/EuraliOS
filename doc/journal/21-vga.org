@@ -130,6 +130,53 @@ continue.
 [[./img/21-03-writer-sys.png]]
 
 
+We can now switch between screens with this function:
+#+begin_src rust
+  fn activate_writer(vga_com: &CommHandle, writer_id: u64) {
+      syscalls::send(
+          &vga_com,
+          Message::Short(message::WRITE, writer_id, 0));
+  }
+#+end_src
+
+The special keys like `F1` to `F12` are not currently forwarded by the
+keyboard handler, as only Unicode characters are sent.  For now we can
+just intercept TAB and ESC characters to switch between two screens,
+one for system programs (`pci`, `rtl8139` and `tcp`) and one for the
+user program (`gopher`):
+#+begin_src rust
+  loop {
+      // Wait for keyboard input
+      match syscalls::receive(&STDIN) {
+          Ok(syscalls::Message::Short(
+              message::CHAR, ch, _)) => {
+              // Received a character
+
+              if ch == 9 { // TAB
+                  activate_writer(&vga_com, writer_user_id);
+              } else if ch == 27 { // ESC
+                  activate_writer(&vga_com, writer_sys_id);
+              } else {
+                  syscalls::send(&input_user,
+                                 syscalls::Message::Short(
+                                     message::CHAR, ch, 0));
+              }
+          }
+          _ => {
+              // Ignore
+          }
+      }
+  }
+#+end_src
+
+Now the TAB and ESC keys switch between the system screen with messages
+from `tcp` and `rtl8139` networking processes on one screen (fig [[fig-writer-sys]]), and
+the output of the `gopher` program on the other (fig [[fig-gopher]]).
+
+#+CAPTION: Gopher browser output to separate VGA buffer
+#+NAME: fig-gopher
+[[./img/21-04-gopher.png]]
+
 ** ANSI escape codes
 
 [[https://en.wikipedia.org/wiki/ANSI_escape_code][ANSI escape codes]] are used to change the position and color

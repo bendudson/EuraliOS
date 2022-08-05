@@ -6,6 +6,28 @@ use euralios_std::{debug_println,
                    syscalls::{self, STDIN, STDOUT, CommHandle},
                    message::{self, rcall, Message, MessageData}};
 
+fn new_writer(vga_com: &CommHandle) -> (CommHandle, u64) {
+    match rcall(
+        vga_com,
+        message::OPEN, 0.into(), 0.into(), None) {
+        Ok((message::COMM_HANDLE,
+            MessageData::CommHandle(handle),
+            MessageData::Value(id))) => (handle, id),
+        Ok(message) => {
+            panic!("[init] Received unexpected message {:?}", message);
+        }
+        Err(code) => {
+            panic!("[init] Received error {:?}", code);
+        }
+    }
+}
+
+fn activate_writer(vga_com: &CommHandle, writer_id: u64) {
+    syscalls::send(
+        &vga_com,
+        Message::Short(message::WRITE, writer_id, 0));
+}
+
 fn mount(
     path: &str,
     bin: &[u8],
@@ -65,24 +87,10 @@ fn main() {
                        MessageData::MemoryHandle(vmem_handle)));
 
     // Open a VGA screen writer for system programs
-    let (writer_sys, writer_sys_id) = match rcall(
-        &vga_com,
-        message::OPEN, 0.into(), 0.into(), None) {
-        Ok((message::COMM_HANDLE,
-            MessageData::CommHandle(handle),
-            MessageData::Value(id))) => (handle, id),
-        Ok(message) => {
-            panic!("[init] Received unexpected message {:?}", message);
-        }
-        Err(code) => {
-            panic!("[init] Received error {:?}", code);
-        }
-    };
+    let (writer_sys, writer_sys_id) = new_writer(&vga_com);
 
     // Activate writer
-    syscalls::send(
-        &vga_com,
-        Message::Short(message::WRITE, writer_sys_id, 0));
+    activate_writer(&vga_com, writer_sys_id);
 
     fprintln!(&writer_sys, "[init] Starting EuraliOS...");
 
@@ -97,4 +105,39 @@ fn main() {
     mount("/tcp", include_bytes!("../../user/tcp"),
           0, // No I/O permissions
           writer_sys.clone());
+
+    // New screen for user program
+    let (writer_user, writer_user_id) = new_writer(&vga_com);
+    // New Rendezvous for user program input
+    let (input_user, input_user2) = syscalls::new_rendezvous().unwrap();
+
+    // Start the process
+    syscalls::exec(
+        include_bytes!("../../user/gopher"),
+        0,
+        input_user2,
+        writer_user).expect("[init] Couldn't start user program");
+
+    loop {
+        // Wait for keyboard input
+        match syscalls::receive(&STDIN) {
+            Ok(syscalls::Message::Short(
+                message::CHAR, ch, _)) => {
+                // Received a character
+
+                if ch == 9 { // TAB
+                    activate_writer(&vga_com, writer_user_id);
+                } else if ch == 27 { // ESC
+                    activate_writer(&vga_com, writer_sys_id);
+                } else {
+                    syscalls::send(&input_user,
+                                   syscalls::Message::Short(
+                                       message::CHAR, ch, 0));
+                }
+            }
+            _ => {
+                // Ignore
+            }
+        }
+    }
 }
