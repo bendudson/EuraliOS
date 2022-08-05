@@ -374,6 +374,10 @@ pub fn malloc(
     max_physaddr: u64
 ) -> Result<(MemoryHandle, u64), SyscallError> {
 
+    if num_bytes == 0 {
+        return Err(SYSCALL_ERROR_PARAM);
+    }
+
     let num_pages = (num_bytes >> 12) +
         if (num_bytes & 4095) != 0 {1} else {0};
 

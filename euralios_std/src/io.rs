@@ -11,6 +11,9 @@ struct Writer<'a> {
 
 impl fmt::Write for Writer<'_> {
     fn write_str(&mut self, s: &str) -> fmt::Result {
+        if s.len() == 0 {
+            return Ok(());
+        }
         _ = rcall(self.handle,
                   message::WRITE,
                   (s.len() as u64).into(),

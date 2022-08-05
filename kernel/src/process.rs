@@ -751,7 +751,10 @@ pub fn new_memory_chunk(
         let start_addr = match memory::find_available_page_chunk(
             thread.page_table_physaddr) {
             Some(values) => values,
-            None => return Err(syscalls::SYSCALL_ERROR_MEMORY)
+            None => {
+                println!("Thread {} no available chunks!", thread.tid());
+                return Err(syscalls::SYSCALL_ERROR_MEMORY)
+            }
         };
 
         if max_physaddr != 0 {
