@@ -10,6 +10,7 @@ members = [
     "gopher",
     "timing_test",
     "vga_driver",
-    "init"
+    "init",
+    "ramdisk"
 ]
 

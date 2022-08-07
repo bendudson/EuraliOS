@@ -94,6 +94,14 @@ fn main() {
 
     fprintln!(&writer_sys, "[init] Starting EuraliOS...");
 
+    mount("/ramdisk", include_bytes!("../../user/ramdisk"),
+          0, // No I/O privileges
+          writer_sys.clone());
+
+    loop {
+        syscalls::thread_yield();
+    }
+
     mount("/pci", include_bytes!("../../user/pci"),
           syscalls::EXEC_PERM_IO, // I/O permissions
           writer_sys.clone());
