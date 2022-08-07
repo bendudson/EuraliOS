@@ -1,0 +1,14 @@
+* Creating a RAMdisk
+
+One of the most important functions of an operating system
+is keeping track of users' important (and not so important)
+data, and providing ways to access and modify it. Usually
+this is done by organising data into files in a hierarchical
+directory structure. We've made a start on a Virtual File System
+(VFS) with OPEN, READ and WRITE messages, but not used them
+for actual files yet. To make sure that the system we end up with
+isn't tied to a specific filesystem we're first going to get
+something working with data stored in memory. Later we'll need
+to worry about block storage devices and all that.
+
+

@@ -25,15 +25,15 @@ A sketch of how this might work is shown below:
             shell
 #+end_src
 The =vga= program should provide an interface for writing text to
-screen, but only needs to handle one screen. The =vconsole=
-multiplexer will catch keys like =Ctrl + F1=, =Ctrl + F2= and switch
-the input & output between multiple sets of input/output pairs: One
-could be a debug/status screen, and others connected to instances of a
-=login= program. That program will be responsible for restricting user
-capabilities, mainly by customising the Virtual File System (VFS) that
-the user sees. When a user logs in a shell would be connected, which
-might have further multiplexing for =Ctrl + Tab= switching between
-processes, or for arranging multiple programs on screen at once.
+screen. The =vconsole= multiplexer will catch keys, perhaps =Ctrl +
+F1=, =Ctrl + F2= etc., and switch the input & output between multiple
+sets of input/output pairs: One could be a debug/status screen, and
+others connected to instances of a =login= program. That program will
+be responsible for restricting user capabilities, mainly by
+customising the Virtual File System (VFS) that the user sees. When a
+user logs in a shell would be connected, which might have further
+multiplexing for =Ctrl + Tab= switching between processes, or for
+arranging multiple programs on screen at once.
 
 To enable all this to happen we need a way to specify where on the
 screen text should be drawn, what color it should be, whether it
@@ -61,19 +61,113 @@ are mapped into registers on the graphics card.
 
 ** Accessing video memory
 
-The =vga= library expects to find the VGA buffer at the virtual
-address identity mapped to the physical address i.e. the range
-=0xA0000 ..= 0xBFFFF= (inclusive). We could add a special case, and
-map these pages into the user program. It would be better though if we
-could make this a memory chunk which could be passed between
-processes: The kernel might pass this to an =init= user program, which
-then might choose which driver to load and pass the memory chunk
-to. That means we need to modify the =vga= library so the vga memory
-can start at an arbitrary virtual address.
+To access VGA memory from user programs we need to map the physical
+=0xA0000 .. 0xBFFFF= (inclusive). One way to do this would be to
+identity map this range into user programs' address space. The kernel
+would need to know which programs should have this access, or all
+programs would be able to write directly to VGA memory. Perhaps this
+could be a capability like I/O privileges, that processes could choose
+whether to share with their process children:
+- Quite simple to implement: If a video memory flag is set in process
+  =Params= then identity map the VGA memory range.
+- Multiple processes will have access to the VGA memory, unless there
+  is a mechanism to unmap the memory range. This might be useful if a
+  video driver crashes and another driver is needed
+- Not clear if it generalises to different framebuffers e.g. UEFI GOP or
+  other hardware.
 
+Instead in EuraliOS we'll reuse the memory chunk mechanism which allows
+regions of memory to be allocated, passed between processes and free'd. This:
+- Enables this memory access to be passed between processed, but not shared.
+- Needs some special handling in the allocation and freeing.
+The code needed is quite short, however: We create a "special" memory
+chunk mapping a specified physical address:
+#+begin_src rust
+pub fn special_memory_chunk(
+    thread: &Thread,
+    num_pages: u64,
+    start_physaddr: u64
+) -> Result<(VirtAddr, PhysAddr), usize> {
+    // Virtual address of the available page chunk
+    let start_virtaddr = match memory::find_available_page_chunk(
+        thread.page_table_physaddr) {
+        Some(value) => value,
+        None => return Err(syscalls::SYSCALL_ERROR_MEMORY)
+    };
+
+    match memory::create_physical_range_pages(
+        thread.page_table_physaddr,
+        start_virtaddr,
+        num_pages,
+        PhysAddr::new(start_physaddr)) {
+        Ok(physaddr) => Ok((start_virtaddr, physaddr)),
+        Err(_) => Err(syscalls::SYSCALL_ERROR_MEMORY)
+    }
+}
+#+end_src
+which we first allocate in a thread's address space, remove it,
+and send it in a message:
+#+begin_src rust
+  let thread = process::new_user_thread(...).unwrap();
+
+  // Allocate a memory chunk mapping video memory
+  let (virtaddr, _) = process::special_memory_chunk(
+      &init_thread,
+      32,  // Pages, 128k. 0xC0000 - 0xA0000
+      0xA0000).unwrap();
+
+  // Remove chunk from table so it can be sent
+  let (physaddr, _) = init_thread.take_memory_chunk(virtaddr).unwrap();
+
+  // Send a message to process containing the chunk.
+  // When received the chunk will be mapped into address space
+  thread_rendezvous.write().send(None, Message::Long(
+      message::VIDEO_MEMORY,
+      (0xC0000 - 0xA0000).into(),
+      physaddr.into()
+  ));
+#+end_src
+
+The process can receive this message when it starts. Processes are usually given
+two Rendezvous handles, =STDIN= and =STDOUT=. Receiving the video memory message
+could be through either, but here it's through STDOUT to avoid collisions with
+input from other sources e.g. keyboard:
+#+begin_src rust
+  // Expect a video memory buffer from the kernel
+  // Note: Sent to STDOUT channel to avoid conflict with keyboard
+  let (vmem_length, vmem_handle) = match syscalls::receive(&STDOUT) {
+      Ok(Message::Long(
+          message::VIDEO_MEMORY,
+          MessageData::Value(length),
+          MessageData::MemoryHandle(handle))) => {
+          (length, handle)
+      },
+      m => {
+          panic!("Expected video memory message. Received {:?}", m);
+      }
+  };
+#+end_src
+
+** Writing to video memory
+
+Having mapped video memory into a user program's address space, the
+next task is to figure out how to write to it. The =vga= library
+expects to find the VGA buffer at the virtual address identity mapped
+to the physical address i.e. the range =0xA0000 .. 0xBFFFF=
+(inclusive), but our video memory chunk might be mapped to different
+virtual memory addresses. We therefore need to modify the =vga= library
+to use arbitrary video addresses.
+
+I've added a =video_memory_start= field to the =Vga= type, defaulting
+to the =0xa0000= physical memory address, and a =set_memory_start=
+method to change the default to an arbitrary virtual address. The
+=FrameBuffer= enum type is extended to hold an arbitrary =usize=
+address, rather than constant physical addresses.
 
 ** Running the VGA program from Init
 
+We can now move the VGA driver execution out of the kernel and into the
+=init= program, passing on the I/O privilege:
 #+begin_src rust
   // Start the VGA driver
   syscalls::exec(
@@ -82,19 +176,21 @@ can start at an arbitrary virtual address.
       vga_com2.clone(),
       vga_com2);
 #+end_src
-
-#+begin_src rust
-  // Assemble a slice then copy to a Vec in the kernel heap
-  let bin_vec = unsafe{slice::from_raw_parts(bin, bin_length as usize)}.to_vec();
-#+end_src
-
-When this tries to allocate memory for the `vga_program` ELF binary
-the allocation fails, shown in figure [[fig-kernel-panic]].
+The kernel now just starts the =init= user program, and that user
+program then starts everything else.  Unfortunately loading
+=vga_driver= results in a kernel panic, shown in figure
+[[fig-kernel-panic]]:
 
 #+CAPTION: Kernel panic when allocating memory
 #+NAME: fig-kernel-panic
 [[./img/21-01-kernel-panic.png]]
 
+This occurs when the kernel tries to allocate memory for the
+=vga_driver= ELF binary the allocation fails on this line:
+#+begin_src rust
+  // Assemble a slice then copy to a Vec in the kernel heap
+  let bin_vec = unsafe{slice::from_raw_parts(bin, bin_length as usize)}.to_vec();
+#+end_src
 This is because the kernel heap is only 100kb, so part of the
 solution is to just increase the kernel heap size. It would be good to avoid
 a kernel panic by first checking if memory can be allocated:
@@ -130,7 +226,27 @@ continue.
 [[./img/21-03-writer-sys.png]]
 
 
-We can now switch between screens with this function:
+** Switching between screens
+
+When running multiple programs simultaneously it would be good to be
+able to switch between them. While a program is not writing to the
+physical screen the changes should be made to a memory buffer, and
+then when the screen is switched the buffer should be copied into VGA
+memory. If we want to completely separate the VGA driver from the
+virtual console code then the rendering code (interpreting ANSI etc.)
+needs to be duplicated: Reading from VGA memory is (apparently) very
+slow so even when a process is writing to the physical screen we would
+still need to render to a separate buffer.
+
+In a concession to efficiency the VGA driver in EuraliOS will provide
+multiple screen "writers", and a mechanism to switch between them.  A
+separate process can then decide the policy of when to switch, based
+on e.g keyboard inputs.
+
+
+
+We can now switch between screens with this function, which sends a
+message to the VGA driver with the screen ID to switch to:
 #+begin_src rust
   fn activate_writer(vga_com: &CommHandle, writer_id: u64) {
       syscalls::send(
@@ -183,3 +299,8 @@ the output of the `gopher` program on the other (fig [[fig-gopher]]).
 of the cursor on text-based terminals.
 
 https://github.com/rust-osdev/ansi_rgb
+
+
+In the [[./22-ramdisk.org][next section]] we'll start making the operating system
+more useful by adding a simple file system stored in memory
+(a ramdisk).

@@ -29,7 +29,7 @@ with EuraliOS I've focussed mainly on memory management and
 pre-emptive multitasking so far. The result is an OS that can't do
 much, but it can do it all at the same time.
 
-- [X] Basic VGA text output (phil-opp blog)
+- [X] VGA text output with virtual consoles
 - [X] Keyboard input (phil-opp blog)
 - [X] UART Serial port output (phil-opp blog)
 - [X] ELF loader (adapted from MOROS approach, using the [[https://crates.io/crates/object][object crate]])
