@@ -1,6 +1,6 @@
 * Domain Name System (DNS)
 
-So far our gopher client is hard-wired to the host
+So far our gopher client from [[./18-gopher.org][section 18]] is hard-wired to the host
 IP address 192.80.49.99 (=gopher.floodgap.com=) because
 we can't look up names to find other IP addresses.
 
@@ -30,7 +30,15 @@ a released version
 #+NAME: fig-dns
 [[./img/20-01-dns.png]]
 
+** Loose ends
 
+Some things have not been implemented but could/should be at some point:
+
+- Non-ASCII domain names are not yet handled. These should be
+  converted into [[https://en.wikipedia.org/wiki/Punycode][Punycode]] before sending to the DNS server.
+- Timeouts and connection failures: Currently we'll just keep waiting
+  forever, but there should be a mechanism to fall back to alternative
+  DNS servers if one isn't working.
 
 ** Extending the gopher browser
 

@@ -11,4 +11,12 @@ isn't tied to a specific filesystem we're first going to get
 something working with data stored in memory. Later we'll need
 to worry about block storage devices and all that.
 
+** Single directory
+
+To start with we can simplify things by only having a single
+directory.
+
+
+** Basic shell
+
 

@@ -127,7 +127,11 @@ direction...
   (vDSO)]] does.
 - [[./doc/journal/20-dns.org][20. Domain Name System (DNS)]], adding the ability to look up IP addresses
   from host names.
-- [[./doc/journal/21-vga.org][21. VGA driver]] in user space
+- [[./doc/journal/21-vga.org][21. VGA driver and terminals]] in user space, allowing separate
+  consoles for system programs and user programs like the Gopher
+  browser.
+- [[./doc/journal/22-ramdisk.org][22. RAMdisk driver]] to store files and develop the filesystem API,
+  and starting a basic interactive shell.
 
 ** Notes
 

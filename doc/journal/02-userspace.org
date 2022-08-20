@@ -207,7 +207,7 @@ similar to the =new_kernel_thread= function
 
 ** Switching to userspace
 
-Following [[https://nfil.dev/kernel/rust/coding/rust-kernel-to-userspace-and-back/][this blog by Nikos Filippakis]], and borrowing some code from From [[ https://github.com/vinc/moros/blob/trunk/src/sys/gdt.rs#L37][MOROS]],
+Following [[https://nfil.dev/kernel/rust/coding/rust-kernel-to-userspace-and-back/][this blog by Nikos Filippakis]], and borrowing some code from [[ https://github.com/vinc/moros/blob/trunk/src/sys/gdt.rs#L37][MOROS]],
 we are now going to switch programs to user mode.
 
 First we add some segment entries to the Global Descriptor Table (GDT) for user
@@ -412,7 +412,7 @@ The value =0x230008= specifies that selectors 8, 16 are used for
 syscall (going to kernel code) and 43, 51 for sysret (returning to
 user code).
 
-Now to call our (empty) syscall handler, modify ==src/bin/hello.rs=
+Now to call our (empty) syscall handler, modify =src/bin/hello.rs=
 so that it now executes =syscall=:
 #+BEGIN_SRC rust
 #[no_mangle]

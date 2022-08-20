@@ -837,3 +837,7 @@ program.
 
 Running =telnet= or other command should now produce output as the memory handles are
 allocated and free'd.
+
+In [[./16-arp.org][section 16]] we'll start building up the network stack by implementing a simple
+Address Resolution Protocol (ARP) program on top of this network driver. In
+the [[./doc/15-messages.org][next section]] we first make the inter-process messaging more robust.
