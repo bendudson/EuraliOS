@@ -11,6 +11,7 @@ members = [
     "timing_test",
     "vga_driver",
     "init",
-    "ramdisk"
+    "ramdisk",
+    "shell"
 ]
 

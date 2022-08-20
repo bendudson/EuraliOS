@@ -12,7 +12,8 @@ run : user
 	cargo run --release --bin kernel
 
 # List of user programs to build
-user: user/pci user/rtl8139 user/arp user/tcp user/gopher user/timing_test user/vga_driver user/ramdisk user/init
+# Note: init includes many others so should be last
+user: user/pci user/rtl8139 user/arp user/tcp user/gopher user/timing_test user/vga_driver user/ramdisk user/shell user/init
 
 user/% : FORCE
 	cargo build --release --bin $*

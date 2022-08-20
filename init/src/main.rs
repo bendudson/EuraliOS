@@ -105,17 +105,17 @@ fn main() {
         file.write(include_bytes!("../../user/gopher"));
     }
 
-    mount("/pci", include_bytes!("../../user/pci"),
-          syscalls::EXEC_PERM_IO, // I/O permissions
-          writer_sys.clone());
+    // mount("/pci", include_bytes!("../../user/pci"),
+    //       syscalls::EXEC_PERM_IO, // I/O permissions
+    //       writer_sys.clone());
 
-    mount("/dev/nic", include_bytes!("../../user/rtl8139"),
-          syscalls::EXEC_PERM_IO,
-          writer_sys.clone());
+    // mount("/dev/nic", include_bytes!("../../user/rtl8139"),
+    //       syscalls::EXEC_PERM_IO,
+    //       writer_sys.clone());
 
-    mount("/tcp", include_bytes!("../../user/tcp"),
-          0, // No I/O permissions
-          writer_sys.clone());
+    // mount("/tcp", include_bytes!("../../user/tcp"),
+    //       0, // No I/O permissions
+    //       writer_sys.clone());
 
     // New screen for user program
     let (writer_user, writer_user_id) = new_writer(&vga_com);
@@ -124,10 +124,13 @@ fn main() {
 
     // Start the process
     syscalls::exec(
-        include_bytes!("../../user/gopher"),
+        include_bytes!("../../user/shell"),
         0,
         input_user2,
         writer_user).expect("[init] Couldn't start user program");
+
+    // Activate user writer
+    activate_writer(&vga_com, writer_user_id);
 
     loop {
         // Wait for keyboard input

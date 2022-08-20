@@ -362,6 +362,12 @@ fn writer_handler(
                                syscalls::Message::Short(
                                    message::OK, 0, 0));
             },
+            Ok(syscalls::Message::Short(
+                message::CHAR, ch, _)) => {
+
+                let s : [u8; 1] = [ch as u8];
+                writer.write().write_string(&s);
+            },
             Ok(message) => {
                 // Unknown message => Return error
                 syscalls::send(&comm_handle,
