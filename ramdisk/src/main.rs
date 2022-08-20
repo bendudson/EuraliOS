@@ -14,6 +14,7 @@ use euralios_std::{println,
                    message::{self, Message, MessageData},
                    syscalls::{self, STDIN, CommHandle}};
 
+/// Represents a file as a bag of bytes
 struct File {
     data: Vec<u8>
 }
@@ -24,6 +25,12 @@ impl File {
     }
 }
 
+/// A tree structure of directories containing File objects
+///
+/// All subdirectories and files are wrapped in Arc<RwLock<>> because:
+/// - Multiple processes may hold handles to the same directory or
+///   file
+/// - Hard links where multiple files point to the same data
 struct Directory {
     subdirs: BTreeMap<String, Arc<RwLock<Directory>>>,
     files: BTreeMap<String, Arc<RwLock<File>>>
@@ -38,6 +45,8 @@ impl Directory {
     }
 
     fn open(&mut self, path: &str) -> Result<CommHandle, ()> {
+        println!("[ramdisk] Opening {}", path);
+
         let file = if self.files.contains_key(path) {
             self.files[path].clone()
         } else {
@@ -76,8 +85,15 @@ fn handle_file(file: Arc<RwLock<File>>,
 
                 let u8_slice = handle.as_slice::<u8>(length as usize);
 
+                println!("[ramdisk] Writing {} bytes", length);
+
                 // Append data to file
                 file.write().data.extend_from_slice(u8_slice);
+
+                // Return success
+                syscalls::send(&comm_handle,
+                               syscalls::Message::Short(
+                                   message::OK, length, 0));
             }
             Ok(syscalls::Message::Short(
                 message::READ, start, length)) => {
@@ -162,11 +178,9 @@ fn handle_directory(directory: Arc<RwLock<Directory>>,
 
 #[no_mangle]
 fn main() {
-    println!("[ramdisk] Hello, world!");
+    println!("[ramdisk] Starting ramdisk");
 
     let mut fs = Directory::new();
-
-    fs.open("hello");
 
     handle_directory(Arc::new(RwLock::new(fs)), STDIN);
 }

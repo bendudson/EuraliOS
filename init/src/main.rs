@@ -3,6 +3,7 @@
 
 use euralios_std::{debug_println,
                    fprintln,
+                   fs::File,
                    syscalls::{self, STDIN, STDOUT, CommHandle},
                    message::{self, rcall, Message, MessageData}};
 
@@ -94,12 +95,14 @@ fn main() {
 
     fprintln!(&writer_sys, "[init] Starting EuraliOS...");
 
+    // Mount a ramdisk to read/write files
     mount("/ramdisk", include_bytes!("../../user/ramdisk"),
           0, // No I/O privileges
           writer_sys.clone());
 
-    loop {
-        syscalls::thread_yield();
+    // Write some data to the ramdisk
+    if let Ok(mut file) = File::create("/ramdisk/gopher") {
+        file.write(include_bytes!("../../user/gopher"));
     }
 
     mount("/pci", include_bytes!("../../user/pci"),

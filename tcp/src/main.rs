@@ -356,7 +356,7 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
                                             // All data sent
                                             syscalls::send(&comm_handle,
                                                            syscalls::Message::Short(
-                                                               message::OK, 0, 0));
+                                                               message::OK, length as u64, 0));
                                             break;
                                         }
                                         // Some data still to send. Get slice containing unsent data
@@ -367,7 +367,7 @@ fn open_socket(address: IpAddress, port: u16, comm_handle: CommHandle) {
                                         println!("[tcp {}/{}] Send failed: {:?}", address, port, e);
                                         syscalls::send(&comm_handle,
                                                        syscalls::Message::Short(
-                                                           message::ERROR, 0, 0));
+                                                           message::ERROR, length, 0));
                                         break;
                                     }
                                 }
