@@ -53,7 +53,14 @@ the ELF files are included in the kernel binary using Rust's
 ** Building and running
 
 After setting up Rust, Cargo and QEMU (see phil-opp blog), just
-running:
+Euralios depends on the [[https://github.com/rust-osdev/vga][vga]] crate, with some modifications in [[https://github.com/bendudson/vga/tree/euralios][a branch
+here]] as a git submodule.  Either clone with submodules (with e.g the
+=--recurse-submodules= option) or run:
+#+begin_src bash
+  $ git submodule update --init --recursive
+#+end_src
+
+After setting up Rust, Cargo and QEMU (see phil-opp blog), running
 #+begin_src bash
   $ make run
 #+end_src

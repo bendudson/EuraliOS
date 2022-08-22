@@ -54,7 +54,7 @@ impl<'a, S: Screen + TextWriter> Writer<'a, S> {
     /// Will be inactive; call `activate()` method to write to video
     /// memory.
     fn new(screen: &'a S) -> Self {
-        screen.set_cursor_position(0, 5);
+        screen.set_cursor_position(0, 1);
         screen.enable_cursor();
 
         let blank = ScreenCharacter::new(
@@ -67,7 +67,7 @@ impl<'a, S: Screen + TextWriter> Writer<'a, S> {
         }
 
         Writer{column: 0,
-               row: 5,
+               row: 1,
                color: TextModeColor::new(Color16::Black, Color16::White),
                blank,
                screen,

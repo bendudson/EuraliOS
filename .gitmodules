@@ -1,0 +1,3 @@
+[submodule "external/vga"]
+	path = external/vga
+	url = git@github.com:bendudson/vga.git
