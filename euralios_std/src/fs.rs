@@ -1,6 +1,9 @@
 //! Filesystem
 
-use crate::{print,
+extern crate alloc;
+use alloc::vec::Vec;
+
+use crate::{println,
             syscalls::{self, CommHandle, SyscallError, MemoryHandle},
             message::{self, rcall, MessageData}};
 
@@ -23,6 +26,11 @@ impl File {
         Ok(File(handle))
     }
 
+    pub fn open(path: &str) -> Result<File, SyscallError> {
+        let handle = syscalls::open(path)?;
+        Ok(File(handle))
+    }
+
     /// Write a buffer into this writer, returning how many bytes were
     /// written.
     ///
@@ -38,7 +46,26 @@ impl File {
                 MessageData::Value(sent_length), _)) => Ok(sent_length as usize),
             Err((err, message)) => Err(err),
             result => {
-                print!("File::write unexpected result {:?}", result);
+                println!("File::write unexpected result {:?}", result);
+                Err(syscalls::SYSCALL_ERROR_PARAM)
+            }
+        }
+    }
+
+    /// Read all bytes until EOF in this source, placing them into buf
+    pub fn read_to_end(&mut self, buf: &mut Vec<u8>)
+                       -> Result<usize, SyscallError> {
+        match rcall(&self.0,
+                    message::READ, 0.into(), 0.into(),
+                    None) {
+            Ok((message::DATA, MessageData::Value(length), MessageData::MemoryHandle(data))) => {
+                let length = length as usize;
+                buf.extend_from_slice(data.as_slice::<u8>(length));
+                Ok(length)
+            },
+            Err((err, message)) => Err(err),
+            result => {
+                println!("File::read_to_end unexpected result {:?}", result);
                 Err(syscalls::SYSCALL_ERROR_PARAM)
             }
         }

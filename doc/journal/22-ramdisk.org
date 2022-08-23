@@ -20,3 +20,50 @@ directory.
 ** Basic shell
 
 
+#+begin_src rust
+  fn exec_path(path: &str) -> Result<(), SyscallError> {
+      let mut file = File::open(&path)?;
+
+      let mut bin: Vec<u8> = Vec::new();
+      file.read_to_end(&mut bin)?;
+
+      // Create a communication handle for the input
+      let (exe_input, exe_input2) = syscalls::new_rendezvous()?;
+
+      syscalls::exec(
+          &bin,
+          0, // Permission flags
+          exe_input2,
+          syscalls::STDOUT.clone());
+
+      loop {
+          // Wait for keyboard input
+          match syscalls::receive(&syscalls::STDIN) {
+              Ok(syscalls::Message::Short(
+                  message::CHAR, ch, _)) => {
+                  // Received a character
+                  syscalls::send(&exe_input,
+                                 syscalls::Message::Short(
+                                     message::CHAR, ch, 0));
+              },
+              _ => {
+                  // Ignore
+              }
+          }
+      }
+
+      Ok(())
+  }
+#+end_src
+
+Now we can run a program (well one program, gopher) but when it exits
+the shell will be suspended waiting to either send a message to the
+program or to receive a keyboard input.
+
+When receiving messages we could have a timeout, and when sending
+messages we need some way to detect whether the process is still
+running. One way would be to detect if the communication handle had
+been dropped: If we try to communicate with a Rendezvous with only one
+handle, or drop a handle with a waiting thread then we could return an
+error message.
+

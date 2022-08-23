@@ -98,6 +98,20 @@ fn handle_file(file: Arc<RwLock<File>>,
             Ok(syscalls::Message::Short(
                 message::READ, start, length)) => {
 
+                let f = file.read();
+
+                if f.data.len() == 0 {
+                    // No data
+                    syscalls::send(&comm_handle,
+                                   syscalls::Message::Short(
+                                       message::ERROR, 0, 0));
+                } else {
+                    syscalls::send(&comm_handle,
+                                   syscalls::Message::Long(
+                                       message::DATA,
+                                       (f.data.len() as u64).into(),
+                                       syscalls::MemoryHandle::from_u8_slice(&f.data).into()));
+                }
             }
             Ok(syscalls::Message::Short(
                 message::CLOSE, _, _)) => {

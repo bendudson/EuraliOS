@@ -573,6 +573,13 @@ fn sys_exec(
     if let Some(mut thread) = process::take_current_thread() {
         thread.set_context(context_ptr);
 
+        if bin_length == 0 {
+            // No data
+            thread.return_error(SYSCALL_ERROR_PARAM);
+            process::set_current_thread(thread);
+            return;
+        }
+
         // Get the Rendezvous handles for stdin & stdout
         let stdin = if let Some(rdv) = thread.take_rendezvous(stdin_handle) {
             rdv

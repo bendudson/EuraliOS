@@ -3,11 +3,49 @@
 
 extern crate alloc;
 use alloc::string::String;
+use alloc::vec::Vec;
 use crate::alloc::borrow::ToOwned;
 
-use euralios_std::{io,
+use euralios_std::{fs::File,
+                   io,
+                   message,
                    print, println,
-                   syscalls};
+                   syscalls::{self, SyscallError}};
+
+fn exec_path(path: &str) -> Result<(), SyscallError> {
+    let mut file = File::open(&path)?;
+
+    let mut bin: Vec<u8> = Vec::new();
+    file.read_to_end(&mut bin)?;
+
+    // Create a communication handle for the input
+    let (exe_input, exe_input2) = syscalls::new_rendezvous()?;
+
+    syscalls::exec(
+        &bin,
+        0, // Permission flags
+        exe_input2,
+        syscalls::STDOUT.clone());
+
+    loop {
+        // Wait for keyboard input
+        match syscalls::receive(&syscalls::STDIN) {
+            Ok(syscalls::Message::Short(
+                message::CHAR, ch, _)) => {
+                // Received a character
+                if let Err((err, _)) = syscalls::send(&exe_input,
+                                                 syscalls::Message::Short(
+                                                     message::CHAR, ch, 0)) {
+                    println!("Received error: {}", err);
+                    return Ok(());
+                }
+            },
+            _ => {
+                // Ignore
+            }
+        }
+    }
+}
 
 #[no_mangle]
 fn main() {
@@ -33,14 +71,8 @@ fn main() {
         path.push_str(&line_buffer.trim());
         println!("Path |{}|", path);
 
-        // Try opening
-        match syscalls::open(&path) {
-            Ok(handle) => {
-
-            }
-            Err(err) => {
-                println!("Could not open {}: {}", path, err);
-            }
+        if let Err(err) = exec_path(&path) {
+            println!("Couldn't open '{}'", path);
         }
 
         line_buffer.clear();
