@@ -67,6 +67,7 @@ pub const SYSCALL_ERROR_THREAD: usize = 8;
 pub const SYSCALL_ERROR_MEMORY: usize = 9;
 pub const SYSCALL_ERROR_DOUBLEFREE: usize = 10;
 pub const SYSCALL_ERROR_NOMEMSLOTS: usize = 11; // No memory chunk slots
+pub const SYSCALL_ERROR_CLOSED: usize = 12; // Rendezvous closed
 
 // Exec permission flags
 pub const EXEC_PERM_IO: u64 = 1;
@@ -74,8 +75,10 @@ pub const EXEC_PERM_IO: u64 = 1;
 use crate::{print, println};
 use core::arch::asm;
 use core::{slice, str};
+use core::mem::drop;
 extern crate alloc;
 use alloc::vec::Vec;
+use alloc::sync::Arc;
 
 use x86_64::VirtAddr;
 
@@ -308,6 +311,7 @@ fn sys_debug_write(ptr: *const u8, len:usize) {
     } // else error
 }
 
+
 fn sys_receive(context_ptr: *mut Context, handle: u64) {
     // Extract the current thread
     if let Some(mut thread) = process::take_current_thread() {
@@ -336,6 +340,7 @@ fn sys_receive(context_ptr: *mut Context, handle: u64) {
             if !returning {
                 // Original thread is waiting.
                 // Switch to a different thread
+                drop(rdv); // Not returning from launch_thread
                 let new_context_addr = process::schedule_next(context_ptr as usize);
                 interrupts::launch_thread(new_context_addr);
             }
@@ -362,6 +367,15 @@ fn sys_send(
 
         // Get the Rendezvous, create Message and call
         if let Some(rdv) = thread.rendezvous(handle) {
+            // Check how many references this Rendezvous has.
+            if Arc::strong_count(&rdv) == 2 {
+                // Only this handle (rdv) and the one stored in the Thread/Process
+                // All other handles have been dropped -> Return error
+                thread.return_error(SYSCALL_ERROR_CLOSED);
+                process::set_current_thread(thread);
+                return;
+            }
+
             match Message::from_values(&mut thread, syscall_id, data1, data2, data3) {
                 Ok(message) => {
                     let (thread1, thread2) = match syscall_id & SYSCALL_MASK {
@@ -392,6 +406,7 @@ fn sys_send(
                     if !returning {
                         // Original thread is waiting.
                         // Switch to a different thread
+                        drop(rdv); // Not returning from launch_thread
                         let new_context_addr = process::schedule_next(context_ptr as usize);
                         interrupts::launch_thread(new_context_addr);
                     }

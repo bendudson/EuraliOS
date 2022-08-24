@@ -84,9 +84,35 @@ and then call =launch_thread= to run it:
           }
   }
 #+end_src
-
 That's it! The =schedule_next()= function already handles changing page tables,
 the kernel stack in the TSS, and the =CURRENT_THREAD=.
+
+... or almost it. One thing to watch out for is that the
+=launch_thread= process never returns. Even though it's marked as
+no-return (=!= return type), the compiler doesn't insert code to drop
+variables in the current scope. That means that the Rendezvous handle
+=rdv= which is an =Arc<RwLock<Rendezvous>>= is not dropped, the Arc
+[[https://doc.rust-lang.org/std/sync/struct.Arc.html#method.strong_count][strong count]] is not decreased but increases every time this
+=launch_thread= path through =sys_receive= is followed. This will lead
+to a memory leak as the Rendezvous will not be free'd when all
+processes holding it exit. To fix this we can do:
+#+begin_src rust
+  use core::mem::drop;
+
+  ...
+  if !returning {
+      drop(rdv); // new
+      let new_context_addr =
+          process::schedule_next(context_ptr as usize);
+      interrupts::launch_thread(new_context_addr);
+  }
+#+end_src
+The [[https://doc.rust-lang.org/core/mem/fn.drop.html][implementation of drop]] is quite neat: It's just
+#+begin_src rust
+  pub fn drop<T>(_x: T) { }
+#+end_src
+so the ownership of =rdv= is transferred to this function
+and then dropped.
 
 ** Speeding up keyboard_interrupt_handler
 

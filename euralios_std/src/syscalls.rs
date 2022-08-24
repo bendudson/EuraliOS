@@ -161,7 +161,11 @@ impl SyscallError {
 ///
 ///  Ok(thread_id) or Err(error_code)
 ///
-pub fn thread_spawn(func: extern "C" fn(usize) -> (), param: usize) -> Result<u64, SyscallError> {
+pub fn thread_spawn(
+    func: extern "C" fn(usize) -> (),
+    param: usize
+) -> Result<u64, SyscallError> {
+
     let tid: u64;
     let errcode: u64;
     unsafe {
@@ -518,6 +522,7 @@ pub const SYSCALL_ERROR_THREAD: SyscallError = SyscallError(8);
 pub const SYSCALL_ERROR_MEMORY: SyscallError = SyscallError(9);
 pub const SYSCALL_ERROR_DOUBLEFREE: SyscallError = SyscallError(10);
 pub const SYSCALL_ERROR_NOMEMSLOTS: SyscallError = SyscallError(11);
+pub const SYSCALL_ERROR_CLOSED: SyscallError = SyscallError(12);
 
 impl fmt::Display for SyscallError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -534,6 +539,7 @@ impl fmt::Display for SyscallError {
                    SYSCALL_ERROR_MEMORY => "Memory error",
                    SYSCALL_ERROR_DOUBLEFREE => "Double free",
                    SYSCALL_ERROR_NOMEMSLOTS => "No memory slots",
+                   SYSCALL_ERROR_CLOSED => "Rendezvous closed",
                    _ => "Unknown error"
                })
     }
