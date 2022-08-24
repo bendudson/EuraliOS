@@ -65,7 +65,8 @@ detect whether the interrupt occurred while in kernel code.
 
 The approach we'll use here is to avoid this problem by only using
 =swapgs= in the syscall handler, keeping the user GS register loaded
-in the rest of the kernel code.
+in the rest of the kernel code. There may be a good reason why this is
+a bad idea, but I haven't found it yet.
 
 *** Setting kernel GS base
 
@@ -158,9 +159,27 @@ and swap the GS registers back:
        ks_offset = const(SYSCALL_KERNEL_STACK_OFFSET));
 #+end_src
 
+The =handle_syscall()= syscall entry function now starts with:
+#+begin_src rust
+  #[naked]
+  extern "C" fn handle_syscall() {
+      unsafe {
+          asm!(
+              "swapgs", // Put the TSS address into GS (stored in syscalls::init)
+              "mov gs:{tss_temp}, rsp", // Save user stack pointer in TSS entry
 
+              "mov rsp, gs:{tss_timer}", // Get kernel stack pointer
+              "sub rsp, {ks_offset}", // Use a different location than timer interrupt
 
-** Create Context struct in syscall
+              // Create an Exception stack frame
+              "sub rsp, 8", // To be replaced with SS
+              "push gs:{tss_temp}", // User stack pointer
+              "swapgs", // Put TSS address back
+#+end_src
+
+After that we can create the rest of the Context struct.
+
+** Creating a Context struct in syscall
 
 When a thread fork syscall is made, a new thread context must be made
 that is the same as the original thread, and can be put in the
@@ -176,7 +195,7 @@ therefore subtract 8 (bytes) from rsp to make space before the =rsp=
 value, and we have to do a similar thing for CS. Other differences
 from the interrupt handler code are that =syscall= stores the user
 instruction pointer (=rip=) in =rcx=, and RFLAGS in =r11=.  The
-assembly code in the nakes =handle_syscall()= function so far looks
+assembly code in the naked =handle_syscall()= function so far looks
 like:
 #+begin_src rust
   asm!(
@@ -215,39 +234,289 @@ like:
       "push r15",
 #+end_src
 
+** Dispatching syscalls
+
+We now have a thread =Context= and need to decide which syscall
+function to call. In [[./02-userspace.org][section 2]] we used some conditionals and called
+the =sys_read= or =sys_write= functions from the =handle_syscalls=
+assembly code. Linux uses a jump table, an array of function pointers,
+to dispatch syscalls; to do this in Rust we'll use a two-stage method:
+=handle_syscalls= will call a new (Rust) function =dispatch_syscalls=,
+which will then use =match= to call the separate syscall functions.
+
+To pass parameters to =dispatch_syscalls= we'll use the x86_64 C
+calling convention: The first six function parameters are in =rdi=,
+=rsi=, =rdx=, =rcx=, =r8= and =r9= registers. We're going to use five
+of these, for the =Context= address; the syscall number; and then
+three syscall parameters which the user can store in =rdi=, =rsi= and
+=rdx=:
+#+begin_src rust
+  "mov r8, rdx", // Fifth argument <- Syscall third argument
+  "mov rcx, rsi", // Fourth argument <- Syscall second argument
+  "mov rdx, rdi", // Third argument <- Syscall first argument
+  "mov rsi, rax", // Second argument is the syscall number
+  "mov rdi, rsp", // First argument is the Context address
+  "call {dispatch_fn}",
+  ...
+  dispatch_fn = sym dispatch_syscall,
+#+end_src
+
+In the =dispatch_syscall= function we need to finish the =Context=
+that we've created: In =handle_syscalls= we didn't set the stack or
+code segments.  If this =Context= is used to return to a thread via an
+interrupt (e.g.  in a context switch) then those segments will be
+wrong and we'll probably get a General Protection Fault. To set these
+values we'll use:
+#+begin_src rust
+  extern "C" fn dispatch_syscall(
+      context_ptr: *mut Context,
+      syscall_id: u64,
+      arg1: u64, arg2: u64, arg3: u64) {
+
+      let context = unsafe{&mut *context_ptr};
+
+      // Set the CS and SS segment selectors
+      let (code_selector, data_selector) =
+            gdt::get_user_segments();
+      context.cs = code_selector.0 as usize;
+      context.ss = data_selector.0 as usize;
+      ...
+#+end_src
+
+After that it's just a =match= to choose which syscall function to call:
+#+begin_src rust
+  ...
+      match syscall_id {
+          SYSCALL_FORK_THREAD => process::fork_current_thread(context),
+          SYSCALL_DEBUG_WRITE => sys_debug_write(arg1 as *const u8, arg2 as usize),
+          _ => println!("Unknown syscall {:?} {} {} {}",
+                        context_ptr, syscall_id, arg1, arg2)
+      }
+   }
+#+end_src
+
+The =SYSCALL_FORK_THREAD= branch calls a new function
+=fork_current_thread= which we'll add to =process.rs=.
 
 ** Kernel code to fork threads
 
+To create a new thread in the current process we need to:
 
-** User code to spawn new threads
+1. Allocate a new user stack and a new kernel stack for the new thread
+2. Create a new =Thread= object, with a reference counted pointer
+   (=Arc=) to the same shared =Process= object as the caller.
+3. Set the return values so that the original thread can be
+   distinguished from the new thread. Here we'll do this by
+   setting the =rdi= register to 0 in the new thread, and
+   to the (non-zero) thread ID (=tid=) in the original thread.
 
+The code to do this is in =kernel/src/process.rs=:
+#+begin_src rust
+  pub fn fork_current_thread(current_context: &mut Context) {
+      if let Some(current_thread) = CURRENT_THREAD.read().as_ref() {
+
+          // Allocate user stack
+          let page_table_ptr = memory::active_pagetable_ptr();
+          if let Ok((user_stack_start, user_stack_end)) = memory::allocate_user_stack(page_table_ptr) {
+              let new_thread = {
+                  // Create a new kernel stack
+                  let kernel_stack = Vec::with_capacity(KERNEL_STACK_SIZE);
+                  let kernel_stack_start = VirtAddr::from_ptr(kernel_stack.as_ptr());
+                  let kernel_stack_end = (kernel_stack_start + KERNEL_STACK_SIZE).as_u64();
+
+                  Box::new(Thread {
+                      tid: unique_id(),
+                      process: current_thread.process.clone(), // Shared state
+                      page_table_physaddr: current_thread.page_table_physaddr, // Shared page table
+                      kernel_stack,
+                      kernel_stack_end,
+                      user_stack_end,
+                      context: kernel_stack_end - INTERRUPT_CONTEXT_SIZE as u64,
+                  })
+              };
+
+              let new_context = unsafe {&mut *(new_thread.context as *mut Context)};
+              ,*new_context = current_context.clone(); // Copy of caller
+
+              // Set new stack pointer
+              new_context.rsp = new_thread.user_stack_end as usize;
+
+              // Set return values in rax
+              new_context.rax = 0; // No error
+              new_context.rdi = 0; // Indicates that this is the new thread
+              current_context.rax = 0; // No error
+              current_context.rdi = new_thread.tid as usize;
+
+              RUNNING_QUEUE.write().push_back(new_thread);
+          } else {
+              // Failed to allocate user stack
+              current_context.rax = syscalls::SYSCALL_ERROR_MEMALLOC; // Error code
+          }
+      } else {
+          // Somehow no current thread
+          current_context.rax = 2; // Error code
+      }
+  }
+#+end_src
+
+Note that the new context is a clone (copy) of the calling thread's
+context, including the return instruction pointer. Both threads will
+return from this syscall at the same point in the user code. We
+therefore need to be quite careful to make sure that we don't
+accidentally share or double-free variables in user code.
 
 ** Exiting threads
 
+Now we have the syscall dispatch code in place, adding more syscalls
+becomes quite easy: We create a new function, choose a syscall number,
+and add it to the =match= in =dispatch_syscalls=:
+#+begin_src rust
+  pub const SYSCALL_EXIT_THREAD: u64 = 1;
+  ...
+  // in dispatch_syscall()
+      match syscall_id {
+          SYSCALL_EXIT_THREAD => process::exit_current_thread(context),
+          ...
+      }
+#+end_src
 
+Exiting a thread is quite straightforward: We take ownership
+of the running =Thread= object, and then drop it. The =drop=
+implementation will then take care of freeing resources the
+thread is holding:
+#+begin_src rust
+  pub fn exit_current_thread(_current_context: &mut Context) {
+      {
+          let mut current_thread = CURRENT_THREAD.write();
+
+          if let Some(_thread) = current_thread.take() {
+              // Drop thread, freeing stacks. If this is the last thread
+              // in this process, memory and page tables will be freed
+              // in the Process drop() function
+          }
+      }
+      // Can't return from this syscall, so this thread now waits for a
+      // timer interrupt to switch context.
+      unsafe {
+          asm!("sti",
+               "2:",
+               "hlt",
+               "jmp 2b");
+      }
+  }
+#+end_src
+
+** User code to spawn new threads
+
+The above kernel code will create a new user thread with the same
+registers and page table as the caller, including instruction pointer
+(=rip=), but with different stack pointer (=rsp=) and zero in =rdi=.
+To use it we need a user function to call syscall with =SYSCALL_FORK_THREAD=
+in =rax=, and then treat the two threads which return differently.
+
+1. The new thread has a new stack, so we can't rely on any local
+   variables (which may be stored in registers or on the stack) or
+   return from any function.
+2. The Rust compiler may add code to the start and end of =asm=
+   blocks, and assumes that an =asm= block which is entered is left
+   once (or never for =noreturn= blocks), not twice.
+
+We therefore need to make sure that the new thread never leaves
+the =asm= block where it is created; What happens in the =asm=
+block stays in the =asm= block.
+
+The solution used here is to detect the new thread (which has both
+=rax= and =rdi= equal to zero), call a user-provided function, and
+when that returns use the =SYSCALL_EXIT_THREAD= syscall to stop the
+thread. That syscall never returns, so the new thread never leaves the
+=asm= block.
+
+This is in =euralios_std/src/syscalls.rs=.
+#+begin_src rust
+  pub fn thread_spawn(
+      func: extern "C" fn(usize) -> (),
+      param: usize
+  ) -> Result<u64, SyscallError> {
+
+      let tid: u64;
+      let errcode: u64;
+      unsafe {
+          asm!("syscall",
+               // rax = 0 indicates no error
+               "cmp rax, 0",
+               "jnz 2f",
+               // rdi = 0 for new thread
+               "cmp rdi, 0",
+               "jnz 2f",
+               // New thread
+               "mov rdi, r9", // Function argument
+               "call r8",
+               "mov rax, 1", // exit_current_thread syscall
+               "syscall",
+               // New thread never leaves this asm block
+               "2:",
+               in("rax") SYSCALL_FORK_THREAD,
+               in("r8") func,
+               in("r9") param,
+               lateout("rax") errcode,
+               lateout("rdi") tid,
+               out("rcx") _,
+               out("r11") _);
+      }
+      if errcode != 0 {
+          return Err(SyscallError(errcode));
+      }
+      Ok(tid)
+  }
+#+end_src
+(I was not very consistent with =fork= vs =spawn= naming. Sorry).
+This =thread_spawn= function takes a function pointer with C calling
+convention, and a parameter which will be stored in the first argument
+(=rdi=). In [[./06-user-memory.org][section 6]] once we've got user-space memory allocation we
+can use this to pass a closure's context and provide the [[https://doc.rust-lang.org/book/ch16-01-threads.html][Rust
+threading interface]].
+
+** User code to exit from a thread
+
+The implementation of =thread_exit= is simpler because we just
+call the =SYSCALL_EXIT_THREAD= syscall and never return:
+#+begin_src rust
+  pub fn thread_exit() -> ! {
+      unsafe {
+          asm!("syscall",
+               in("rax") SYSCALL_EXIT_THREAD,
+               options(noreturn));
+      }
+  }
+#+end_src
 
 ** User panic handler
 
-We can use these syscalls to write a better panic handler in the user program
-=hello.rs=:
+We can also use these syscalls to write a better panic handler in the
+user program =hello.rs=:
 #+begin_src rust
   #[panic_handler]
   fn panic(info: &PanicInfo) -> ! {
       println!("User panic: {}", info);
-      unsafe {
-          asm!("mov rax, 1", // exit_current_thread syscall
-               "syscall");
-      }
-      loop {}
+      syscalls::thread_exit();
   }
 #+end_src
 So now when a user thread panics it will print the error message and exit.
+
+** Next steps
+
+When a thread exits we should be able to recover any memory it was
+allocated and re-use it for other threads or processes. Unfortunately
+at the moment our frame allocator doesn't allow frames to be
+free'd. In the [[./05-memory-returns.org][next section]] we'll write a new frame allocator which
+will allow us to free memory when it's not needed.
 
 ** Appendix: Security issues
 
 Security issues: https://fuchsia.dev/fuchsia-src/concepts/kernel/sysret_problem
 
 
+#+LABEL sec:jump_table
 ** Appendix: Syscall jump table
 
 This is an alternative approach which I don't think is optimal, but is
