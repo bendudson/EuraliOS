@@ -67,3 +67,23 @@ been dropped: If we try to communicate with a Rendezvous with only one
 handle, or drop a handle with a waiting thread then we could return an
 error message.
 
+** Discovering files and other things
+
+At the moment the ramdisk can store and retrieve files, but there's no
+way to find out what files are present. To provide a basic =ls=
+command we'll need to at least be able to list files (and
+directories). I'd like to make the system discoverable, by enabling
+any handle can be queried to find out what it is, what messages it can
+respond to, what inputs it expects etc.
+
+Adding a =QUERY= message type, which will be responded to with a =JSON=
+message (in =euralios_std/src/message.rs=):
+#+begin_src rust
+pub const QUERY: u64 = 7;
+pub const JSON: u64 = 8;
+#+end_src
+JSON may not be the best choice but it's a) human readable for
+debugging and manipulation, and b) widely supported, in particular by
+the Rust [[https://serde.rs/][serde]] [[https://github.com/serde-rs/json][library]] in no-std environments. Other serialisation
+formats are available.
+

@@ -65,14 +65,21 @@ fn main() {
         stdin.read_line(&mut line_buffer);
 
         println!("Input {}: {}", line_buffer.len(), line_buffer);
+        let input = line_buffer.trim();
 
-        // Convert to a path
-        let mut path: String = "/ramdisk/".to_owned();
-        path.push_str(&line_buffer.trim());
-        println!("Path |{}|", path);
+        if input == "ls" {
+            if let Ok(file) = File::open("/ramdisk") {
+                file.query()
+            }
+        } else if input.len() > 0 {
+            // Convert to a path
+            let mut path: String = "/ramdisk/".to_owned();
+            path.push_str(input);
+            println!("Path |{}|", path);
 
-        if let Err(err) = exec_path(&path) {
-            println!("Couldn't open '{}'", path);
+            if let Err(err) = exec_path(&path) {
+                println!("Couldn't open '{}'", path);
+            }
         }
 
         line_buffer.clear();

@@ -44,15 +44,13 @@ much, but it can do it all at the same time.
 - [X] RTL8139 network card driver running in user space
 - [X] TCP network stack using [[https://docs.rs/smoltcp/latest/smoltcp/][smoltcp]] in user space, with DHCP and DNS
 - [X] A simple [[https://en.wikipedia.org/wiki/Gopher_(protocol)][Gopher]] browser
-- [X] A vDSO-like fast mechanism for timing functions
-
+- [X] A [[https://man7.org/linux/man-pages/man7/vdso.7.html][vDSO]]-like fast mechanism for timing functions
 There is no filesystem (yet), so user programs are compiled and then
 the ELF files are included in the kernel binary using Rust's
 [[https://doc.rust-lang.org/std/macro.include_bytes.html][include_bytes]] macro (another idea taken from [[https://github.com/vinc/moros][MOROS]]).
 
 ** Building and running
 
-After setting up Rust, Cargo and QEMU (see phil-opp blog), just
 Euralios depends on the [[https://github.com/rust-osdev/vga][vga]] crate, with some modifications in [[https://github.com/bendudson/vga/tree/euralios][a branch
 here]] as a git submodule.  Either clone with submodules (with e.g the
 =--recurse-submodules= option) or run:
@@ -96,7 +94,7 @@ direction...
   closures as in the Rust stdlib. We also re-organise the repository
   into a Cargo Workspace, with separate crates for the kernel and user
   program.
-- [[file:doc/journal/07-ipc.org][7. Inter-process communication (IPC)]] where a simple "rendezvous"
+- [[file:doc/journal/07-ipc.org][7. Inter-process communication (IPC)]] where a simple "[[https://en.wikipedia.org/wiki/Rendezvous_(Plan_9)][rendezvous]]"
   communication method is implemented, enabling a user program to
   get input from the keyboard.
 - [[file:doc/journal/08-faster-ipc.org][8. Faster IPC]] in which we switch tasks in syscalls and keyboard

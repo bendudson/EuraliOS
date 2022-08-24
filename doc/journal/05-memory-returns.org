@@ -785,7 +785,8 @@ impl Drop for Process {
 #+end_src
 
 Now finally threads and processes return frames to the allocator when
-they exit!
+they exit! In the [[./06-user-memory.org][next section]] we'll implement user memory management,
+so user programs will be able to allocate and free memory.
 
 ** Appendix: Subdirectories in src/
 

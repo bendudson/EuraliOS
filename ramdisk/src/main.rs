@@ -4,7 +4,9 @@
 extern crate alloc;
 use alloc::collections::btree_map::BTreeMap;
 use alloc::string::String;
+use alloc::format;
 use core::str;
+
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use spin::RwLock;
@@ -130,6 +132,10 @@ fn handle_file(file: Arc<RwLock<File>>,
                 // Wait and try again
                 syscalls::thread_yield();
             },
+            Err(syscalls::SYSCALL_ERROR_CLOSED) => {
+                // Other Rendezvous handles have been dropped
+                return;
+            },
             Err(code) => {
                 println!("[ramdisk handle_file] Receive error {}", code);
                 // Wait and try again
@@ -169,9 +175,26 @@ fn handle_directory(directory: Arc<RwLock<Directory>>,
                                        message::ERROR_INVALID_UTF8, 0, 0));
                 }
             }
+            Ok(Message::Short(
+                message::QUERY, _, _)) => {
+                // Return information about this handle in JSON format
+                let info = format!("{{
+'short': 'Ramdisk directory',
+'messages': [],
+'subdirs': [],
+'files': []}}");
+
+                // Copy and send as memory handle
+                let mem_handle = syscalls::MemoryHandle::from_u8_slice(&info.as_bytes());
+                syscalls::send(&comm_handle,
+                               syscalls::Message::Long(
+                                   message::JSON,
+                                   (info.len() as u64).into(),
+                                   mem_handle.into()));
+            },
             Ok(message) => {
                 println!("[ramdisk] Received unexpected message {:?}", message);
-            }
+            },
             Err(syscalls::SYSCALL_ERROR_RECV_BLOCKING) => {
                 // Waiting for a message
                 // => Send an error message
@@ -180,6 +203,10 @@ fn handle_directory(directory: Arc<RwLock<Directory>>,
                                    message::ERROR, 0, 0));
                 // Wait and try again
                 syscalls::thread_yield();
+            },
+            Err(syscalls::SYSCALL_ERROR_CLOSED) => {
+                // Other Rendezvous handles have been dropped
+                return;
             },
             Err(code) => {
                 println!("[tcp] Receive error {}", code);

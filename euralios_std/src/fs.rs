@@ -2,6 +2,8 @@
 
 extern crate alloc;
 use alloc::vec::Vec;
+use alloc::string::String;
+use core::str;
 
 use crate::{println,
             syscalls::{self, CommHandle, SyscallError, MemoryHandle},
@@ -29,6 +31,25 @@ impl File {
     pub fn open(path: &str) -> Result<File, SyscallError> {
         let handle = syscalls::open(path)?;
         Ok(File(handle))
+    }
+
+    pub fn query(&self)  {
+        match rcall(&self.0,
+                    message::QUERY,
+                    0.into(), 0.into(), None) {
+            Ok((message::JSON,
+                MessageData::Value(length),
+                MessageData::MemoryHandle(handle))) => {
+
+                let u8_slice = handle.as_slice::<u8>(length as usize);
+                if let Ok(s) = str::from_utf8(u8_slice) {
+                    println!("[query]: {}", s);
+                }
+            },
+            message => {
+                println!("[query] received {:?}", message);
+            }
+        }
     }
 
     /// Write a buffer into this writer, returning how many bytes were
