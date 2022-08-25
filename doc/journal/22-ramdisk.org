@@ -19,6 +19,9 @@ directory.
 
 ** Basic shell
 
+#+CAPTION: Starting the EuraliOS shell!
+#+NAME: fig-welcome
+[[./img/22-01-welcome.png]]
 
 #+begin_src rust
   fn exec_path(path: &str) -> Result<(), SyscallError> {
@@ -87,3 +90,59 @@ debugging and manipulation, and b) widely supported, in particular by
 the Rust [[https://serde.rs/][serde]] [[https://github.com/serde-rs/json][library]] in no-std environments. Other serialisation
 formats are available.
 
+In =ramdisk/src/main.rs= in the =handle_directory()= function we can
+add a match for =QUERY= tagged messages, assemble a JSON string (by
+hand, for now), returning by copying the string into
+a memory chunk and sending it back in a message tagged =JSON=.
+
+In the =shell= program, entering "ls" opens =/ramdisk= and
+queries it:
+#+begin_src rust
+  let mut line_buffer = String::new();
+    loop {
+        // prompt
+        print!("$ ");
+
+        // Read a line of input
+        stdin.read_line(&mut line_buffer);
+        let input = line_buffer.trim();
+
+        if input == "ls" {
+            if let Ok(file) = File::open("/ramdisk") {
+                file.query()
+            }
+        }
+        ...
+#+end_src
+
+The =query= method is a EuraliOS-specific extension to =fs::File=.
+It sends a =QUERY= message and for now just prints whatever comes back.
+In =euralios_std/src/fs.rs=:
+#+begin_src rust
+  impl File {
+    ...
+    pub fn query(&self)  {
+        match rcall(&self.0,
+                    message::QUERY,
+                    0.into(), 0.into(), None) {
+            Ok((message::JSON,
+                MessageData::Value(length),
+                MessageData::MemoryHandle(handle))) => {
+
+                let u8_slice = handle.as_slice::<u8>(length as usize);
+                if let Ok(s) = str::from_utf8(u8_slice) {
+                    println!("[query]: {}", s);
+                }
+            },
+            message => {
+                println!("[query] received {:?}", message);
+            }
+        }
+    }
+  }
+#+end_src
+The result is in figure [[fig-ls]]
+
+#+CAPTION: Querying a RAMdisk directory
+#+NAME: fig-ls
+[[./img/22-02-ls.png]]

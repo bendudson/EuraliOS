@@ -237,6 +237,12 @@ pub const CLOSE: u64 = 5;
 
 pub const VIDEO_MEMORY: u64 = 6;
 
+/// Send a short Query message and expect JSON in return
+pub const QUERY: u64 = 7;
+
+/// Information in JSON format
+pub const JSON: u64 = 8;
+
 pub const OK: u64 = 32;
 pub const COMM_HANDLE: u64 = 64; // A communication handle
 

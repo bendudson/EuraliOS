@@ -47,6 +47,8 @@ impl Directory {
     }
 
     fn open(&mut self, path: &str) -> Result<CommHandle, ()> {
+        // Strip leading "/"
+        let path = path.trim_left_matches('/');
         println!("[ramdisk] Opening {}", path);
 
         let file = if self.files.contains_key(path) {
@@ -178,11 +180,36 @@ fn handle_directory(directory: Arc<RwLock<Directory>>,
             Ok(Message::Short(
                 message::QUERY, _, _)) => {
                 // Return information about this handle in JSON format
+
+                let dir = directory.read();
+
+                // Make a list of files
+                let file_list = {
+                    let mut s = String::new();
+                    let mut it = dir.files.keys().peekable();
+                    while let Some(name) = it.next() {
+                        s.reserve(name.len() + 13);
+                        s.push_str("{\"name\":\"");
+                        s.push_str(name);
+                        s.push_str("\"}");
+                        if it.peek().is_some() {
+                            s.push_str(", ");
+                        }
+                    }
+                    s
+                };
+
                 let info = format!("{{
-'short': 'Ramdisk directory',
-'messages': [],
-'subdirs': [],
-'files': []}}");
+\"short\": 'Ramdisk directory',
+\"messages\": [{{\"name\": \"open\",
+                 \"tag\": {open_tag}}},
+               {{\"name\": \"query\",
+                 \"tag\": {query_tag}}}],
+\"subdirs\": [],
+\"files\": [{file_list}]}}",
+                                   open_tag = message::OPEN,
+                                   query_tag = message::QUERY,
+                                   file_list = file_list);
 
                 // Copy and send as memory handle
                 let mem_handle = syscalls::MemoryHandle::from_u8_slice(&info.as_bytes());

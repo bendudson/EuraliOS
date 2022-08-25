@@ -63,8 +63,6 @@ fn main() {
 
         // Read a line of input
         stdin.read_line(&mut line_buffer);
-
-        println!("Input {}: {}", line_buffer.len(), line_buffer);
         let input = line_buffer.trim();
 
         if input == "ls" {
