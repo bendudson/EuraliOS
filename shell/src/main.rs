@@ -6,7 +6,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use crate::alloc::borrow::ToOwned;
 
-use euralios_std::{fs::File,
+use euralios_std::{path::Path,
+                   fs::{self, File},
                    io,
                    message,
                    print, println,
@@ -66,8 +67,10 @@ fn main() {
         let input = line_buffer.trim();
 
         if input == "ls" {
-            if let Ok(file) = File::open("/ramdisk") {
-                file.query()
+            if let Ok(rd) = fs::read_dir("/ramdisk") {
+                for entry in rd {
+                    println!("{}", entry.unwrap().file_name());
+                }
             }
         } else if input.len() > 0 {
             // Convert to a path

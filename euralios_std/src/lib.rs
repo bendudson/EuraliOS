@@ -12,6 +12,7 @@ pub mod thread;
 pub mod time;
 pub mod io;
 pub mod fs;
+pub mod path;
 
 use core::panic::PanicInfo;
 #[panic_handler]

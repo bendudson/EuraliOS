@@ -200,7 +200,7 @@ fn handle_directory(directory: Arc<RwLock<Directory>>,
                 };
 
                 let info = format!("{{
-\"short\": 'Ramdisk directory',
+\"short\": \"Ramdisk directory\",
 \"messages\": [{{\"name\": \"open\",
                  \"tag\": {open_tag}}},
                {{\"name\": \"query\",

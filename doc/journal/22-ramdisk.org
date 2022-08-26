@@ -146,3 +146,143 @@ The result is in figure [[fig-ls]]
 #+CAPTION: Querying a RAMdisk directory
 #+NAME: fig-ls
 [[./img/22-02-ls.png]]
+
+** Path
+
+Adding some of the path manipulation API from std into a new file
+=euralios_std/src/path.rs=. =Path= is implemented here
+similar to the standard library, but using =str= rather than =OsString=:
+#+begin_src rust
+  pub struct Path {
+      inner: str,
+  }
+
+  impl Path {
+      /// Directly wraps a string slice as a Path slice.
+      ///
+      /// This is a cost-free conversion.
+      pub fn new<S: AsRef<str> + ?Sized>(s: &S) -> &Path {
+          unsafe { &*(s.as_ref() as *const str as *const Path) }
+      }
+
+      /// Yields the underlying str slice.
+      pub fn as_os_str(&self) -> &str {
+          &self.inner
+      }
+  }
+#+end_src
+And we can copy the implementation of =AsRef<Path>= from
+std::path
+#+begin_src rust
+impl AsRef<Path> for str {
+    #[inline]
+    fn as_ref(&self) -> &Path {
+        Path::new(self)
+    }
+}
+
+impl AsRef<Path> for String {
+    #[inline]
+    fn as_ref(&self) -> &Path {
+        Path::new(self)
+    }
+}
+#+end_src
+
+so we can change the =File::create= and =open= functions
+to take a =Path=, =str= or =String= as input:
+#+begin_src rust
+  pub fn create<P: AsRef<Path>>(path: P) -> Result<File, SyscallError> {
+      let handle = syscalls::open(path.as_ref().as_os_str())?;
+      Ok(File(handle))
+  }
+#+end_src
+
+** Parsing JSON with serde_json
+
+
+The serde_json crate can be used without the Rust standard library:
+#+begin_src toml
+  serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+#+end_src
+
+#+begin_src rust
+  let u8_slice = handle.as_slice::<u8>(length as usize);
+  if let Ok(s) = str::from_utf8(u8_slice) {
+      match serde_json::from_str::<Value>(s)
+          Ok(v) => Ok(FileQuery(v)),
+      ...
+#+end_src
+
+#+begin_src rust
+#[derive(Debug)]
+pub struct DirEntry {
+    name: String
+}
+
+impl DirEntry {
+    pub fn file_name(&self) -> &str {
+        &self.name
+    }
+}
+
+#[derive(Debug)]
+pub struct ReadDir {
+    entries: Vec<DirEntry>
+}
+#+end_src
+
+#+begin_src rust
+pub fn read_dir<P: AsRef<Path>>(
+    path: P
+) -> Result<ReadDir, SyscallError> {
+    let f = File::open(path)?;
+    let query = f.query()?;
+
+    let entries = match query.0["files"].as_array() {
+        Some(vec) => {
+            // Transform into a Vec of DirEntry objects
+            vec.iter().map(|obj| DirEntry{
+                name: String::from(obj["name"].as_str().unwrap_or("_bad_"))
+            }).collect()
+        }
+        _ => Vec::new()
+    };
+
+    Ok(ReadDir{
+        entries
+    })
+}
+#+end_src
+
+Turning =ReadDir= into an iterator is just a matter of defining the =Item= type,
+and the =next= function:
+#+begin_src rust
+impl Iterator for ReadDir {
+    type Item = Result<DirEntry, SyscallError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(entry) = self.entries.pop() {
+            return Some(Ok(entry));
+        }
+        None
+    }
+}
+#+end_src
+
+In the shell we can now write:
+#+begin_src rust
+  if input == "ls" {
+      if let Ok(rd) = fs::read_dir("/ramdisk") {
+          for entry in rd {
+              println!("{}", entry.unwrap().file_name());
+          }
+      }
+#+end_src
+
+This now prints the files in the ramdisk, shown in figure
+[[fig-listing]].
+
+#+CAPTION: Listing contents of a RAMdisk directory
+#+NAME: fig-listing
+[[./img/22-03-listing.png]]
