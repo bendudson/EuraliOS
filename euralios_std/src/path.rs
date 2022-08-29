@@ -25,6 +25,22 @@ impl Path {
     pub fn as_os_str(&self) -> &str {
         &self.inner
     }
+
+    /// true if the path starts with '/'
+    pub fn has_root(&self) -> bool {
+        self.inner.as_bytes()[0] == b'/'
+    }
+
+    /// Returns true if the Path is absolute, i.e., if it is
+    /// independent of the current directory.
+    pub fn is_absolute(&self) -> bool {
+        self.has_root()
+    }
+
+    /// Returns true if the Path is relative, i.e., not absolute.
+    pub fn is_relative(&self) -> bool {
+        !self.is_absolute()
+    }
 }
 
 impl AsRef<Path> for str {
@@ -38,5 +54,12 @@ impl AsRef<Path> for String {
     #[inline]
     fn as_ref(&self) -> &Path {
         Path::new(self)
+    }
+}
+
+impl AsRef<Path> for Path {
+    #[inline]
+    fn as_ref(&self) -> &Path {
+        self
     }
 }

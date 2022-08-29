@@ -48,38 +48,87 @@ fn exec_path(path: &str) -> Result<(), SyscallError> {
     }
 }
 
+fn ls(current_directory: &str, args: Vec<&str>) {
+    if args.len() > 1 {
+        println!("Usage: ls [path]");
+        return;
+    }
+
+    let option_rd = if args.len() == 0 {
+        fs::read_dir(current_directory)
+    } else {
+        let path = Path::new(args[0]);
+        if path.is_absolute() {
+            fs::read_dir(path)
+        } else {
+            // Join paths
+            fs::read_dir(current_directory)
+        }
+    };
+
+    if let Ok(rd) = option_rd {
+        for entry in rd {
+            println!("{}", entry.unwrap().file_name());
+        }
+    }
+}
+
 #[no_mangle]
 fn main() {
     println!("Welcome to EuraliOS shell!
 
   [Esc] switches to system console
   [Tab] returns to this console
+
+Type help [Enter] to see the shell help page.
 ");
 
     let stdin = io::stdin();
     let mut line_buffer = String::new();
+
+    // Current Working Directory
+    let mut current_directory = String::from("/ramdisk");
+
     loop {
         // prompt
         print!("$ ");
 
         // Read a line of input
         stdin.read_line(&mut line_buffer);
-        let input = line_buffer.trim();
 
-        if input == "ls" {
-            if let Ok(rd) = fs::read_dir("/ramdisk") {
-                for entry in rd {
-                    println!("{}", entry.unwrap().file_name());
+        let mut line_iter = line_buffer.split_whitespace();
+        if let Some(command) = line_iter.next() {
+            let args: Vec<_> = line_iter.collect();
+            match command {
+                // Built-in shell commands
+                //
+                // Help
+                "help" | "?" => {
+                    println!(
+"EuraliOS shell help
+
+* Built-in commands:
+  ls     List directory
+  cd     Change directory
+  pwd    Print working directory");
+                },
+                // List directory
+                "ls" => ls(&current_directory, args),
+                // Print working directory
+                "pwd" => println!("{}", current_directory),
+                // Change directory
+                "cd" => {
+                    println!("Args: {:?}", args);
+                },
+                cmd => {
+                    let mut path: String = current_directory.clone();
+                    path.push_str(cmd);
+                    println!("Path |{}|", path);
+
+                    if let Err(err) = exec_path(&path) {
+                        println!("Couldn't open '{}'", path);
+                    }
                 }
-            }
-        } else if input.len() > 0 {
-            // Convert to a path
-            let mut path: String = "/ramdisk/".to_owned();
-            path.push_str(input);
-            println!("Path |{}|", path);
-
-            if let Err(err) = exec_path(&path) {
-                println!("Couldn't open '{}'", path);
             }
         }
 
