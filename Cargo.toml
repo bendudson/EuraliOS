@@ -10,8 +10,9 @@ members = [
     "gopher",
     "timing_test",
     "vga_driver",
-    "init",
     "ramdisk",
-    "shell"
+    "shell",
+    "system_test",
+    "init"
 ]
 
