@@ -49,6 +49,21 @@ fn exec_path(path: &str) -> Result<(), SyscallError> {
     }
 }
 
+fn help() {
+    println!(
+"EuraliOS shell help
+
+* Built-in commands:
+  ls [<path>]     List directory
+  cd <path>       Change directory
+  pwd             Print working directory
+  mount           List mounted filesystems
+  umount <path>   Un-mount a filesystem
+"
+    );
+}
+
+/// List a directory
 fn ls(current_directory: &str, args: Vec<&str>) {
     if args.len() > 1 {
         println!("Usage: ls [path]");
@@ -71,6 +86,18 @@ fn ls(current_directory: &str, args: Vec<&str>) {
         for entry in rd {
             println!("{}", entry.unwrap().file_name());
         }
+    }
+}
+
+/// Unmount a path
+fn umount(args: Vec<&str>) {
+    if args.len() != 1 {
+        println!("Usage: umount <path>");
+        return;
+    }
+    let path = args.first().unwrap(); // We know it has one element
+    if let Err(err) = syscalls::umount(path) {
+        println!("umount error: {}", err);
     }
 }
 
@@ -104,15 +131,7 @@ Type help [Enter] to see the shell help page.
                 // Built-in shell commands
                 //
                 // Help
-                "help" | "?" => {
-                    println!(
-"EuraliOS shell help
-
-* Built-in commands:
-  ls     List directory
-  cd     Change directory
-  pwd    Print working directory");
-                },
+                "help" | "?" => help(),
                 // List directory
                 "ls" => ls(&current_directory, args),
                 // Print working directory
@@ -135,7 +154,8 @@ Type help [Enter] to see the shell help page.
                             println!("mount: error {}", err);
                         }
                     }
-                }
+                },
+                "umount" => umount(args),
                 cmd => {
                     let mut path: String = current_directory.clone();
                     path.push_str(cmd);

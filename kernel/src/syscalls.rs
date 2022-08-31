@@ -25,6 +25,7 @@
 //! 12   exec(flags, ELF, stdin/stdout, vfs)
 //! 13   mount(RAX: handle, RDI: *const u8, RSI: length)
 //! 14   listmounts() -> memory_handle
+//! 15   umount(RDI: *const u8, RSI: length)
 //!
 //! Potential future syscalls
 //! -------------------------
@@ -54,6 +55,7 @@ pub const SYSCALL_COPY_RENDEZVOUS: u64 = 11;
 pub const SYSCALL_EXEC: u64 = 12;
 pub const SYSCALL_MOUNT: u64 = 13;
 pub const SYSCALL_LISTMOUNTS: u64 = 14;
+pub const SYSCALL_UMOUNT: u64 = 15;
 
 // Syscall error codes
 pub const SYSCALL_ERROR_MASK : usize = 127; // Lower 7 bits
@@ -296,6 +298,7 @@ extern "C" fn dispatch_syscall(context_ptr: *mut Context, syscall_id: u64,
         SYSCALL_EXEC => sys_exec(context_ptr, syscall_id, arg1 as *const u8, arg2, arg3 as *const u8),
         SYSCALL_MOUNT => sys_mount(context_ptr, syscall_id, arg1 as *const u8, arg2),
         SYSCALL_LISTMOUNTS => sys_listmounts(context_ptr),
+        SYSCALL_UMOUNT => sys_umount(context_ptr, syscall_id, arg1 as *const u8, arg2),
         _ => println!("Unknown syscall {:?} {} {} {}",
                       context_ptr, syscall_id, arg1, arg2)
     }
@@ -757,3 +760,35 @@ fn sys_listmounts(context_ptr: *mut Context) {
     }
 }
 
+/// Remove a mount point.
+/// Most of this code is the same as `sys_mount`
+fn sys_umount(
+    context_ptr: *mut Context,
+    syscall_id: u64,
+    path_ptr: *const u8,
+    path_len: u64) {
+
+    let context = unsafe {&mut (*context_ptr)};
+
+    // Convert raw pointer to a slice
+    let u8_slice = unsafe {slice::from_raw_parts(path_ptr, path_len as usize)};
+    let path_string = match str::from_utf8(u8_slice) {
+        Ok(s) => s,
+        Err(_) => {
+            // Bad utf8 conversion
+            context.rax = SYSCALL_ERROR_UTF8;
+            return;
+        }
+    };
+    if let Some(mut thread) = process::take_current_thread() {
+        thread.set_context(context_ptr);
+
+        let mut vfs = thread.vfs(); // An Arc clone of the VFS
+        if vfs.umount(path_string).is_err() {
+            context.rax = SYSCALL_ERROR_NOTFOUND;
+        } else {
+            context.rax = 0; // No error
+        }
+        process::set_current_thread(thread);
+    }
+}

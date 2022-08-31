@@ -508,6 +508,27 @@ pub fn list_mounts() -> Result<(MemoryHandle, u64), SyscallError> {
     }
 }
 
+pub fn umount(path: &str) -> Result<(), SyscallError> {
+    let error: u64;
+    unsafe {
+        asm!("syscall",
+             // RAX contains syscall (8)
+             in("rax") SYSCALL_UMOUNT,
+             // RDI contains pointer to string data
+             in("rdi") path.as_ptr() as usize,
+             // RSI contains string length
+             in("rsi") path.len(),
+             lateout("rax") error,
+             out("rcx") _,
+             out("r11") _);
+    }
+    if error == 0 {
+        Ok(())
+    } else {
+        Err(SyscallError(error))
+    }
+}
+
 // Exec permission flags
 pub const EXEC_PERM_IO: u8 = 1;
 
@@ -528,6 +549,7 @@ pub const SYSCALL_COPY_RENDEZVOUS: u64 = 11;
 pub const SYSCALL_EXEC: u64 = 12;
 pub const SYSCALL_MOUNT: u64 = 13;
 pub const SYSCALL_LISTMOUNTS: u64 = 14;
+pub const SYSCALL_UMOUNT: u64 = 15;
 
 // Syscall error codes
 pub const SYSCALL_ERROR_MASK : usize = 127; // Lower 7 bits

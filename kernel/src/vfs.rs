@@ -32,6 +32,19 @@ impl VFS {
         self.0.write().push((String::from(path), rendezvous));
     }
 
+    /// Remove a mount point from the VFS
+    pub fn umount(&mut self,
+                  path: &str) -> Result<(),()> {
+        let mut mounts = self.0.write();
+        if let Some(index) = mounts.iter().position(
+            |mount_path| mount_path.0 == path) {
+            // Found an index
+            _ = mounts.swap_remove(index);
+            return Ok(());
+        }
+        Err(())
+    }
+
     /// Open a path, returning a handle to read/write and the
     /// length of the string matched.
     pub fn open(&self,
