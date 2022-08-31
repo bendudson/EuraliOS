@@ -56,4 +56,20 @@ impl VFS {
         }
         None
     }
+
+    /// Return a list of mount points as a JSON string
+    pub fn to_json(&self) -> String {
+        let mounts = self.0.read();
+
+        let mut s = String::new();
+        s.push('[');
+        for mount_path in mounts.iter() {
+            s.push('"');
+            s.push_str(&mount_path.0);
+            s.push('"');
+            s.push(',');
+        }
+        s.push(']');
+        s
+    }
 }

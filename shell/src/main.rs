@@ -4,6 +4,7 @@
 extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::str;
 use crate::alloc::borrow::ToOwned;
 
 use euralios_std::{path::Path,
@@ -120,6 +121,21 @@ Type help [Enter] to see the shell help page.
                 "cd" => {
                     println!("Args: {:?}", args);
                 },
+                "mount" => {
+                    match syscalls::list_mounts() {
+                        Ok((handle, len)) =>  {
+                            let u8_slice = handle.as_slice::<u8>(len as usize);
+                            if let Ok(s) = str::from_utf8(u8_slice) {
+                                println!("{}", s);
+                            } else {
+                                println!("mount: syscall utf8 error");
+                            }
+                        }
+                        Err(err) => {
+                            println!("mount: error {}", err);
+                        }
+                    }
+                }
                 cmd => {
                     let mut path: String = current_directory.clone();
                     path.push_str(cmd);

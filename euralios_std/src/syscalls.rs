@@ -488,6 +488,26 @@ pub fn mount(path: &str, mut handle: CommHandle) -> Result<(), SyscallError> {
     }
 }
 
+pub fn list_mounts() -> Result<(MemoryHandle, u64), SyscallError> {
+    let error: u64;
+    let mem_handle: u64;
+    let length: u64;
+    unsafe {
+        asm!("syscall",
+             in("rax") SYSCALL_LISTMOUNTS,
+             lateout("rax") error,
+             lateout("rdi") mem_handle,
+             lateout("rsi") length,
+             out("rcx") _,
+             out("r11") _);
+    }
+    if error == 0 {
+        Ok((MemoryHandle(mem_handle), length))
+    } else {
+        Err(SyscallError(error))
+    }
+}
+
 // Exec permission flags
 pub const EXEC_PERM_IO: u8 = 1;
 
@@ -507,6 +527,7 @@ pub const SYSCALL_NEW_RENDEZVOUS: u64 = 10;
 pub const SYSCALL_COPY_RENDEZVOUS: u64 = 11;
 pub const SYSCALL_EXEC: u64 = 12;
 pub const SYSCALL_MOUNT: u64 = 13;
+pub const SYSCALL_LISTMOUNTS: u64 = 14;
 
 // Syscall error codes
 pub const SYSCALL_ERROR_MASK : usize = 127; // Lower 7 bits

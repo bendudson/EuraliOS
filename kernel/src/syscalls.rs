@@ -24,6 +24,7 @@
 //! 11   copy_rendezvous(handle) -> handle
 //! 12   exec(flags, ELF, stdin/stdout, vfs)
 //! 13   mount(RAX: handle, RDI: *const u8, RSI: length)
+//! 14   listmounts() -> memory_handle
 //!
 //! Potential future syscalls
 //! -------------------------
@@ -52,6 +53,7 @@ pub const SYSCALL_NEW_RENDEZVOUS: u64 = 10;
 pub const SYSCALL_COPY_RENDEZVOUS: u64 = 11;
 pub const SYSCALL_EXEC: u64 = 12;
 pub const SYSCALL_MOUNT: u64 = 13;
+pub const SYSCALL_LISTMOUNTS: u64 = 14;
 
 // Syscall error codes
 pub const SYSCALL_ERROR_MASK : usize = 127; // Lower 7 bits
@@ -74,7 +76,7 @@ pub const EXEC_PERM_IO: u64 = 1;
 
 use crate::{print, println};
 use core::arch::asm;
-use core::{slice, str};
+use core::{slice, str, ptr};
 use core::mem::drop;
 extern crate alloc;
 use alloc::vec::Vec;
@@ -293,6 +295,7 @@ extern "C" fn dispatch_syscall(context_ptr: *mut Context, syscall_id: u64,
         SYSCALL_COPY_RENDEZVOUS => sys_copy_rendezvous(context_ptr, arg1),
         SYSCALL_EXEC => sys_exec(context_ptr, syscall_id, arg1 as *const u8, arg2, arg3 as *const u8),
         SYSCALL_MOUNT => sys_mount(context_ptr, syscall_id, arg1 as *const u8, arg2),
+        SYSCALL_LISTMOUNTS => sys_listmounts(context_ptr),
         _ => println!("Unknown syscall {:?} {} {} {}",
                       context_ptr, syscall_id, arg1, arg2)
     }
@@ -711,3 +714,46 @@ fn sys_mount(
         process::set_current_thread(thread);
     }
 }
+
+/// Get a list of mounted paths in a memory handle
+fn sys_listmounts(context_ptr: *mut Context) {
+    if let Some(mut thread) = process::take_current_thread() {
+        thread.set_context(context_ptr);
+        let context = unsafe {&mut (*context_ptr)};
+
+        // Get a JSON string containing VFS mounts
+        let json = thread.vfs().to_json();
+
+        // No longer need thread, needed
+        // by process::new_memory_chunk
+        process::set_current_thread(thread);
+
+        // Allocate memory chunk to hold the data
+        let num_bytes = json.len() as u64;
+        let num_pages = (num_bytes >> 12) +
+            if (num_bytes & 4095) != 0 {1} else {0};
+
+        match process::new_memory_chunk(
+            num_pages,
+            0xFFFF_FFFF_FFFF_FFFF) {
+            Ok((virtaddr, physaddr)) => {
+                // Copy string into memory chunk
+                unsafe {
+                    ptr::copy_nonoverlapping(json.as_ptr(),
+                                             virtaddr.as_u64() as *mut u8,
+                                             json.len());
+                }
+
+                context.rax = 0; // No error
+                context.rdi = virtaddr.as_u64() as usize;
+                context.rsi = json.len();
+            }
+            Err(code) => {
+                context.rax = code;
+                context.rdi = 0;
+                context.rsi = 0;
+            }
+        }
+    }
+}
+
