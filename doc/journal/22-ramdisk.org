@@ -286,3 +286,77 @@ This now prints the files in the ramdisk, shown in figure
 #+CAPTION: Listing contents of a RAMdisk directory
 #+NAME: fig-listing
 [[./img/22-03-listing.png]]
+
+** Testing
+
+I've basically let things go as far as testing goes, and not followed
+[[https://os.phil-opp.com/testing/][Phil's good example]]. Now that the basics of a system are in place and
+we're starting to add utilities to the system standard library, it's
+time to make amends and add some tests. A difference is now the tests
+are going to be in an executable which is run from within EuraliOS.
+
+#+begin_src rust
+#![no_std]
+#![no_main]
+#![feature(custom_test_frameworks)]
+#![test_runner(crate::test_runner)]
+#![reexport_test_harness_main = "test_main"]
+
+use euralios_std::{print, println};
+
+#[no_mangle]
+fn main() {
+    println!("EuraliOS system test");
+    println!("====================");
+    #[cfg(test)]
+    test_main();
+}
+
+#[cfg(test)]
+mod tests {
+    #[test_case]
+    fn empty_test() {
+    }
+}
+
+// Custom test framework
+
+pub trait Testable {
+    fn run(&self) -> ();
+}
+
+// Implement Testable trait for all types with Fn() trait
+impl<T> Testable for T
+where
+    T: Fn(),
+{
+    fn run(&self) {
+        print!("{}...\t", core::any::type_name::<T>());
+        self();
+        println!("[ok]");
+    }
+}
+
+pub fn test_runner(tests: &[&dyn Testable]) {
+    println!("Running {} tests", tests.len());
+    for test in tests {
+        test.run();
+    }
+}
+#+end_src
+
+The =makefile= rule to build =system_test= is a little complicated:
+#+begin_src rust
+  user/system_test: FORCE
+          cargo test --bin system_test --no-run
+          @cp $(shell find target/x86_64-euralios/debug/deps/ -maxdepth 1 -name "system_test-*" -executable -print | head -n 1) $@
+          @strip $@  # Can't use debugging symbols anyway
+#+end_src
+It first builds the executable with the =test= feature. Unfortunately
+the output binary is not named consistently so we use =find= to locate it.
+We then strip the binary because if we don't then the binary is 1.9Mb; after
+stripping the binary is just 119Kb.
+
+#+CAPTION: Running a basic system test executable
+#+NAME: fig-testing
+[[./img/22-04-testing.png]]

@@ -106,8 +106,8 @@ impl Stdin {
                         }
                     } else {
                         // Echo character to stdout
-                        syscalls::send(&STDOUT, syscalls::Message::Short(
-                            message::CHAR, ch, 0));
+                        _ = syscalls::send(&STDOUT, syscalls::Message::Short(
+                            message::CHAR, ch, 0)); // Not really bothered if it fails
                         if let Some(utf_ch) = char::from_u32(ch as u32) {
                             // If it's a UTF char then append to buffer
                             buf.push(utf_ch);
