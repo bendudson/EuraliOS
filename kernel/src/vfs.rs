@@ -26,9 +26,16 @@ impl VFS {
     }
 
     /// Add a mount point to the VFS
+    ///
+    /// The path will have leading and trailing whitespace removed,
+    /// and all trailing '/' characters removed.
+    ///
+    /// It is expected, though not technically required, for the
+    /// path to start with '/'
     pub fn mount(&mut self,
                  path: &str,
                  rendezvous: Arc<RwLock<Rendezvous>>) {
+        let path = path.trim().trim_end_matches('/');
         self.0.write().push((String::from(path), rendezvous));
     }
 
@@ -54,6 +61,15 @@ impl VFS {
         for (i, mount_path) in mounts.iter().enumerate() {
             if path.starts_with(&mount_path.0) {
                 let len = mount_path.0.len();
+                if path.len() > len {
+                    // The path should be a subdirectory
+                    // - the next character in path should be "/"
+                    // Note: str.len() is bytes, not characters
+                    if path.as_bytes()[len] != b'/' {
+                        // Not this path
+                        continue;
+                    }
+                }
                 // Choose the longest match
                 if let Some((_, maxlen)) = found {
                     if len > maxlen {

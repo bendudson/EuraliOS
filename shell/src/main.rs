@@ -158,6 +158,7 @@ Type help [Enter] to see the shell help page.
                 "umount" => umount(args),
                 cmd => {
                     let mut path: String = current_directory.clone();
+                    path.push('/');
                     path.push_str(cmd);
                     println!("Path |{}|", path);
 

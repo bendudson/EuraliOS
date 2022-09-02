@@ -352,11 +352,27 @@ The =makefile= rule to build =system_test= is a little complicated:
           @cp $(shell find target/x86_64-euralios/debug/deps/ -maxdepth 1 -name "system_test-*" -executable -print | head -n 1) $@
           @strip $@  # Can't use debugging symbols anyway
 #+end_src
-It first builds the executable with the =test= feature. Unfortunately
-the output binary is not named consistently so we use =find= to locate it.
-We then strip the binary because if we don't then the binary is 1.9Mb; after
-stripping the binary is just 119Kb.
+That recipe builds the executable with the =test= feature, using the
+=--no-run== option so that cargo doesn't try to run it. Unfortunately
+the output binary is not named consistently so we use =find= to locate
+it.  We then strip the binary because if we don't then the binary is
+1.9Mb; after stripping the binary is just 119Kb.
 
 #+CAPTION: Running a basic system test executable
 #+NAME: fig-testing
 [[./img/22-04-testing.png]]
+
+We can see in figure [[fig-testing]] that the shell reads the executable
+from the path =/ramdisksystem_test=, the operating system matches the
+first part to =/ramdisk= and then the ramdisk opens =system_test=. That
+probably shouldn't work this way: the path =/ramdisksystem_test= should
+be different from =/ramdisk/system_test=.
+
+When =VFS::open= matches mount paths against the requested path it
+just checks that the requested path starts with the mount path:
+=/ramdisksystem_test= starts with =/ramdisk= so it matches.  In
+addition we need to check that the requested path is either the same
+as the mount path (so opening =/ramdisk= matches), or the requested path
+contains a '/' character after the match (so =/ramdisk/system_test=
+matches). Having fixed that we of course break the shell because
+=/ramdisksystem_test= cannot be opened.
