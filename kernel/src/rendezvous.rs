@@ -190,4 +190,41 @@ impl Rendezvous {
             }
         }
     }
+
+    /// Close a Rendezvous.
+    ///
+    /// If a thread was waiting then it is returned and should be scheduled.
+    /// An error SYSCALL_ERROR_CLOSED will be returned to the waiting thread.
+    pub fn close(&mut self) -> Option<Box<Thread>> {
+        match &*self {
+            Rendezvous::Empty => None,
+            Rendezvous::Sending(_, _) => {
+                // Cannot complete the message transfer
+                if let Rendezvous::Sending(Some(snd_thread), message) = mem::replace(self, Rendezvous::Empty) {
+                    snd_thread.return_error_message(syscalls::SYSCALL_ERROR_CLOSED, message);
+                    Some(snd_thread)
+                } else {
+                    None
+                }
+            }
+            Rendezvous::Receiving(_, _) => {
+                // Will never receive a message
+                if let Rendezvous::Receiving(rec_thread, _) = mem::replace(self, Rendezvous::Empty) {
+                    rec_thread.return_error(syscalls::SYSCALL_ERROR_CLOSED);
+                    Some(rec_thread)
+                } else {
+                    None
+                }
+            }
+            Rendezvous::SendReceiving(_, _) => {
+                // Cannot complete the message transfer
+                if let Rendezvous::SendReceiving(snd_thread, message) = mem::replace(self, Rendezvous::Empty) {
+                    snd_thread.return_error_message(syscalls::SYSCALL_ERROR_CLOSED, message);
+                    Some(snd_thread)
+                } else {
+                    None
+                }
+            }
+        }
+    }
 }

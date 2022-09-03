@@ -78,8 +78,6 @@ impl Directory {
 /// reading and writing data from a file
 fn handle_file(file: Arc<RwLock<File>>,
                comm_handle: CommHandle) {
-    println!("[ramdisk thread] count: {}", Arc::strong_count(&file));
-
     loop {
         match syscalls::receive(&comm_handle) {
             Ok(syscalls::Message::Long(
@@ -250,5 +248,5 @@ fn main() {
 
     let mut fs = Directory::new();
 
-    handle_directory(Arc::new(RwLock::new(fs)), STDIN);
+    handle_directory(Arc::new(RwLock::new(fs)), STDIN.clone());
 }

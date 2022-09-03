@@ -15,10 +15,13 @@ use euralios_std::{path::Path,
                    syscalls::{self, SyscallError}};
 
 fn exec_path(path: &str) -> Result<(), SyscallError> {
-    let mut file = File::open(&path)?;
-
-    let mut bin: Vec<u8> = Vec::new();
-    file.read_to_end(&mut bin)?;
+    // Read binary from file
+    let bin = {
+        let mut bin: Vec<u8> = Vec::new();
+        let mut file = File::open(&path)?;
+        file.read_to_end(&mut bin)?;
+        bin
+    };
 
     // Create a communication handle for the input
     let (exe_input, exe_input2) = syscalls::new_rendezvous()?;

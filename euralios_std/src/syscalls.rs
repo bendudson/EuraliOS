@@ -8,8 +8,8 @@ use crate::debug_println;
 #[derive(Debug)]
 pub struct CommHandle(u32);
 
-pub const STDIN:CommHandle = CommHandle(0);
-pub const STDOUT:CommHandle = CommHandle(1);
+pub static STDIN:CommHandle = CommHandle(0);
+pub static STDOUT:CommHandle = CommHandle(1);
 
 impl CommHandle {
     pub fn new(handle: u32) -> Self {
@@ -28,6 +28,14 @@ impl Drop for CommHandle {
     fn drop(&mut self) {
         if self.0 == 0 {
             return; // Already taken
+        }
+        // close syscall
+        unsafe {
+            asm!("syscall",
+                 in("rax") SYSCALL_CLOSE,
+                 in("rdi") self.0, // First argument
+                 out("rcx") _,
+                 out("r11") _);
         }
     }
 }
@@ -550,6 +558,7 @@ pub const SYSCALL_EXEC: u64 = 12;
 pub const SYSCALL_MOUNT: u64 = 13;
 pub const SYSCALL_LISTMOUNTS: u64 = 14;
 pub const SYSCALL_UMOUNT: u64 = 15;
+pub const SYSCALL_CLOSE: u64 = 16;
 
 // Syscall error codes
 pub const SYSCALL_ERROR_MASK : usize = 127; // Lower 7 bits

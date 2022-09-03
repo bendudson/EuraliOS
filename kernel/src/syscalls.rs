@@ -26,6 +26,7 @@
 //! 13   mount(RAX: handle, RDI: *const u8, RSI: length)
 //! 14   listmounts() -> memory_handle
 //! 15   umount(RDI: *const u8, RSI: length)
+//! 16   close(RDI: handle)  Drop a Rendezvous
 //!
 //! Potential future syscalls
 //! -------------------------
@@ -34,9 +35,6 @@
 //! - thread_kill(u64) -> bool   Kill the specified thread. Must be in the same process.
 //! - unique_id() -> u64         Return a unique number
 //!
-//! - mount(str, handle)         Attach a process to a vfs node
-//! - umount(str)                Unmount
-//! - close(handle)              Drop a Rendezvous
 
 // Syscall numbers
 pub const SYSCALL_MASK: u64 = 0xFF;
@@ -56,6 +54,7 @@ pub const SYSCALL_EXEC: u64 = 12;
 pub const SYSCALL_MOUNT: u64 = 13;
 pub const SYSCALL_LISTMOUNTS: u64 = 14;
 pub const SYSCALL_UMOUNT: u64 = 15;
+pub const SYSCALL_CLOSE: u64 = 16;
 
 // Syscall error codes
 pub const SYSCALL_ERROR_MASK : usize = 127; // Lower 7 bits
@@ -299,6 +298,7 @@ extern "C" fn dispatch_syscall(context_ptr: *mut Context, syscall_id: u64,
         SYSCALL_MOUNT => sys_mount(context_ptr, syscall_id, arg1 as *const u8, arg2),
         SYSCALL_LISTMOUNTS => sys_listmounts(context_ptr),
         SYSCALL_UMOUNT => sys_umount(context_ptr, syscall_id, arg1 as *const u8, arg2),
+        SYSCALL_CLOSE => sys_close(context_ptr, arg1),
         _ => println!("Unknown syscall {:?} {} {} {}",
                       context_ptr, syscall_id, arg1, arg2)
     }
@@ -792,3 +792,32 @@ fn sys_umount(
         process::set_current_thread(thread);
     }
 }
+
+fn sys_close(context_ptr: *mut Context, handle: u64) {
+    // Extract the current thread
+    if let Some(mut thread) = process::take_current_thread() {
+        let current_tid = thread.tid();
+        thread.set_context(context_ptr);
+
+        // Take the Rendezvous from the thread
+        if let Some(rdv) = thread.take_rendezvous(handle) {
+            if Arc::strong_count(&rdv) == 2 {
+                // Only this handle (rdv) and one other
+                // All other handles have been dropped
+                let option_thread = rdv.write().close();
+                if let Some(waiting_thread) = option_thread {
+                    // A thread was waiting -> Switch to it
+                    process::schedule_thread(thread);
+                    process::schedule_thread(waiting_thread);
+
+                    drop(rdv); // Not returning from launch_thread
+                    let new_context_addr = process::schedule_next(context_ptr as usize);
+                    interrupts::launch_thread(new_context_addr);
+                }
+            }
+            // Drop rendezvous
+        }
+        process::set_current_thread(thread);
+    }
+}
+
