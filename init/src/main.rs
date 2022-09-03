@@ -107,6 +107,9 @@ fn main() {
     if let Ok(mut file) = File::create("/ramdisk/system_test") {
         file.write(include_bytes!("../../user/system_test"));
     }
+    if let Ok(mut file) = File::create("/ramdisk/std_test") {
+        file.write(include_bytes!("../../user/std_test"));
+    }
 
     mount("/pci", include_bytes!("../../user/pci"),
           syscalls::EXEC_PERM_IO, // I/O permissions

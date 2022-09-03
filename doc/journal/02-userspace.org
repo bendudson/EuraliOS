@@ -144,6 +144,9 @@ run : user
 so running =make run= will build everything and run. Check that the new entry
 point is correct.
 
+[Note: In [[./22-ramdisk.org][section 22]] we will eventually do the more sensible thing and
+shift the kernel to high memory addresses, rather than user programs]
+
 To load the ELF into this new virtual memory address we need to create
 entries in the page table. Note that we have to use =segment.size()=
 when allocating memory, because there can be segments with non-zero

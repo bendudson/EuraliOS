@@ -12,7 +12,6 @@ members = [
     "vga_driver",
     "ramdisk",
     "shell",
-    "system_test",
     "init"
 ]
 

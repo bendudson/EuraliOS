@@ -63,3 +63,10 @@ impl AsRef<Path> for Path {
         self
     }
 }
+
+//#[cfg(test)]
+pub mod tests {
+    #[test_case]
+    fn path_test() {
+    }
+}

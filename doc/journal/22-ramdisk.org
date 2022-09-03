@@ -295,6 +295,16 @@ we're starting to add utilities to the system standard library, it's
 time to make amends and add some tests. A difference is now the tests
 are going to be in an executable which is run from within EuraliOS.
 
+One way to test the =euralios_std= library would be a separate user
+program, but it would be nice to have unit tests, so that the tests
+could go in the same file as the code. Unfortunately there doesn't
+seem to be a way to add build scripts to =cargo test=, and a build
+script is needed to change the address of the code and data in the ELF
+file (see [[./02-userspace.org][section 2]]). The easiest solution was to move the kernel to
+a different memory range, and allow all user programs to occupy the
+range between 0x20000 (2Mb) and 0x5000_0000 (1.25Gb). Then the only
+binary which needs a build script is the kernel.
+
 #+begin_src rust
 #![no_std]
 #![no_main]
@@ -362,6 +372,8 @@ it.  We then strip the binary because if we don't then the binary is
 #+NAME: fig-testing
 [[./img/22-04-testing.png]]
 
+** Paths
+
 We can see in figure [[fig-testing]] that the shell reads the executable
 from the path =/ramdisksystem_test=, the operating system matches the
 first part to =/ramdisk= and then the ramdisk opens =system_test=. That
@@ -374,5 +386,10 @@ just checks that the requested path starts with the mount path:
 addition we need to check that the requested path is either the same
 as the mount path (so opening =/ramdisk= matches), or the requested path
 contains a '/' character after the match (so =/ramdisk/system_test=
-matches). Having fixed that we of course break the shell because
-=/ramdisksystem_test= cannot be opened.
+matches).
+
+Having fixed the kernel =VFS::open= function we of course break the
+shell because =/ramdisksystem_test= cannot be opened. To fix that we
+need to extend the =Path= API and add a [[https://doc.rust-lang.org/stable/std/path/struct.PathBuf.html][path::PathBuf]] type to the
+EuraliOS standard library. That will handle joining and splitting
+paths, making sure the right number of '/' are in the right place.
