@@ -11,7 +11,7 @@ fn main() {
     debug_println!("[arp] Starting");
 
     // Open link to the network interface driver
-    let handle = syscalls::open("/dev/nic").expect("Couldn't open /dev/nic");
+    let handle = syscalls::open("/dev/nic", message::O_READ).expect("Couldn't open /dev/nic");
 
     // Get the hardware MAC address
     let (_, ret, _) = rcall(&handle, nic::GET_MAC_ADDRESS,

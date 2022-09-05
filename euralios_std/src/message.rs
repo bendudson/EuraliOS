@@ -232,19 +232,29 @@ pub const READ: u64 = 1;  // Short(READ, offset, length
 pub const WRITE: u64 = 2; // Long(WRITE, length, handle)
 pub const DATA: u64 = 2;  // Same as write
 pub const CHAR: u64 = 3;
-pub const OPEN: u64 = 4;
-pub const CLOSE: u64 = 5;
-
-pub const VIDEO_MEMORY: u64 = 6;
+pub const JSON: u64 = 4;  // Information in JSON format
+pub const VIDEO_MEMORY: u64 = 5; // Specific memory handle for video memory
+pub const COMM_HANDLE: u64 = 6; // A communication handle
 
 /// Send a short Query message and expect JSON in return
 pub const QUERY: u64 = 7;
 
-/// Information in JSON format
-pub const JSON: u64 = 8;
+/// Short acknowlegement that data was processed
+pub const OK: u64 = 8;
 
-pub const OK: u64 = 32;
-pub const COMM_HANDLE: u64 = 64; // A communication handle
+/// Open message types, numbered as OPEN (16) + flags for write (1), create (2) and truncate (4)
+pub const OPEN: u64 = 16;
+pub const OPEN_FLAGS_MASK: u64 = 15;
+pub const O_READ: u64  = 0;
+pub const OPEN_READONLY: u64 = OPEN + O_READ;
+pub const O_WRITE: u64  = 1;
+pub const OPEN_READWRITE: u64 = OPEN + O_WRITE;
+pub const O_CREATE: u64 = 2;
+pub const OPEN_CREATE: u64 = OPEN_READWRITE + O_CREATE;
+pub const O_TRUNCATE: u64 = 4;
+pub const OPEN_OVERWRITE: u64 = OPEN_CREATE + O_TRUNCATE;
+
+pub const CLOSE: u64 = 32;
 
 pub const EMPTY: u64 = 128;
 pub const ERROR: u64 = 129;

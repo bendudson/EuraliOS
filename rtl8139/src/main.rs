@@ -15,7 +15,7 @@ use core::str;
 fn main() {
     println!("[rtl8139] Starting driver");
 
-    let handle = syscalls::open("/pci").expect("Couldn't open pci");
+    let handle = syscalls::open("/pci", message::O_READ).expect("Couldn't open pci");
 
     // Use PCI program to look for device
     let (msg_type, md_address, _) = rcall(&handle, pci::FIND_DEVICE,

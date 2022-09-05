@@ -135,7 +135,7 @@ lazy_static! {
 fn main() {
     println!("[tcp] Starting");
 
-    let handle = syscalls::open("/dev/nic").expect("Couldn't open /dev/nic");
+    let handle = syscalls::open("/dev/nic", message::O_READ + message::O_WRITE).expect("Couldn't open /dev/nic");
 
     // Get the hardware MAC address
     let (_, ret, _) = rcall(&handle, nic::GET_MAC_ADDRESS,
@@ -178,7 +178,7 @@ fn main() {
             Ok(message) => {
                 match message {
                     syscalls::Message::Long(
-                        message::OPEN, md_length, md_path) => {
+                        message::OPEN_READWRITE, md_length, md_path) => {
                         match (md_length, md_path) {
                             (MessageData::Value(length),
                              MessageData::MemoryHandle(handle)) => {

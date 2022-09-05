@@ -335,7 +335,10 @@ pub fn send_receive(
 }
 
 /// Returns a handle on success, or an error code
-pub fn open(path: &str) -> Result<CommHandle, SyscallError> {
+///
+/// flags   zero (0) for readonly, or a combination (sum) of O_WRITE,
+///         O_CREATE and O_TRUNCATE
+pub fn open(path: &str, flags: u64) -> Result<CommHandle, SyscallError> {
     let error: u64;
     let handle: u32;
     let match_len: usize;
@@ -360,7 +363,7 @@ pub fn open(path: &str) -> Result<CommHandle, SyscallError> {
 
             match message::rcall(
                 &CommHandle(handle),
-                message::OPEN,
+                message::OPEN_READONLY + flags,
                 (bytes.len() as u64).into(),
                 MemoryHandle::from_u8_slice(bytes).into(),
                 None) {

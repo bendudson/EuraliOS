@@ -10,7 +10,7 @@ use euralios_std::{debug_println,
 fn new_writer(vga_com: &CommHandle) -> (CommHandle, u64) {
     match rcall(
         vga_com,
-        message::OPEN, 0.into(), 0.into(), None) {
+        message::OPEN_READWRITE, 0.into(), 0.into(), None) {
         Ok((message::COMM_HANDLE,
             MessageData::CommHandle(handle),
             MessageData::Value(id))) => (handle, id),

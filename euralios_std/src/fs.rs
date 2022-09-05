@@ -34,12 +34,12 @@ impl File {
     /// This function will create a file if it does not exist, and
     /// will truncate it if it does.
     pub fn create<P: AsRef<Path>>(path: P) -> Result<File, SyscallError> {
-        let handle = syscalls::open(path.as_ref().as_os_str())?;
+        let handle = syscalls::open(path.as_ref().as_os_str(), message::O_WRITE + message::O_CREATE + message::O_TRUNCATE)?;
         Ok(File(handle))
     }
 
     pub fn open<P: AsRef<Path>>(path: P) -> Result<File, SyscallError> {
-        let handle = syscalls::open(path.as_ref().as_os_str())?;
+        let handle = syscalls::open(path.as_ref().as_os_str(), message::O_READ)?;
         Ok(File(handle))
     }
 

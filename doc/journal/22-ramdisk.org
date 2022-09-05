@@ -400,3 +400,21 @@ shell because =/ramdisksystem_test= cannot be opened. To fix that we
 need to extend the =Path= API and add a [[https://doc.rust-lang.org/stable/std/path/struct.PathBuf.html][path::PathBuf]] type to the
 EuraliOS standard library. That will handle joining and splitting
 paths, making sure the right number of '/' are in the right place.
+
+** Opening files
+
+So far we've only had one kind of =OPEN= message, for creating files
+and for reading them. There are however (at least) four cases we
+need to consider:
+- =OPEN_READONLY= which fails if the file (or directory) doesn't exist,
+  and only allows data to be read.
+- =OPEN_READWRITE= which fails if the file or directory doesn't exist,
+  but allows write operations as well as read.
+- =OPEN_CREATE= which creates a file if it doesn't exist, and allows
+  read and write operations. If the file already existed then
+  it is the same as =OPEN_READWRITE=.
+- =OPEN_OVERWRITE= which creates the file if it doesn't exist, and
+  replaces (truncates) it if it already exists.
+
+As an interface to these different options we can implement
+[[https://doc.rust-lang.org/std/fs/struct.OpenOptions.html][stf::fs::OpenOptions]]

@@ -12,7 +12,7 @@ use euralios_std::{println, print,
                    message::{self, rcall, MessageData}};
 
 fn gopher(host: &str, selector: &str) -> Result<(MemoryHandle, usize), ()> {
-    let handle = syscalls::open(host).expect("Couldn't open");
+    let handle = syscalls::open(host, message::O_READ + message::O_WRITE).expect("Couldn't open");
 
     let mut path: Vec<u8> = selector
         .as_bytes()           // Convert to u8
