@@ -35,7 +35,7 @@ const USER_STACK_SIZE: usize = 4096 * 5;
 /// Lowest address that user code can be loaded into
 pub const USER_CODE_START: u64 = 0x20_0000;
 /// Exclusive upper limit for user code or data
-const USER_CODE_END: u64 = 0x5000_0000;
+pub const USER_CODE_END: u64 = 0x5000_0000;
 
 const USER_HEAP_START: u64 = 0x280_0060_0000;
 const USER_HEAP_SIZE: u64 = 4 * 1024 * 1024; //0x28002e00000 - 0x28000600000;

@@ -250,6 +250,8 @@ extern "C" fn handle_syscall() {
 
             "cmp rcx, {user_code_start}",
             "jl 2f", // rip < USER_CODE_START
+            "cmp rcx, {user_code_end}",
+            "jge 2f", // rip >= USER_CODE_END
             "sysretq", // back to userland
 
             "2:", // kernel code return
@@ -261,6 +263,7 @@ extern "C" fn handle_syscall() {
             tss_temp = const(0x24 + gdt::SYSCALL_TEMP_INDEX * 8),
             ks_offset = const(SYSCALL_KERNEL_STACK_OFFSET),
             user_code_start = const(process::USER_CODE_START),
+            user_code_end = const(process::USER_CODE_END),
             options(noreturn));
     }
 }

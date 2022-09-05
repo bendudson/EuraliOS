@@ -305,6 +305,13 @@ a different memory range, and allow all user programs to occupy the
 range between 0x20000 (2Mb) and 0x5000_0000 (1.25Gb). Then the only
 binary which needs a build script is the kernel.
 
+Changing this is a matter of modifying the range of allowed user
+addresses =USER_CODE_START= and =USER_CODE_END= in =process.rs=.
+There's also a check in =handle_syscall()= (in =syscalls.rs=) of
+whether the code being returned to is in user or kernel space. That
+needed extending so that we check if the instruction pointer is in the
+user address range.
+
 #+begin_src rust
 #![no_std]
 #![no_main]
