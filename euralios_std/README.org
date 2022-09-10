@@ -1,0 +1,10 @@
+* EuraliOS standard library
+
+This library provides a subset of the Rust standard library (=std=)
+on top of EuraliOS-specific low level routines.
+
+
+** EuraliOS functions
+
+The =euralios_std::syscalls= module contains functions which
+wrap kernel system calls.

@@ -9,9 +9,38 @@
  |___/      |_|
 #+end_src
 
-This is a user program which opens gopher pages. When started it loads
+This is a user program which opens [[https://en.wikipedia.org/wiki/Gopher_(protocol)][gopher]] pages. When started it loads
 the front page of =gopher.floodgap.com=.
 
+** How to use
+
+Running the =gopher= program should bring up a screen like this:
+
+#+CAPTION: The Floodgap gopher server landing page
+#+NAME: fig-gopher
+[[./floodgap.png]]
+
+Type =h= or =?= to print the "help". Actually pressing any key
+which doesn't have a function will print this help.
+
+Navigation is with either WASD or IJKL keys:
+- =w= or =i= scroll up the page
+- =s= or =k= scroll down the page
+
+Links are numbered on the left and marked a DIR (directory) containing
+further gopher links, or a TXT (text) file. Other target types are not
+currently recognised.
+
+To follow a link type the number on the left margin.
+A "Link: " line should be printed at the bottom of the screen,
+listing the address. Press =Enter= to confirm.
+
+To go back press =a= or =j= keys, and to go forward again press =d= or
+=l= keys.
+
+Finally, press =q= to quit.
+
+Enjoy!
 
 ** How does it work?
 
