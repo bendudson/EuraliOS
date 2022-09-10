@@ -18,9 +18,10 @@ Phil maintains (e.g. [[https://docs.rs/x86_64/latest/x86_64/][x86_64]] and [[htt
 many other operating system siblings that I've found useful to study
 including [[https://github.com/WartaPoirier-corp/ananos][ananos]], the [[https://github.com/sos-os/kernel][Stupid Operating System]], [[https://github.com/intermezzOS][intermezzOS]], and
 especially [[https://github.com/vinc/moros][MOROS the Obscure Rust Operating System]]. The [[https://github.com/redox-os/kernel][Redox OS
-kernel]] is also very readable, and [[https://github.com/betrusted-io/xous-core][Xous]] has a similar focus on message
-passing. Anything useful here was probably borrowed from one of these
-projects; mistakes and omissions are my own.
+kernel]] is very readable, and [[https://github.com/betrusted-io/xous-core][Xous]] has a similar focus on message
+passing (This is a more comprehensive [[https://github.com/flosse/rust-os-comparison][comparison of Rust operating
+systems]]).  Anything useful here was probably borrowed from one of
+these projects; mistakes and omissions are my own.
 
 ** Features
 
@@ -29,24 +30,34 @@ with EuraliOS I've focussed mainly on memory management and
 pre-emptive multitasking so far. The result is an OS that can't do
 much, but it can do it all at the same time.
 
-- [X] VGA text output with virtual consoles
 - [X] Keyboard input (phil-opp blog)
-- [X] UART Serial port output (phil-opp blog)
+- [X] Virtual consoles and VGA text output using the [[https://crates.io/crates/vga][vga crate]]
 - [X] ELF loader (adapted from MOROS approach, using the [[https://crates.io/crates/object][object crate]])
 - [X] Pre-emptive multitasking, with kernel and user-space threads and
-  a round-robin scheduler
-- [X] Programs in user space (Ring 3), with syscalls to access kernel
-  functions.
-- [X] Program isolation using paging
+       a round-robin scheduler
+- [X] Program memory isolation using paging
 - [X] Frame allocator based on a bitmap tree structure
 - [X] On-demand memory allocation using page fault handler
 - [X] User space stack and heap memory management
+- [X] Programs and drivers in user space (Ring 3), with syscalls to
+  access kernel functions
+- [X] A [[https://man7.org/linux/man-pages/man7/vdso.7.html][vDSO]]-like fast mechanism for access to timing information from user programs
+- [X] Rendezvous message passing for all inter-process communication.
+  Messages can contain communication handles or transfer ownership of memory regions
+  between processes and threads.
 - [X] RTL8139 network card driver running in user space
 - [X] TCP network stack using [[https://docs.rs/smoltcp/latest/smoltcp/][smoltcp]] in user space, with DHCP and DNS
 - [X] A simple [[https://en.wikipedia.org/wiki/Gopher_(protocol)][Gopher]] browser
-- [X] A [[https://man7.org/linux/man-pages/man7/vdso.7.html][vDSO]]-like fast mechanism for timing functions
-There is no filesystem (yet), so user programs are compiled and then
-the ELF files are included in the kernel binary using Rust's
+- [ ] A RAM disk for temporary files
+- [ ] A basic shell
+- [ ] A basic text editor
+- [ ] Optional per-process virtual file system (VFS), providing
+      capability-based security and user isolation
+- [ ] Keyboard input with adjustable layout and UTF-8 language support
+      (e.g. Pinying input)
+
+There is no file system yet, so user programs are compiled and then
+the ELF files are included in the =init= binary using Rust's
 [[https://doc.rust-lang.org/std/macro.include_bytes.html][include_bytes]] macro (another idea taken from [[https://github.com/vinc/moros][MOROS]]).
 
 ** Building and running
@@ -132,11 +143,12 @@ direction...
   (vDSO)]] does.
 - [[./doc/journal/20-dns.org][20. Domain Name System (DNS)]], adding the ability to look up IP addresses
   from host names.
-- [[./doc/journal/21-vga.org][21. VGA driver and terminals]] in user space, allowing separate
-  consoles for system programs and user programs like the Gopher
-  browser.
+- [[./doc/journal/21-vga.org][21. VGA driver and terminals]] in user space, using the [[https://crates.io/crates/vga][vga
+  crate]]. Allows separate consoles for system programs and user
+  programs like the Gopher browser.
 - [[./doc/journal/22-ramdisk.org][22. RAMdisk driver]] to store files and develop the filesystem API,
-  and starting a basic interactive shell.
+  starting a basic interactive shell able to list files and run
+  programs.
 
 ** Notes
 
