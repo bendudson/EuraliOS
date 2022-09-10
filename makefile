@@ -24,7 +24,7 @@ user/% : FORCE
 
 # This builds both unit test "user/std_test" and integration test "system_test"
 user/system_test: FORCE
-	cd euralios_std; cargo test --test system_test --no-run
+	cd euralios_std; cargo test --no-run
 	@cp $(shell find target/x86_64-euralios/debug/deps/ -maxdepth 1 -name "system_test-*" -executable -print | head -n 1) $@
 	@strip $@  # Can't use debugging symbols anyway
 	@cp $(shell find target/x86_64-euralios/debug/deps/ -maxdepth 1 -name "euralios_std-*" -executable -print | head -n 1) user/std_test
