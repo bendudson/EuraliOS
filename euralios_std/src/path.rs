@@ -8,7 +8,9 @@ use core::marker::Sized;
 extern crate alloc;
 use alloc::string::String;
 
-unsafe fn u8_slice_as_os_str(s: &[u8]) -> &str {
+use crate::ffi::OsStr;
+
+unsafe fn u8_slice_as_os_str(s: &[u8]) -> &OsStr {
     // SAFETY: See note at the top of this module to understand why this and
     // `OsStr::bytes` are used:
     //
@@ -19,7 +21,7 @@ unsafe fn u8_slice_as_os_str(s: &[u8]) -> &str {
     // these types are single-element structs but are not marked
     // repr(transparent) or repr(C) which would make these casts not allowable
     // outside std.
-    unsafe { &*(s as *const [u8] as *const str) }
+    unsafe { &*(s as *const [u8] as *const OsStr) }
 }
 
 /// A slice of a path
@@ -107,6 +109,35 @@ impl Path {
             back: State::Body,
         }
     }
+
+    /// Returns the final component of the `Path`, if there is one.
+    ///
+    /// If the path is a normal file, this is the file name. If it's the path of a directory, this
+    /// is the directory name.
+    ///
+    /// Returns [`None`] if the path terminates in `..`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::Path;
+    /// use std::ffi::OsStr;
+    ///
+    /// assert_eq!(Some(OsStr::new("bin")), Path::new("/usr/bin/").file_name());
+    /// assert_eq!(Some(OsStr::new("foo.txt")), Path::new("tmp/foo.txt").file_name());
+    /// assert_eq!(Some(OsStr::new("foo.txt")), Path::new("foo.txt/.").file_name());
+    /// assert_eq!(Some(OsStr::new("foo.txt")), Path::new("foo.txt/.//").file_name());
+    /// assert_eq!(None, Path::new("foo.txt/..").file_name());
+    /// assert_eq!(None, Path::new("/").file_name());
+    /// ```
+    #[must_use]
+    pub fn file_name(&self) -> Option<&OsStr> {
+        self.components().next_back().and_then(|p| match p {
+            Component::Normal(p) => Some(p),
+            _ => None,
+        })
+    }
+
 }
 
 impl AsRef<Path> for str {
@@ -187,7 +218,7 @@ pub enum Component<'a> {
     ///
     /// This variant is the most common one, it represents references to files
     /// or directories.
-    Normal(&'a str),
+    Normal(&'a OsStr),
 }
 
 impl<'a> Component<'a> {
@@ -203,11 +234,11 @@ impl<'a> Component<'a> {
     /// assert_eq!(&components, &[".", "tmp", "foo", "bar.txt"]);
     /// ```
     #[must_use = "`self` will be dropped if the result is not used"]
-    pub fn as_os_str(self) -> &'a str {
+    pub fn as_os_str(self) -> &'a OsStr {
         match self {
-            Component::RootDir => "/",
-            Component::CurDir => ".",
-            Component::ParentDir => "..",
+            Component::RootDir => OsStr::new("/"),
+            Component::CurDir => OsStr::new("."),
+            Component::ParentDir => OsStr::new(".."),
             Component::Normal(path) => path,
         }
     }
@@ -411,9 +442,40 @@ impl<'a> Iterator for Components<'a> {
     }
 }
 
+impl<'a> DoubleEndedIterator for Components<'a> {
+    fn next_back(&mut self) -> Option<Component<'a>> {
+        while !self.finished() {
+            match self.back {
+                State::Body if self.path.len() > self.len_before_body() => {
+                    let (size, comp) = self.parse_next_component_back();
+                    self.path = &self.path[..self.path.len() - size];
+                    if comp.is_some() {
+                        return comp;
+                    }
+                }
+                State::Body => {
+                    self.back = State::StartDir;
+                }
+                State::StartDir => {
+                    if self.has_physical_root {
+                        self.path = &self.path[..self.path.len() - 1];
+                        return Some(Component::RootDir);
+                    } else if self.include_cur_dir() {
+                        self.path = &self.path[..self.path.len() - 1];
+                        return Some(Component::CurDir);
+                    }
+                }
+                State::Done => unreachable!(),
+            }
+        }
+        None
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::{Path, Component};
+    use crate::ffi::OsStr;
 
     #[test_case]
     fn empty_test() {
@@ -435,9 +497,19 @@ pub mod tests {
         let mut components = Path::new("/tmp/foo.txt").components();
 
         assert_eq!(components.next(), Some(Component::RootDir));
-        assert_eq!(components.next(), Some(Component::Normal("tmp")));
-        assert_eq!(components.next(), Some(Component::Normal("foo.txt")));
+        assert_eq!(components.next(), Some(Component::Normal(OsStr::new("tmp"))));
+        assert_eq!(components.next(), Some(Component::Normal(OsStr::new("foo.txt"))));
         assert_eq!(components.next(), None);
+    }
+
+    #[test_case]
+    fn path_file_name() {
+        assert_eq!(Some(OsStr::new("bin")), Path::new("/usr/bin/").file_name());
+        assert_eq!(Some(OsStr::new("foo.txt")), Path::new("tmp/foo.txt").file_name());
+        assert_eq!(Some(OsStr::new("foo.txt")), Path::new("foo.txt/.").file_name());
+        assert_eq!(Some(OsStr::new("foo.txt")), Path::new("foo.txt/.//").file_name());
+        assert_eq!(None, Path::new("foo.txt/..").file_name());
+        assert_eq!(None, Path::new("/").file_name());
     }
 }
 

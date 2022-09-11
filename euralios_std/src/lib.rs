@@ -17,6 +17,7 @@ pub mod time;
 pub mod io;
 pub mod fs;
 pub mod path;
+pub mod ffi;
 
 use core::panic::PanicInfo;
 #[panic_handler]
