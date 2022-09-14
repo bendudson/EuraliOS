@@ -5,6 +5,8 @@
 
 use core::convert::AsRef;
 use core::marker::Sized;
+use core::cmp;
+use core::fmt;
 extern crate alloc;
 use alloc::string::String;
 
@@ -110,6 +112,35 @@ impl Path {
         }
     }
 
+    /// Returns the `Path` without its final component, if there is one.
+    ///
+    /// Returns [`None`] if the path terminates in a root or prefix.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::Path;
+    ///
+    /// let path = Path::new("/foo/bar");
+    /// let parent = path.parent().unwrap();
+    /// assert_eq!(parent, Path::new("/foo"));
+    ///
+    /// let grand_parent = parent.parent().unwrap();
+    /// assert_eq!(grand_parent, Path::new("/"));
+    /// assert_eq!(grand_parent.parent(), None);
+    /// ```
+    #[must_use]
+    pub fn parent(&self) -> Option<&Path> {
+        let mut comps = self.components();
+        let comp = comps.next_back();
+        comp.and_then(|p| match p {
+            Component::Normal(_) | Component::CurDir | Component::ParentDir => {
+                Some(comps.as_path())
+            }
+            _ => None,
+        })
+    }
+
     /// Returns the final component of the `Path`, if there is one.
     ///
     /// If the path is a normal file, this is the file name. If it's the path of a directory, this
@@ -138,6 +169,19 @@ impl Path {
         })
     }
 
+}
+
+impl fmt::Debug for Path {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.inner, formatter)
+    }
+}
+
+impl cmp::PartialEq for Path {
+    #[inline]
+    fn eq(&self, other: &Path) -> bool {
+        self.components() == other.components()
+    }
 }
 
 impl AsRef<Path> for str {
@@ -472,6 +516,31 @@ impl<'a> DoubleEndedIterator for Components<'a> {
     }
 }
 
+impl<'a> cmp::PartialEq for Components<'a> {
+    #[inline]
+    fn eq(&self, other: &Components<'a>) -> bool {
+        let Components { path: _, front: _, back: _, has_physical_root: _ } = self;
+
+        // Fast path for exact matches, e.g. for hashmap lookups.
+        // Don't explicitly compare the prefix or has_physical_root fields since they'll
+        // either be covered by the `path` buffer or are only relevant for `prefix_verbatim()`.
+        if self.path.len() == other.path.len()
+            && self.front == other.front
+            && self.back == State::Body
+            && other.back == State::Body
+        {
+            // possible future improvement: this could bail out earlier if there were a
+            // reverse memcmp/bcmp comparing back to front
+            if self.path == other.path {
+                return true;
+            }
+        }
+
+        // compare back to front since absolute paths often share long prefixes
+        Iterator::eq(self.clone().rev(), other.clone().rev())
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::{Path, Component};
@@ -510,6 +579,17 @@ pub mod tests {
         assert_eq!(Some(OsStr::new("foo.txt")), Path::new("foo.txt/.//").file_name());
         assert_eq!(None, Path::new("foo.txt/..").file_name());
         assert_eq!(None, Path::new("/").file_name());
+    }
+
+    #[test_case]
+    fn parent() {
+        let path = Path::new("/foo/bar");
+        let parent = path.parent().unwrap();
+        assert_eq!(parent, Path::new("/foo"));
+
+        let grand_parent = parent.parent().unwrap();
+        assert_eq!(grand_parent, Path::new("/"));
+        assert_eq!(grand_parent.parent(), None);
     }
 }
 
