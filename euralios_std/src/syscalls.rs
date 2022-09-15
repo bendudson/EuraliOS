@@ -3,6 +3,7 @@ use core::{fmt, ptr, slice, clone::Clone};
 
 pub use crate::message::{self, Message};
 use crate::debug_println;
+use crate::ffi::OsStr;
 
 /// Communication handle
 #[derive(Debug)]
@@ -338,7 +339,12 @@ pub fn send_receive(
 ///
 /// flags   zero (0) for readonly, or a combination (sum) of O_WRITE,
 ///         O_CREATE and O_TRUNCATE
-pub fn open(path: &str, flags: u64) -> Result<CommHandle, SyscallError> {
+#[inline]
+pub fn open<T: AsRef<OsStr>>(path: T, flags: u64) -> Result<CommHandle, SyscallError> {
+    _open(path.as_ref().to_str().unwrap(), flags)
+}
+
+fn _open(path: &str, flags: u64) -> Result<CommHandle, SyscallError> {
     let error: u64;
     let handle: u32;
     let match_len: usize;
