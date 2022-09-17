@@ -295,6 +295,22 @@ impl Path {
         &self.inner
     }
 
+    /// Converts a `Path` to an owned [`PathBuf`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::Path;
+    ///
+    /// let path_buf = Path::new("foo.txt").to_path_buf();
+    /// assert_eq!(path_buf, std::path::PathBuf::from("foo.txt"));
+    /// ```
+    #[must_use = "this returns the result of the operation, \
+                  without modifying the original"]
+    pub fn to_path_buf(&self) -> PathBuf {
+        PathBuf::from(self.inner.to_os_string())
+    }
+
     /// true if the path starts with '/'
     pub fn has_root(&self) -> bool {
         self.inner.bytes()[0] == b'/'
@@ -409,6 +425,27 @@ impl Path {
         })
     }
 
+    /// Creates an owned [`PathBuf`] with `path` adjoined to `self`.
+    ///
+    /// See [`PathBuf::push`] for more details on what it means to adjoin a path.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::{Path, PathBuf};
+    ///
+    /// assert_eq!(Path::new("/etc").join("passwd"), PathBuf::from("/etc/passwd"));
+    /// ```
+    #[must_use]
+    pub fn join<P: AsRef<Path>>(&self, path: P) -> PathBuf {
+        self._join(path.as_ref())
+    }
+
+    fn _join(&self, path: &Path) -> PathBuf {
+        let mut buf = self.to_path_buf();
+        buf.push(path);
+        buf
+    }
 }
 
 impl AsRef<OsStr> for Path {
@@ -812,7 +849,13 @@ pub mod tests {
     }
 
     #[test_case]
-    fn has_root() {
+    fn path_to_path_buf() {
+        let path_buf = Path::new("foo.txt").to_path_buf();
+        assert_eq!(path_buf, PathBuf::from("foo.txt"));
+    }
+
+    #[test_case]
+    fn path_has_root() {
         // Paths with root directory
         assert!(Path::new("/etc/passwd").has_root());
         assert!(Path::new("/").has_root());
@@ -843,7 +886,7 @@ pub mod tests {
     }
 
     #[test_case]
-    fn parent() {
+    fn path_parent() {
         let path = Path::new("/foo/bar");
         let parent = path.parent().unwrap();
         assert_eq!(parent, Path::new("/foo"));
@@ -851,6 +894,11 @@ pub mod tests {
         let grand_parent = parent.parent().unwrap();
         assert_eq!(grand_parent, Path::new("/"));
         assert_eq!(grand_parent.parent(), None);
+    }
+
+    #[test_case]
+    fn path_join() {
+        assert_eq!(Path::new("/etc").join("passwd"), PathBuf::from("/etc/passwd"));
     }
 
     #[test_case]

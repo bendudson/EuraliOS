@@ -60,6 +60,7 @@ fn help() {
   ls [<path>]     List directory
   cd <path>       Change directory
   pwd             Print working directory
+  rm <file>       Delete a file
   mount           List mounted filesystems
   umount <path>   Un-mount a filesystem
 "
@@ -102,6 +103,17 @@ fn umount(args: Vec<&str>) {
     if let Err(err) = syscalls::umount(path) {
         println!("umount error: {}", err);
     }
+}
+
+/// Delete a file
+fn rm(current_directory: &str, args: Vec<&str>) {
+    if args.len() != 1 {
+        println!("Usage: rm <file>");
+        return;
+    }
+    let file = args.first().unwrap();
+
+    fs::remove_file(Path::new(current_directory).join(file));
 }
 
 #[no_mangle]
@@ -159,6 +171,7 @@ Type help [Enter] to see the shell help page.
                     }
                 },
                 "umount" => umount(args),
+                "rm" => rm(&current_directory, args),
                 cmd => {
                     let mut path: String = current_directory.clone();
                     path.push('/');

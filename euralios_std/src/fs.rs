@@ -166,3 +166,26 @@ pub fn read_dir<P: AsRef<Path>>(
         entries
     })
 }
+
+pub fn remove_file<P: AsRef<Path>>(path: P) -> Result<(), ()> {
+    let path: &Path = path.as_ref();
+
+    // Get the directory containing the file
+    let parent = match path.parent() {
+        Some(parent) => parent,
+        None => { return Err(()); }
+    };
+
+    // Get the file part of the path
+    let file_name = match path.file_name() {
+        Some(name) => name,
+        None => { return Err(()); }
+    };
+
+    // Open the directory containing this file
+
+    println!("remove_file({:?}) -> {:?}, {:?}", path, parent, file_name);
+
+
+    Err(())
+}
