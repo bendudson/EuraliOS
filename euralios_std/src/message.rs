@@ -256,6 +256,8 @@ pub const OPEN_OVERWRITE: u64 = OPEN_CREATE + O_TRUNCATE;
 
 pub const CLOSE: u64 = 32;
 
+pub const DELETE: u64 = 33;
+
 pub const EMPTY: u64 = 128;
 pub const ERROR: u64 = 129;
 pub const ERROR_INVALID_FORMAT: u64 = 130;

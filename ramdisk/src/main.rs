@@ -109,6 +109,19 @@ impl Directory {
         // Return the other handle to the client
         Ok(client_handle)
     }
+
+    /// Delete a file
+    fn delete(&mut self, path: &str) -> Result<(), ()> {
+        let path = path.trim_left_matches('/');
+        println!("[ramdisk] Deleting {}", path);
+
+        if self.files.contains_key(path) {
+            self.files.remove(path);
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
 }
 
 fn dispatch_loop<F>(handle: &CommHandle,
@@ -235,6 +248,31 @@ fn handle_directory(directory: Arc<RwLock<Directory>>,
         &comm_handle,
         |msg| {
             match msg {
+                Message::Long(
+                    message::DELETE,
+                    MessageData::Value(length),
+                    MessageData::MemoryHandle(handle)) => {
+                    // Delete a file
+
+                    // Get the path string
+                    let u8_slice = handle.as_slice::<u8>(length as usize);
+                    if let Ok(path) = str::from_utf8(u8_slice) {
+                        if directory.write().delete(path).is_ok() {
+                            syscalls::send(&comm_handle,
+                                           syscalls::Message::Short(
+                                               message::OK, 0, 0));
+                        } else {
+                            syscalls::send(&comm_handle,
+                                           syscalls::Message::Short(
+                                               message::ERROR_INVALID_VALUE, 0, 0));
+                        }
+                    } else {
+                        // UTF-8 error
+                        syscalls::send(&comm_handle,
+                                       syscalls::Message::Short(
+                                       message::ERROR_INVALID_UTF8, 0, 0));
+                    }
+                }
                 Message::Long(
                     tag,
                     MessageData::Value(length),

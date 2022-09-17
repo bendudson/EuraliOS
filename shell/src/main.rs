@@ -113,7 +113,10 @@ fn rm(current_directory: &str, args: Vec<&str>) {
     }
     let file = args.first().unwrap();
 
-    fs::remove_file(Path::new(current_directory).join(file));
+    if let Err(err) = fs::remove_file(Path::new(current_directory).join(file)) {
+        // Failed
+        println!("rm: cannot remove {}: {}", file, err);
+    }
 }
 
 #[no_mangle]

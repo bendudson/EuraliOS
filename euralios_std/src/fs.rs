@@ -10,7 +10,7 @@ use serde_json::Value;
 use crate::{path::Path,
             println,
             syscalls::{self, CommHandle, SyscallError, MemoryHandle},
-            message::{self, rcall, MessageData}};
+            message::{self, rcall, Message, MessageData}};
 
 /// Represents a file
 ///
@@ -73,6 +73,19 @@ impl File {
                 Err(syscalls::SYSCALL_ERROR_PARAM)
             }
         }
+    }
+
+    /// Remote call. Send a message and wait for a reply
+    pub fn rcall(
+        &self,
+        data1: u64,
+        data2: MessageData,
+        data3: MessageData
+    ) -> Result<(u64, MessageData, MessageData),
+                (SyscallError, Message)> {
+        rcall(&self.0,
+              data1, data2, data3,
+              None)
     }
 
     /// Write a buffer into this writer, returning how many bytes were
@@ -167,25 +180,32 @@ pub fn read_dir<P: AsRef<Path>>(
     })
 }
 
-pub fn remove_file<P: AsRef<Path>>(path: P) -> Result<(), ()> {
+/// Delete a file
+pub fn remove_file<P: AsRef<Path>>(path: P) -> Result<(), SyscallError> {
     let path: &Path = path.as_ref();
 
     // Get the directory containing the file
     let parent = match path.parent() {
         Some(parent) => parent,
-        None => { return Err(()); }
+        None => { return Err(syscalls::SYSCALL_ERROR_PARAM); }
     };
 
     // Get the file part of the path
     let file_name = match path.file_name() {
         Some(name) => name,
-        None => { return Err(()); }
+        None => { return Err(syscalls::SYSCALL_ERROR_PARAM); }
     };
 
     // Open the directory containing this file
+    let f = File::open(parent)?;
 
-    println!("remove_file({:?}) -> {:?}, {:?}", path, parent, file_name);
-
-
-    Err(())
+    // Send a delete message
+    let bytes = file_name.bytes();
+    match f.rcall(message::DELETE,
+                  (bytes.len() as u64).into(),
+                  MemoryHandle::from_u8_slice(bytes).into()) {
+        Err((err, _)) => Err(err),
+        Ok((message::OK, _, _)) => Ok(()),
+        _ => Err(syscalls::SYSCALL_ERROR_PARAM)
+    }
 }
