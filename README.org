@@ -48,15 +48,15 @@ much, but it can do it all at the same time.
 - [X] RTL8139 network card driver running in user space
 - [X] TCP network stack using [[https://docs.rs/smoltcp/latest/smoltcp/][smoltcp]] in user space, with DHCP and DNS
 - [X] A simple [[https://en.wikipedia.org/wiki/Gopher_(protocol)][Gopher]] browser
-- [ ] A RAM disk for temporary files
-- [ ] A basic shell
+- [X] A RAM disk for temporary files
+- [X] A basic shell
 - [ ] A basic text editor
 - [ ] Optional per-process virtual file system (VFS), providing
       capability-based security and user isolation
 - [ ] Keyboard input with adjustable layout and UTF-8 language support
       (e.g. Pinying input)
 
-There is no file system yet, so user programs are compiled and then
+There is no disk driver yet, so user programs are compiled and then
 the ELF files are included in the =init= binary using Rust's
 [[https://doc.rust-lang.org/std/macro.include_bytes.html][include_bytes]] macro (another idea taken from [[https://github.com/vinc/moros][MOROS]]).
 
@@ -149,6 +149,9 @@ direction...
 - [[./doc/journal/22-ramdisk.org][22. RAMdisk driver]] to store files and develop the filesystem API,
   starting a basic interactive shell able to list files and run
   programs.
+- [[./doc/journal/22-ramdisk.org][22. Interrupts and a better keyboard]]: Enabling user programs to receive
+  hardware interrupts, and moving the keyboard driver out of the kernel
+  into a user-space driver.
 
 ** Notes
 

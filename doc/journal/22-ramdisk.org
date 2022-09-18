@@ -401,6 +401,10 @@ need to extend the =Path= API and add a [[https://doc.rust-lang.org/stable/std/p
 EuraliOS standard library. That will handle joining and splitting
 paths, making sure the right number of '/' are in the right place.
 
+#+CAPTION: Testing =std::path= and =std::ffi= functions
+#+NAME: fig-path-testing
+[[./img/22-05-path-testing.png]]
+
 ** Opening files
 
 So far we've only had one kind of =OPEN= message, for creating files
@@ -418,3 +422,19 @@ need to consider:
 
 As an interface to these different options we can implement
 [[https://doc.rust-lang.org/std/fs/struct.OpenOptions.html][stf::fs::OpenOptions]]
+
+** Deleting files
+
+#+CAPTION: Running a basic system test executable
+#+NAME: fig-testing
+[[./img/22-06-delete.png]]
+
+
+This section is becoming quite long but we've made some good progress
+on the user shell and file system interface. One of the many
+limitations of the interface is that we can't yet handle special
+characters (e.g arrow keys, F-keys) or modifiers: shift and CapsLock
+work, but Ctrl and Alt don't. In the [[./23-keyboard.org][next section]] we'll move the
+keyboard handler out of the kernel and add more functionality to
+it. This will mean finally providing a way for user-space drivers to
+handle interrupts.
