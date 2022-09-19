@@ -1,0 +1,6 @@
+* TCP stack server
+
+Uses the [[https://docs.rs/smoltcp/latest/smoltcp/][smoltcp]] crate to implement a TCP stack, and enable user
+programs to open, read and write TCP sockets. Includes DHCP and basic
+DNS facilities.
+
