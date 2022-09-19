@@ -27,6 +27,7 @@
 //! 14   listmounts() -> memory_handle
 //! 15   umount(RDI: *const u8, RSI: length)
 //! 16   close(RDI: handle)  Drop a Rendezvous
+//! 17   await_interrupt(RDI: number)  Wait for an interrupt
 //!
 //! Potential future syscalls
 //! -------------------------
@@ -34,6 +35,7 @@
 //! - wait(time)                 Stop thread for set time
 //! - thread_kill(u64) -> bool   Kill the specified thread. Must be in the same process.
 //! - unique_id() -> u64         Return a unique number
+//! - pledge()                   Remove permissions (https://man.openbsd.org/pledge)
 //!
 
 // Syscall numbers
@@ -55,6 +57,7 @@ pub const SYSCALL_MOUNT: u64 = 13;
 pub const SYSCALL_LISTMOUNTS: u64 = 14;
 pub const SYSCALL_UMOUNT: u64 = 15;
 pub const SYSCALL_CLOSE: u64 = 16;
+pub const SYSCALL_AWAIT_INTERRUPT: u64 = 17;
 
 // Syscall error codes
 pub const SYSCALL_ERROR_MASK : usize = 127; // Lower 7 bits
@@ -173,8 +176,8 @@ pub fn init() {
 extern "C" fn handle_syscall() {
     unsafe {
         asm!(
-            // Here should switch stack to avoid messing with user stack
-            // swapgs seems to be a way to do this
+            // Here we switch stack to avoid messing with user stack
+            // swapgs is a way to do this
             // - <https://github.com/redox-os/kernel/blob/master/src/arch/x86_64/interrupt/syscall.rs#L65>
             // - <https://www.felixcloutier.com/x86/swapgs>
 
@@ -302,6 +305,7 @@ extern "C" fn dispatch_syscall(context_ptr: *mut Context, syscall_id: u64,
         SYSCALL_LISTMOUNTS => sys_listmounts(context_ptr),
         SYSCALL_UMOUNT => sys_umount(context_ptr, syscall_id, arg1 as *const u8, arg2),
         SYSCALL_CLOSE => sys_close(context_ptr, arg1),
+        SYSCALL_AWAIT_INTERRUPT => sys_await_interrupt(context_ptr, arg1),
         _ => println!("Unknown syscall {:?} {} {} {}",
                       context_ptr, syscall_id, arg1, arg2)
     }
@@ -573,6 +577,7 @@ fn sys_copy_rendezvous(context_ptr: *mut Context, handle: u64) {
 ///    - Thread fork?
 ///    - Malloc?
 ///    - Exec?
+///    - Interrupts
 fn sys_exec(
     context_ptr: *mut Context,
     syscall_id: u64,
@@ -824,3 +829,19 @@ fn sys_close(context_ptr: *mut Context, handle: u64) {
     }
 }
 
+fn sys_await_interrupt(context_ptr: *mut Context, _interrupt_number: u64) {
+    // Extract the current thread
+    if let Some(mut thread) = process::take_current_thread() {
+        let current_tid = thread.tid();
+        thread.set_context(context_ptr);
+
+        // Check if this thread has permission to wait for interrupts
+
+        // Pass thread to interrupt handler
+        interrupts::await_interrupt(thread);
+
+        // Schedule another thread
+        let new_context_addr = process::schedule_next(context_ptr as usize);
+        interrupts::launch_thread(new_context_addr);
+    }
+}

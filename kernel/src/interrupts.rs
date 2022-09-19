@@ -311,13 +311,24 @@ impl InterruptIndex {
 }
 
 use alloc::sync::Arc;
+use alloc::vec::Vec;
+use alloc::boxed::Box;
 use spin::RwLock;
+use crate::process::Thread;
 use crate::rendezvous::Rendezvous;
 use crate::message::{self, Message};
 
 lazy_static! {
     static ref KEYBOARD_RENDEZVOUS: Arc<RwLock<Rendezvous>> =
         Arc::new(RwLock::new(Rendezvous::Empty));
+
+    static ref INTERRUPT_WAITING: Arc<RwLock<Vec<Box<Thread>>>> =
+        Arc::new(RwLock::new(Vec::new()));
+}
+
+/// Store a thread, to be scheduled when an interrupt occurs
+pub fn await_interrupt(thread: Box<Thread>) {
+    INTERRUPT_WAITING.write().push(thread);
 }
 
 /// Get a shared reference to the keyboard Rendezvous object.
@@ -331,6 +342,11 @@ interrupt_wrap!(keyboard_handler_inner => keyboard_interrupt_handler);
 extern "C" fn keyboard_handler_inner(context_addr: usize)
                                      -> usize
 {
+    // Schedule threads if waiting
+    for thread in INTERRUPT_WAITING.write().drain(..) {
+        process::schedule_thread(thread);
+    }
+
     use pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1};
     use spin::Mutex;
     use x86_64::instructions::port::Port;

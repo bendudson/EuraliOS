@@ -546,6 +546,17 @@ pub fn umount(path: &str) -> Result<(), SyscallError> {
     }
 }
 
+/// Wait for a hardware interrupt to occur
+pub fn await_interrupt() {
+    unsafe {
+        asm!("syscall",
+             // RAX contains syscall
+             in("rax") SYSCALL_AWAIT_INTERRUPT,
+             out("rcx") _,
+             out("r11") _);
+    }
+}
+
 // Exec permission flags
 pub const EXEC_PERM_IO: u8 = 1;
 
@@ -568,6 +579,7 @@ pub const SYSCALL_MOUNT: u64 = 13;
 pub const SYSCALL_LISTMOUNTS: u64 = 14;
 pub const SYSCALL_UMOUNT: u64 = 15;
 pub const SYSCALL_CLOSE: u64 = 16;
+pub const SYSCALL_AWAIT_INTERRUPT: u64 = 17;
 
 // Syscall error codes
 pub const SYSCALL_ERROR_MASK : usize = 127; // Lower 7 bits
