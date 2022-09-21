@@ -26,26 +26,20 @@ entry_point!(kernel_entry);
 /// which is started once basic kernel functions have
 /// been initialised in kernel_entry
 fn kernel_thread_main() {
-    // Create a Virtual File System
-    let mut vfs = vfs::VFS::new();
-
-    // Get the keyboard input
-    let keyboard_rz = interrupts::keyboard_rendezvous();
-    vfs.mount("/keyboard", keyboard_rz.clone());
-
     // User-space init process
+    let null = Arc::new(RwLock::new(Rendezvous::Empty));
     let init_screen = Arc::new(RwLock::new(Rendezvous::Empty));
     let init_thread = process::new_user_thread(
         include_bytes!("../../user/init"),
         process::Params{
             handles: Vec::from([
-                // Input from keyboard
-                keyboard_rz,
+                // Null input
+                null,
                 // Output used to pass data
                 init_screen.clone()
             ]),
             io_privileges: true,
-            mounts: vfs.clone()
+            mounts: vfs::VFS::new() // Create a Virtual File System
         }).unwrap();
 
     // Allocate a memory chunk mapping video memory
@@ -66,21 +60,6 @@ fn kernel_thread_main() {
     ));
 
     process::schedule_thread(init_thread);
-
-    // // Use keyboard input
-    // process::schedule_thread(
-    //     process::new_user_thread(
-    //         include_bytes!("../../user/gopher"),
-    //         process::Params{
-    //             handles: Vec::from([
-    //                 // Input
-    //                 keyboard_rz,
-    //                 // VGA output
-    //                 vga_rz
-    //             ]),
-    //             io_privileges: false,
-    //             mounts: vfs
-    //         }).unwrap());
 
     kernel::hlt_loop();
 }

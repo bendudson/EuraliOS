@@ -1,3 +1,126 @@
 * Interrupts and a better keyboard
 
 
+** Awaiting an interrupt
+
+When an interrupt occurs we need a way to be able to transfer
+execution to a user program. One option is to use a Rendezvous
+system: User programs open a Rendezvous handle and wait for
+a message to be sent when an interrupt occurs. A problem with
+this is that multiple devices can share the same interrupt.
+
+
+#+begin_src rust
+lazy_static! {
+    static ref INTERRUPT_WAITING: Arc<RwLock<Vec<Box<Thread>>>> =
+        Arc::new(RwLock::new(Vec::new()));
+}
+
+/// Store a thread, to be scheduled when an interrupt occurs
+pub fn await_interrupt(thread: Box<Thread>) {
+    INTERRUPT_WAITING.write().push(thread);
+}
+#+end_src
+
+Then when an interrupt occurs we schedule any threads that are waiting:
+#+begin_src rust
+  extern "C" fn keyboard_handler_inner(
+      context_addr: usize
+  ) -> usize {
+      // Schedule threads if waiting
+      for thread in INTERRUPT_WAITING.write().drain(..) {
+          process::schedule_thread(thread);
+      }
+      ...
+  }
+#+end_src
+
+In =syscalls.rs= we create a new system call:
+#+begin_src rust
+pub const SYSCALL_AWAIT_INTERRUPT: u64 = 17;
+#+end_src
+dispatch it:
+#+begin_src rust
+  match syscall_id & SYSCALL_MASK {
+      ...
+      SYSCALL_AWAIT_INTERRUPT => sys_await_interrupt(context_ptr, arg1),
+      ...
+  }
+#+end_src
+The actual implementation is quite simple: We take the current thread,
+pass it to =interrupts::await_interrupt= to store, and launch the next
+thread from the scheduler.
+
+In the user library =euralios_std::syscalls= the =await_interrupt= function
+is just:
+#+begin_src rust
+  pub fn await_interrupt() {
+      unsafe {
+          asm!("syscall",
+               // RAX contains syscall
+               in("rax") SYSCALL_AWAIT_INTERRUPT,
+               out("rcx") _,
+               out("r11") _);
+      }
+  }
+#+end_src
+Soon we will want to add an argument to specify which interrupt to
+wait for, and add some permissions so that only some user programs can
+call this function.
+
+** Moving keyboard handler to userspace
+
+If we move all the keyboard handling into a userspace (Ring 3) driver,
+all the kernel has to do is provide an interrupt handler which
+wakes up threads when an interrupt occurs. The keyboard handler
+can schedule all waiting threads and run one of them:
+#+begin_src rust
+extern "C" fn keyboard_handler_inner(
+    context_addr: usize
+)-> usize {
+
+    // Change to a new thread if there is one waiting
+    if !INTERRUPT_WAITING.read().is_empty() {
+
+        // Schedule waiting threads
+        for thread in INTERRUPT_WAITING.write().drain(..) {
+            // Note: This adds to the front of the queue
+            process::schedule_thread(thread);
+        }
+
+        // Switch to one of the scheduled threads
+        process::schedule_next(context_addr)
+    } else {
+        // Return to interrupted thread
+        context_addr
+    }
+}
+#+end_src
+
+When a thread wants to wait for an interrupt it calls =await_interrupt=:
+#+begin_src rust
+/// Store a thread, to be scheduled when an interrupt occurs
+pub fn await_interrupt(thread: Box<Thread>) {
+    INTERRUPT_WAITING.write().push(thread);
+
+    unsafe {
+        PICS.lock()
+            .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
+    }
+}
+#+end_src
+
+Note that we notify end of interrupt when =await_interrupt= is called,
+rather than at the end of =keyboard_handler_inner=; I tried the other
+way and found occasional problems with the interrupt handler getting
+stuck, for reasons I don't understand (yet).
+
+** Mapping special keys
+
+So far short messages from the keyboard or to the VGA console have
+just encoded a single character. It can however contain two 64-bit
+numbers or 16 bytes.
+
+Function keys F1-F12 http://aperiodic.net/phil/archives/Geekery/term-function-keys.html
+
+[[https://en.wikipedia.org/wiki/ANSI_escape_code#CSIsection][Control Sequence Introducer]] =ESC [= consists of two bytes, =1b9b=. 

@@ -51,10 +51,17 @@ fn mount(
     syscalls::mount(path, input2);
 }
 
-
 #[no_mangle]
 fn main() {
     debug_println!("[init] Starting");
+
+    // Start the keyboard input, configuring it to send to this
+    // process' input
+    syscalls::exec(
+        include_bytes!("../../user/keyboard"),
+        syscalls::EXEC_PERM_IO, // I/O permissions
+        STDIN.clone(),
+        STDIN.clone()).expect("[init] Couldn't start keyboard program");
 
     // Expect a video memory buffer from the kernel
     // Note: Sent to STDOUT channel to avoid conflict with keyboard

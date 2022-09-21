@@ -26,3 +26,10 @@
 ** Thread and process management
 
 New processes are created with =exec=
+
+Processes can create new threads with the =fork_thread= system call
+
+Threads can exit with the =exit_thread= syscall. Unlike Linux (for
+example) there is no "main" thread: All threads are treated the same,
+and the process stops when the last thread exits.
+

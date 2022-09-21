@@ -315,13 +315,8 @@ use alloc::vec::Vec;
 use alloc::boxed::Box;
 use spin::RwLock;
 use crate::process::Thread;
-use crate::rendezvous::Rendezvous;
-use crate::message::{self, Message};
 
 lazy_static! {
-    static ref KEYBOARD_RENDEZVOUS: Arc<RwLock<Rendezvous>> =
-        Arc::new(RwLock::new(Rendezvous::Empty));
-
     static ref INTERRUPT_WAITING: Arc<RwLock<Vec<Box<Thread>>>> =
         Arc::new(RwLock::new(Vec::new()));
 }
@@ -329,72 +324,32 @@ lazy_static! {
 /// Store a thread, to be scheduled when an interrupt occurs
 pub fn await_interrupt(thread: Box<Thread>) {
     INTERRUPT_WAITING.write().push(thread);
-}
-
-/// Get a shared reference to the keyboard Rendezvous object.
-/// The keyboard interrupt handler will send messages to this.
-pub fn keyboard_rendezvous() -> Arc<RwLock<Rendezvous>> {
-    KEYBOARD_RENDEZVOUS.clone()
-}
-
-interrupt_wrap!(keyboard_handler_inner => keyboard_interrupt_handler);
-
-extern "C" fn keyboard_handler_inner(context_addr: usize)
-                                     -> usize
-{
-    // Schedule threads if waiting
-    for thread in INTERRUPT_WAITING.write().drain(..) {
-        process::schedule_thread(thread);
-    }
-
-    use pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1};
-    use spin::Mutex;
-    use x86_64::instructions::port::Port;
-
-    lazy_static! {
-        static ref KEYBOARD: Mutex<Keyboard<layouts::Us104Key, ScancodeSet1>> =
-            Mutex::new(Keyboard::new(layouts::Us104Key, ScancodeSet1,
-                HandleControl::Ignore)
-            );
-    }
-
-    let mut keyboard = KEYBOARD.lock();
-    let mut port = Port::new(0x60);
-
-    let mut returning = true; // Back to original thread?
-
-    let scancode: u8 = unsafe { port.read() };
-    if let Ok(Some(key_event)) = keyboard.add_byte(scancode) {
-        if let Some(key) = keyboard.process_keyevent(key_event) {
-            match key {
-                DecodedKey::Unicode(character) => {
-                    let (thread1, thread2) =
-                        KEYBOARD_RENDEZVOUS.write().send(
-                            None,
-                            Message::Short(message::CHAR,
-                                           character as u64, 0));
-                    // thread1 should be scheduled to run next
-                    if let Some(t) = thread2 {
-                        process::schedule_thread(t);
-                    }
-                    if let Some(t) = thread1 {
-                        process::schedule_thread(t);
-                        returning = false;
-                    }
-                },
-                DecodedKey::RawKey(key) => print!("{:?}", key),
-            }
-        }
-    }
-
-    let next_context = if returning {context_addr} else {
-        // Schedule a different thread to run
-        process::schedule_next(context_addr)
-    };
 
     unsafe {
         PICS.lock()
             .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
     }
-    next_context
+}
+
+interrupt_wrap!(keyboard_handler_inner => keyboard_interrupt_handler);
+
+extern "C" fn keyboard_handler_inner(
+    context_addr: usize
+)-> usize {
+
+    // Change to a new thread if there is one waiting
+    if !INTERRUPT_WAITING.read().is_empty() {
+
+        // Schedule waiting threads
+        for thread in INTERRUPT_WAITING.write().drain(..) {
+            // Note: This adds to the front of the queue
+            process::schedule_thread(thread);
+        }
+
+        // Switch to one of the scheduled threads
+        process::schedule_next(context_addr)
+    } else {
+        // Return to interrupted thread
+        context_addr
+    }
 }
