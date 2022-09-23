@@ -2,32 +2,68 @@
 #![no_main]
 
 use euralios_std::{debug_println,
+                   console::sequences,
                    fprintln,
                    fs::File,
                    syscalls::{self, STDIN, STDOUT, CommHandle},
                    message::{self, rcall, Message, MessageData}};
 
-fn new_writer(vga_com: &CommHandle) -> (CommHandle, u64) {
-    match rcall(
-        vga_com,
-        message::OPEN_READWRITE, 0.into(), 0.into(), None) {
-        Ok((message::COMM_HANDLE,
-            MessageData::CommHandle(handle),
-            MessageData::Value(id))) => (handle, id),
-        Ok(message) => {
-            panic!("[init] Received unexpected message {:?}", message);
+
+struct Console<'a> {
+    /// VGA communicator
+    vga: &'a CommHandle,
+    /// The VGA writer ID
+    writer_id: u64,
+    /// Handle that input should be sent to
+    input: Option<CommHandle>,
+    /// Handle for writing output to screen
+    output: CommHandle
+}
+
+impl<'a> Console<'a> {
+    pub fn new(vga_com: &'a CommHandle) -> Self {
+        match rcall(
+            vga_com,
+            message::OPEN_READWRITE, 0.into(), 0.into(), None) {
+            Ok((message::COMM_HANDLE,
+                MessageData::CommHandle(handle),
+                MessageData::Value(id))) => Console {vga: vga_com,
+                                                     writer_id: id,
+                                                     input: None,
+                                                     output:handle},
+            Ok(message) => {
+                panic!("[init] Received unexpected message {:?}", message);
+            }
+            Err(code) => {
+                panic!("[init] Received error {:?}", code);
+            }
         }
-        Err(code) => {
-            panic!("[init] Received error {:?}", code);
-        }
+    }
+
+    ///
+    pub fn new_shell(vga_com: &'a CommHandle) -> Self {
+        let mut console = Self::new(vga_com);
+
+        // New Rendezvous for shell input
+        let (input, input2) = syscalls::new_rendezvous().unwrap();
+        console.input = Some(input);
+
+        // Start the process
+        syscalls::exec(
+            include_bytes!("../../user/shell"),
+            0,
+            input2,
+            console.output.clone()).expect("[init] Couldn't start user program");
+        console
+    }
+
+    pub fn activate(&self) {
+        syscalls::send(
+            self.vga,
+            Message::Short(message::WRITE, self.writer_id, 0));
     }
 }
 
-fn activate_writer(vga_com: &CommHandle, writer_id: u64) {
-    syscalls::send(
-        &vga_com,
-        Message::Short(message::WRITE, writer_id, 0));
-}
 
 fn mount(
     path: &str,
@@ -87,20 +123,25 @@ fn main() {
         vga_com2.clone(),
         vga_com2).expect("[init] Couldn't start VGA program");
 
-    // Send the video memory
+    // Send the video memory to the video driver
     syscalls::send(&vga_com,
                    Message::Long(
                        message::VIDEO_MEMORY,
                        MessageData::Value(vmem_length),
                        MessageData::MemoryHandle(vmem_handle)));
 
-    // Open a VGA screen writer for system programs
-    let (writer_sys, writer_sys_id) = new_writer(&vga_com);
+    // Can have a console for each F key
+    let mut consoles: [Option<Console>; 12] = Default::default();
 
-    // Activate writer
-    activate_writer(&vga_com, writer_sys_id);
+    // Make a Console for system programs
+    consoles[0] = {
+        let console = Console::new(&vga_com);
+        console.activate(); // Activate it so that errors are displayed
+        Some(console)
+    };
+    let writer_sys = &consoles[0].as_ref().unwrap().output;
 
-    fprintln!(&writer_sys, "[init] Starting EuraliOS...");
+    fprintln!(writer_sys, "[init] Starting EuraliOS...");
 
     // Mount a ramdisk to read/write files
     mount("/ramdisk", include_bytes!("../../user/ramdisk"),
@@ -110,6 +151,9 @@ fn main() {
     // Write some data to the ramdisk
     if let Ok(mut file) = File::create("/ramdisk/gopher") {
         file.write(include_bytes!("../../user/gopher"));
+    }
+    if let Ok(mut file) = File::create("/ramdisk/edit") {
+        file.write(include_bytes!("../../user/edit"));
     }
     if let Ok(mut file) = File::create("/ramdisk/system_test") {
         file.write(include_bytes!("../../user/system_test"));
@@ -133,36 +177,43 @@ fn main() {
           0, // No I/O permissions
           writer_sys.clone());
 
-    // New screen for user program
-    let (writer_user, writer_user_id) = new_writer(&vga_com);
-    // New Rendezvous for user program input
-    let (input_user, input_user2) = syscalls::new_rendezvous().unwrap();
+    // Start a user shell on new Console
+    consoles[1] = {
+        let console = Console::new_shell(&vga_com);
+        console.activate();
+        Some(console)
+    };
 
-    // Start the process
-    syscalls::exec(
-        include_bytes!("../../user/shell"),
-        0,
-        input_user2,
-        writer_user).expect("[init] Couldn't start user program");
-
-    // Activate user writer
-    activate_writer(&vga_com, writer_user_id);
-
+    let mut current_console: &Console = &consoles[1].as_ref().unwrap();
     loop {
         // Wait for keyboard input
         match syscalls::receive(&STDIN) {
             Ok(syscalls::Message::Short(
                 message::CHAR, ch, _)) => {
                 // Received a character
-
-                if ch == 9 { // TAB
-                    activate_writer(&vga_com, writer_user_id);
-                } else if ch == 27 { // ESC
-                    activate_writer(&vga_com, writer_sys_id);
-                } else {
-                    syscalls::send(&input_user,
-                                   syscalls::Message::Short(
-                                       message::CHAR, ch, 0));
+                match ch {
+                    sequences::F1 => {
+                        current_console = consoles[0].as_ref().unwrap();
+                        current_console.activate()
+                    }
+                    sequences::F2 => {
+                        current_console = consoles[1].as_ref().unwrap();
+                        current_console.activate()
+                    }
+                    sequences::F3 => {
+                        if consoles[2].is_none() {
+                            consoles[2] = Some(Console::new_shell(&vga_com));
+                        }
+                        current_console = consoles[2].as_ref().unwrap();
+                        current_console.activate()
+                    }
+                    ch => {
+                        if let Some(input) = &current_console.input {
+                            syscalls::send(input,
+                                           syscalls::Message::Short(
+                                               message::CHAR, ch, 0));
+                        }
+                    },
                 }
             }
             _ => {

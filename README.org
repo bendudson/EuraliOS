@@ -55,6 +55,7 @@ much, but it can do it all at the same time.
       capability-based security and user isolation
 - [ ] Keyboard input with adjustable layout and UTF-8 language support
       (e.g. Pinying input)
+- [ ] Virtio 9P to access host filesystems
 
 There is no disk driver yet, so user programs are compiled and then
 the ELF files are included in the =init= binary using Rust's
@@ -149,7 +150,7 @@ direction...
 - [[./doc/journal/22-ramdisk.org][22. RAMdisk driver]] to store files and develop the filesystem API,
   starting a basic interactive shell able to list files and run
   programs.
-- [[./doc/journal/22-ramdisk.org][22. Interrupts and a better keyboard]]: Enabling user programs to receive
+- [[./doc/journal/23-keyboard.org][23. Interrupts and a better keyboard]]: Enabling user programs to receive
   hardware interrupts, and moving the keyboard driver out of the kernel
   into a user-space driver.
 

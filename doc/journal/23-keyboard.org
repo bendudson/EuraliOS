@@ -123,4 +123,27 @@ numbers or 16 bytes.
 
 Function keys F1-F12 http://aperiodic.net/phil/archives/Geekery/term-function-keys.html
 
-[[https://en.wikipedia.org/wiki/ANSI_escape_code#CSIsection][Control Sequence Introducer]] =ESC [= consists of two bytes, =1b9b=. 
+[[https://en.wikipedia.org/wiki/ANSI_escape_code#CSIsection][Control Sequence Introducer]] =ESC [= consists of two bytes, =1b9b=, and
+the character sequence =ESC [ 1 1 ~= is 0x1b_9b_31_31_7e in big-endian
+bytes.
+
+** Function keys to switch consoles
+
+Use F-keys to change consoles, rather than TAB and ESC.
+
+** Special keys in gopher program
+
+Add arrow keys, home.
+
+** Entering unicode
+
+These are some notes for later, because we don't have a way to display
+unicode characters.
+
+US international scientific keyboard: https://michaelgoerz.net/notes/the-us-international-scientific-keyboard-layout.html
+
+LaTeX to unicode mode: Entering `\` creates a minibuffer, user enters
+LaTeX symbol followed by space/tab/enter, and it is converted to a
+unicode character.
+
+https://github.com/JuliaEditorSupport/julia-vim#latex-to-unicode-substitutions

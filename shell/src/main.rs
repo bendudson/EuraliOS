@@ -123,8 +123,8 @@ fn rm(current_directory: &str, args: Vec<&str>) {
 fn main() {
     println!("Welcome to EuraliOS shell!
 
-  [Esc] switches to system console
-  [Tab] returns to this console
+  [F1] switches to system console
+  [F2 - F12] user consoles
 
 Type help [Enter] to see the shell help page.
 ");
