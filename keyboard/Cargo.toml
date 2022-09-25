@@ -7,4 +7,4 @@ edition = "2021"
 
 [dependencies]
 euralios_std = { path = "../euralios_std" }
-pc-keyboard = "0.5.0"
+pc-keyboard = { path = "../external/pc-keyboard" }

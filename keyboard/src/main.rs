@@ -9,8 +9,7 @@ use pc_keyboard::{layouts, DecodedKey, HandleControl, Keyboard, ScancodeSet1, Ke
 
 #[no_mangle]
 fn main() {
-    let mut keyboard = Keyboard::new(layouts::Us104Key, ScancodeSet1,
-                                     HandleControl::Ignore);
+    let mut keyboard: Keyboard<layouts::Us104Key, ScancodeSet1> = Keyboard::new(HandleControl::MapLettersToUnicode);
 
     loop {
         // Wait for an interrupt to occur
