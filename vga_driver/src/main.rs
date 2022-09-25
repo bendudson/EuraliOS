@@ -2,7 +2,7 @@
 #![no_main]
 
 extern crate alloc;
-use alloc::{vec::Vec, sync::Arc};
+use alloc::{vec::Vec, sync::Arc, string::String};
 use spin::RwLock;
 use lazy_static::lazy_static;
 
@@ -44,8 +44,14 @@ pub struct Writer<'a, S: Screen + TextWriter> {
     buffer: Vec<ScreenCharacter>,
 
     /// Is this writer writing to the screen?
-    active: bool
+    active: bool,
+
+    /// Is the cursor visible?
+    cursor_visible: bool
 }
+
+const DEFAULT_FOREGROUND: Color16 = Color16::Black;
+const DEFAULT_BACKGROUND: Color16 = Color16::White;
 
 impl<'a, S: Screen + TextWriter> Writer<'a, S> {
 
@@ -68,11 +74,16 @@ impl<'a, S: Screen + TextWriter> Writer<'a, S> {
 
         Writer{column: 0,
                row: 1,
-               color: TextModeColor::new(Color16::Black, Color16::White),
+               color: Self::default_color(),
                blank,
                screen,
                buffer,
-               active: false}
+               active: false,
+               cursor_visible: true}
+    }
+
+    fn default_color() -> TextModeColor {
+        TextModeColor::new(DEFAULT_FOREGROUND, DEFAULT_BACKGROUND)
     }
 
     /// Write to video memory
@@ -85,6 +96,13 @@ impl<'a, S: Screen + TextWriter> Writer<'a, S> {
             }
         }
         self.active = true;
+
+        // Show or hide cursor
+        if self.cursor_visible {
+            //self.screen.enable_cursor();
+        } else {
+            self.screen.disable_cursor();
+        }
     }
 
     /// Stop writing to video memory
@@ -119,6 +137,8 @@ impl<'a, S: Screen + TextWriter> Writer<'a, S> {
     ///
     /// Interprets a subset of the ANSI escape codes
     /// <https://en.wikipedia.org/wiki/ANSI_escape_code>
+    /// List of Xterm control sequences
+    /// <https://www.xfree86.org/current/ctlseqs.html>
     pub fn write_string(&mut self, s: &[u8]) {
         {
             // Contains a lock on the buffer, and a pointer to the data
@@ -201,33 +221,176 @@ impl<'a, S: Screen + TextWriter> Writer<'a, S> {
                             }
                             0x1b => { // Escape. Start of escape sequence
                                 match bytes.next() {
-                                    Some(byte) => {
-                                        match byte {
-                                            b'[' => {
-                                                // Control Sequence Introducer (CSI)
-                                                // <https://en.wikipedia.org/wiki/ANSI_escape_code#CSIsection>
-                                                // The ESC [ is followed by any number (including none) of
-                                                // "parameter bytes" in the range 0x30–0x3F (ASCII 0–9:;<=>?),
-                                                // then by any number of "intermediate bytes" in the range 0x20–0x2F
-                                                // (ASCII space and !"#$%&'()*+,-./), then finally by a single
-                                                // "final byte" in the range 0x40–0x7E (ASCII @A–Z[\]^_`a–z{|}~).
-                                            }
-                                            _ => {
-                                                // Unknown escape sequence
-                                                continue;
-                                            }
+                                    Some(b'[') => {
+                                        // Control Sequence Introducer (CSI)
+                                        // <https://en.wikipedia.org/wiki/ANSI_escape_code#CSIsection>
+                                        // The ESC [ is followed by any number (including none) of
+                                        // "parameter bytes" in the range 0x30–0x3F (ASCII 0–9:;<=>?),
+                                        // then by any number of "intermediate bytes" in the range 0x20–0x2F
+                                        // (ASCII space and !"#$%&'()*+,-./), then finally by a single
+                                        // "final byte" in the range 0x40–0x7E (ASCII @A–Z[\]^_`a–z{|}~).
+
+                                        let mut sequence = String::with_capacity(10);
+                                        let mut byte: u8 = match bytes.next() {
+                                            Some(byte) => *byte,
+                                            None => {return;}
+                                        };
+                                        // parameter bytes
+                                        while byte >= 0x30 && byte <= 0x3F {
+                                            sequence.push(byte as char);
+                                            byte = match bytes.next() {
+                                                Some(byte) => *byte,
+                                                None => {return;}
+                                            };
                                         }
-                                    },
-                                    None => {
-                                        // Expected something
-                                        break;
+                                        // intermediate bytes
+                                        while byte >= 0x20 && byte <= 0x2F {
+                                            sequence.push(byte as char);
+                                            byte = match bytes.next() {
+                                                Some(byte) => *byte,
+                                                None => {return;}
+                                            };
+                                        }
+                                        // Final byte
+                                        if byte >= 0x40 && byte <= 0x7E {
+                                            sequence.push(byte as char);
+                                        } else {
+                                            return;
+                                        }
+
+                                        // These mainly based on Xterm control sequences
+                                        // https://www.xfree86.org/current/ctlseqs.html
+                                        match sequence.as_str() {
+                                            "@" => { // Blank character
+
+                                            }
+                                            "G" => { // Absolute column
+                                                self.column = 0;
+                                            }
+                                            "H" => { // Home (0,0)
+                                                self.column = 0;
+                                                self.row = 0;
+                                            }
+                                            "J" | "0J" => { // Erase below
+                                                let offset = self.row * S::WIDTH + self.column;
+                                                for p in offset..S::SIZE {
+                                                    self.buffer[p] = self.blank;
+                                                }
+                                                if let Some((_, buffer)) = lock_buffer {
+                                                    for p in offset..S::SIZE {
+                                                        unsafe {
+                                                            buffer.add(p).write_volatile(self.blank);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            "1J" => { // Erase above
+                                                let offset = self.row * S::WIDTH + self.column;
+                                                for p in 0..offset {
+                                                    self.buffer[p] = self.blank;
+                                                }
+                                                if let Some((_, buffer)) = lock_buffer {
+                                                    for p in 0..offset {
+                                                        unsafe {
+                                                            buffer.add(p).write_volatile(self.blank);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            "2J" => { // Erase all
+                                                for p in 0..S::SIZE {
+                                                    self.buffer[p] = self.blank;
+                                                }
+                                                if let Some((_, buffer)) = lock_buffer {
+                                                    for p in 0..S::SIZE {
+                                                        unsafe {
+                                                            buffer.add(p).write_volatile(self.blank);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            "K" | "0K" => { // Clear right of cursor
+                                                for col in self.column..S::WIDTH {
+                                                    self.buffer[self.row * S::WIDTH + col] = self.blank;
+                                                }
+                                                if let Some((_, buffer)) = lock_buffer {
+                                                    for col in self.column..S::WIDTH {
+                                                        unsafe {
+                                                            buffer.add(self.row * S::WIDTH + col)
+                                                                .write_volatile(self.blank);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            "1K" => { // Clear left of cursor
+                                                for col in 0..self.column {
+                                                    self.buffer[self.row * S::WIDTH + col] = self.blank;
+                                                }
+                                                if let Some((_, buffer)) = lock_buffer {
+                                                    for col in 0..self.column {
+                                                        unsafe {
+                                                            buffer.add(self.row * S::WIDTH + col)
+                                                                .write_volatile(self.blank);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            "2K" => { // Clear line
+                                                for col in 0..S::WIDTH {
+                                                    self.buffer[self.row * S::WIDTH + col] = self.blank;
+                                                }
+                                                if let Some((_, buffer)) = lock_buffer {
+                                                    for col in 0..S::WIDTH {
+                                                        unsafe {
+                                                            buffer.add(self.row * S::WIDTH + col)
+                                                                .write_volatile(self.blank);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            "25l" => { // Show cursor (DEC Private Mode Set)
+                                                self.cursor_visible = true;
+                                                if self.active {
+                                                    self.screen.enable_cursor();
+                                                }
+                                            }
+                                            "25h" => { // Hide cursor (DEC Private Mode Reset)
+                                                self.cursor_visible = false;
+                                                if self.active {
+                                                    self.screen.disable_cursor();
+                                                }
+                                            }
+                                            "m" | "0m" => { self.color = Self::default_color(); }
+                                            "30m" => { self.color.set_foreground(Color16::Black); }
+                                            "31m" => { self.color.set_foreground(Color16::Red); }
+                                            "32m" => { self.color.set_foreground(Color16::Green); }
+                                            "33m" => { self.color.set_foreground(Color16::Yellow); }
+                                            "34m" => { self.color.set_foreground(Color16::Blue); }
+                                            "35m" => { self.color.set_foreground(Color16::Magenta); }
+                                            "36m" => { self.color.set_foreground(Color16::Cyan); }
+                                            "37m" => { self.color.set_foreground(Color16::White); }
+                                            "39m" => { self.color.set_foreground(DEFAULT_FOREGROUND); }
+                                            "40m" => { self.color.set_background(Color16::Black); }
+                                            "41m" => { self.color.set_background(Color16::Red); }
+                                            "42m" => { self.color.set_background(Color16::Green); }
+                                            "43m" => { self.color.set_background(Color16::Yellow); }
+                                            "44m" => { self.color.set_background(Color16::Blue); }
+                                            "45m" => { self.color.set_background(Color16::Magenta); }
+                                            "46m" => { self.color.set_background(Color16::Cyan); }
+                                            "47m" => { self.color.set_background(Color16::White); }
+                                            "49m" => { self.color.set_background(DEFAULT_BACKGROUND); }
+                                            _ => { }
+                                        }
+                                    }
+                                    _ => {
+                                        // Unknown escape sequence
+                                        continue;
                                     }
                                 }
-                            }
-                            byte => {
-                            }
+                            },
+                            _ => {}
                         }
-                    },
+                    }
                     None => { break; }
                 }
             }

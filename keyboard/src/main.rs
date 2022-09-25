@@ -39,10 +39,15 @@ fn main() {
                             KeyCode::F11 => sequences::F11,
                             KeyCode::F12 => sequences::F12,
 
-                            KeyCode::PageUp   => 0x1b_9b_35_7e, // ESC [ 5 ~
-                            KeyCode::PageDown => 0x1b_9b_36_7e, // ESC [ 6 ~
-                            KeyCode::Home     => 0x1b_9b_37_7e, // ESC [ 7 ~
-                            KeyCode::End      => 0x1b_9b_38_7e, // ESC [ 8 ~
+                            KeyCode::PageUp   => sequences::PageUp,
+                            KeyCode::PageDown => sequences::PageDown,
+                            KeyCode::Home     => sequences::Home,
+                            KeyCode::End      => sequences::End,
+
+                            KeyCode::ArrowUp  => sequences::ArrowUp,
+                            KeyCode::ArrowDown => sequences::ArrowDown,
+                            KeyCode::ArrowRight => sequences::ArrowRight,
+                            KeyCode::ArrowLeft => sequences::ArrowLeft,
                             _ => {
                                 debug_print!("{:?}", key);
                                 continue;
