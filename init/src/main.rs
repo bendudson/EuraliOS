@@ -124,11 +124,13 @@ fn main() {
         vga_com2).expect("[init] Couldn't start VGA program");
 
     // Send the video memory to the video driver
-    syscalls::send(&vga_com,
-                   Message::Long(
-                       message::VIDEO_MEMORY,
-                       MessageData::Value(vmem_length),
-                       MessageData::MemoryHandle(vmem_handle)));
+    if let Err(err) = syscalls::send(&vga_com,
+                                     Message::Long(
+                                         message::VIDEO_MEMORY,
+                                         MessageData::Value(vmem_length),
+                                         MessageData::MemoryHandle(vmem_handle))) {
+        panic!("[init] Could not send video memory: {}", err.0);
+    }
 
     // Can have a console for each F key
     let mut consoles: [Option<Console>; 12] = Default::default();
@@ -185,6 +187,7 @@ fn main() {
     };
 
     let mut current_console: &Console = &consoles[1].as_ref().unwrap();
+
     loop {
         // Wait for keyboard input
         match syscalls::receive(&STDIN) {
@@ -205,6 +208,20 @@ fn main() {
                             consoles[2] = Some(Console::new_shell(&vga_com));
                         }
                         current_console = consoles[2].as_ref().unwrap();
+                        current_console.activate()
+                    }
+                    sequences::F4 => {
+                        if consoles[3].is_none() {
+                            consoles[3] = Some(Console::new_shell(&vga_com));
+                        }
+                        current_console = consoles[3].as_ref().unwrap();
+                        current_console.activate()
+                    }
+                    sequences::F5 => {
+                        if consoles[4].is_none() {
+                            consoles[4] = Some(Console::new_shell(&vga_com));
+                        }
+                        current_console = consoles[4].as_ref().unwrap();
                         current_console.activate()
                     }
                     ch => {

@@ -4,3 +4,6 @@
 [submodule "external/pc-keyboard"]
 	path = external/pc-keyboard
 	url = https://github.com/bendudson/pc-keyboard
+[submodule "external/kibi"]
+	path = external/kibi
+	url = git@github.com:bendudson/kibi.git

@@ -5,7 +5,6 @@ use lazy_static::lazy_static;
 
 use crate::println;
 use crate::gdt;
-use crate::print;
 use crate::process;
 use crate::memory;
 use crate::time;

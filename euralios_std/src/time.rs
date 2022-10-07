@@ -1,5 +1,7 @@
 use core::arch::asm;
 
+pub use core::time::Duration;
+
 pub fn time_stamp_counter() -> u64 {
     let counter: u64;
     unsafe{

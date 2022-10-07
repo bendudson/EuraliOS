@@ -6,20 +6,27 @@
 #![reexport_test_harness_main = "test_main"]
 
 use core::arch::asm;
-pub mod syscalls;
+
+/// Re-export core modules
+pub use core::fmt;
+pub use core::str;
+pub use core::iter;
+
+pub mod console;
 pub mod debug;
+pub mod env;
+pub mod ffi;
+pub mod fs;
+pub mod io;
 pub mod memory;
-pub mod net;
 pub mod message;
+pub mod net;
+pub mod path;
 pub mod ports;
+pub mod syscalls;
 pub mod thread;
 pub mod time;
-pub mod io;
-pub mod fs;
-pub mod path;
-pub mod ffi;
 pub mod sys;
-pub mod console;
 
 use core::panic::PanicInfo;
 #[panic_handler]

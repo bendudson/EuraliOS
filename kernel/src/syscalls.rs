@@ -303,7 +303,7 @@ extern "C" fn dispatch_syscall(context_ptr: *mut Context, syscall_id: u64,
         SYSCALL_EXEC => sys_exec(context_ptr, syscall_id, arg1 as *const u8, arg2, arg3 as *const u8),
         SYSCALL_MOUNT => sys_mount(context_ptr, syscall_id, arg1 as *const u8, arg2),
         SYSCALL_LISTMOUNTS => sys_listmounts(context_ptr),
-        SYSCALL_UMOUNT => sys_umount(context_ptr, syscall_id, arg1 as *const u8, arg2),
+        SYSCALL_UMOUNT => sys_umount(context_ptr, arg1 as *const u8, arg2),
         SYSCALL_CLOSE => sys_close(context_ptr, arg1),
         SYSCALL_AWAIT_INTERRUPT => sys_await_interrupt(context_ptr, arg1),
         _ => println!("Unknown syscall {:?} {} {} {}",
@@ -747,7 +747,7 @@ fn sys_listmounts(context_ptr: *mut Context) {
         match process::new_memory_chunk(
             num_pages,
             0xFFFF_FFFF_FFFF_FFFF) {
-            Ok((virtaddr, physaddr)) => {
+            Ok((virtaddr, _physaddr)) => {
                 // Copy string into memory chunk
                 unsafe {
                     ptr::copy_nonoverlapping(json.as_ptr(),
@@ -772,7 +772,6 @@ fn sys_listmounts(context_ptr: *mut Context) {
 /// Most of this code is the same as `sys_mount`
 fn sys_umount(
     context_ptr: *mut Context,
-    syscall_id: u64,
     path_ptr: *const u8,
     path_len: u64) {
 
@@ -804,7 +803,6 @@ fn sys_umount(
 fn sys_close(context_ptr: *mut Context, handle: u64) {
     // Extract the current thread
     if let Some(mut thread) = process::take_current_thread() {
-        let current_tid = thread.tid();
         thread.set_context(context_ptr);
 
         // Take the Rendezvous from the thread
@@ -832,7 +830,6 @@ fn sys_close(context_ptr: *mut Context, handle: u64) {
 fn sys_await_interrupt(context_ptr: *mut Context, _interrupt_number: u64) {
     // Extract the current thread
     if let Some(mut thread) = process::take_current_thread() {
-        let current_tid = thread.tid();
         thread.set_context(context_ptr);
 
         // Check if this thread has permission to wait for interrupts

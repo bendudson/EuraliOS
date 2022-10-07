@@ -56,6 +56,10 @@ fn help() {
     println!(
 "EuraliOS shell help
 
+* Console windows
+  F1              System processes
+  F2..F5          User consoles
+
 * Built-in commands:
   ls [<path>]     List directory
   cd <path>       Change directory
@@ -124,7 +128,7 @@ fn main() {
     println!("Welcome to EuraliOS shell!
 
   [F1] switches to system console
-  [F2 - F12] user consoles
+  [F2..F5] user consoles
 
 Type help [Enter] to see the shell help page.
 ");
