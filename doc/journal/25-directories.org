@@ -1,0 +1,5 @@
+* Directories
+
+We'll now add the `mkdir`, `rmdir` and `cd` commands to the shell,
+and the message handling in the `ramdisk` program to create and
+delete directories.

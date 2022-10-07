@@ -30,32 +30,33 @@ with EuraliOS I've focussed mainly on memory management and
 pre-emptive multitasking so far. The result is an OS that can't do
 much, but it can do it all at the same time.
 
-- [X] Keyboard input (phil-opp blog)
-- [X] Virtual consoles and VGA text output using the [[https://crates.io/crates/vga][vga crate]]
-- [X] ELF loader (adapted from MOROS approach, using the [[https://crates.io/crates/object][object crate]])
-- [X] Pre-emptive multitasking, with kernel and user-space threads and
-       a round-robin scheduler
-- [X] Program memory isolation using paging
-- [X] Frame allocator based on a bitmap tree structure
-- [X] On-demand memory allocation using page fault handler
-- [X] User space stack and heap memory management
-- [X] Programs and drivers in user space (Ring 3), with syscalls to
-  access kernel functions
-- [X] A [[https://man7.org/linux/man-pages/man7/vdso.7.html][vDSO]]-like fast mechanism for access to timing information from user programs
-- [X] Rendezvous message passing for all inter-process communication.
-  Messages can contain communication handles or transfer ownership of memory regions
-  between processes and threads.
-- [X] RTL8139 network card driver running in user space
-- [X] TCP network stack using [[https://docs.rs/smoltcp/latest/smoltcp/][smoltcp]] in user space, with DHCP and DNS
-- [X] A simple [[https://en.wikipedia.org/wiki/Gopher_(protocol)][Gopher]] browser
-- [X] A RAM disk for temporary files
-- [X] A basic shell
-- [ ] A basic text editor
-- [ ] Optional per-process virtual file system (VFS), providing
-      capability-based security and user isolation
-- [ ] Keyboard input with adjustable layout and UTF-8 language support
-      (e.g. Pinying input)
-- [ ] Virtio 9P to access host filesystems
+- The "Merriwig" kernel
+  - [X] Pre-emptive multitasking, with a round-robin scheduler
+  - [X] Program memory isolation using paging
+  - [X] On-demand memory allocation using page fault handler
+  - [X] Stack and heap memory management
+  - [X] Frame allocator based on a bitmap tree structure
+  - [X] ELF loader using the [[https://crates.io/crates/object][object crate]]
+  - [X] A [[https://man7.org/linux/man-pages/man7/vdso.7.html][vDSO]]-like fast mechanism for access to timing information from user programs
+  - [X] Rendezvous message passing for all inter-process communication.
+        Messages can contain communication handles or transfer ownership of memory regions
+        between processes and threads.
+  - [X] 18 syscalls for memory and process control and inter-process communication
+  - [X] Virtual file systems that can be shared between processes or per-process
+  - [ ] Capability-based security and user isolation
+
+- Drivers as userspace programs (Ring 3)
+  - [X] Keyboard driver using the [[https://docs.rs/pc-keyboard/latest/pc_keyboard/][pc-keyboard]] crate
+  - [X] Virtual consoles and VGA text output using the [[https://crates.io/crates/vga][vga crate]]
+  - [X] RTL8139 network card driver
+  - [X] TCP network stack using [[https://docs.rs/smoltcp/latest/smoltcp/][smoltcp]] in user space, with DHCP and DNS
+
+- User programs
+  - [X] A basic shell
+  - [X] A simple [[https://en.wikipedia.org/wiki/Gopher_(protocol)][Gopher]] browser
+  - [X] A RAM disk for temporary files
+  - [ ] A basic text editor
+  - [ ] Virtio 9P to access host filesystems
 
 There is no disk driver yet, so user programs are compiled and then
 the ELF files are included in the =init= binary using Rust's
@@ -153,6 +154,10 @@ direction...
 - [[./doc/journal/23-keyboard.org][23. Interrupts and a better keyboard]]: Enabling user programs to receive
   hardware interrupts, and moving the keyboard driver out of the kernel
   into a user-space driver.
+- [[./doc/journal/24-text-editor.org][24. Text editor]]. Porting the [[https://github.com/ilai-deutel/kibi][Kibi]] text editor to run on EuraliOS.
+- [[./doc/journal/25-directories.org][25. Directories]] to hierarchically organise files
+- [[./doc/journal/26-multiple-users.org][26. Multiple users]] and login process, using separate virtual file systems
+  to control user capabilities
 
 ** Notes
 
