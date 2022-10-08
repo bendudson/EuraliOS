@@ -5,7 +5,6 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::str;
-use crate::alloc::borrow::ToOwned;
 
 use euralios_std::{path::Path,
                    fs::{self, File},

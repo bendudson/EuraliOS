@@ -14,7 +14,8 @@ use spin::RwLock;
 use euralios_std::{println,
                    thread,
                    message::{self, Message, MessageData},
-                   syscalls::{self, STDIN, CommHandle}};
+                   syscalls::{self, STDIN, CommHandle},
+                   sys::path::MAIN_SEP_STR};
 
 /// Represents a file as a bag of bytes
 struct File {
@@ -53,7 +54,7 @@ impl Directory {
     /// Open for reading
     fn openr(&self, path: &str) -> Result<CommHandle, ()> {
         // Strip leading "/"
-        let path = path.trim_left_matches('/');
+        let path = path.trim_start_matches('/');
         println!("[ramdisk] Opening {}", path);
 
         let file = if self.files.contains_key(path) {
@@ -78,7 +79,7 @@ impl Directory {
     /// Open for writing
     fn openw(&mut self, path: &str, flags: u64) -> Result<CommHandle, ()> {
         // Strip leading "/"
-        let path = path.trim_left_matches('/');
+        let path = path.trim_start_matches('/');
         println!("[ramdisk] Opening {}", path);
 
         let file = if self.files.contains_key(path) {
@@ -112,7 +113,7 @@ impl Directory {
 
     /// Delete a file
     fn delete(&mut self, path: &str) -> Result<(), ()> {
-        let path = path.trim_left_matches('/');
+        let path = path.trim_start_matches('/');
         println!("[ramdisk] Deleting {}", path);
 
         if self.files.contains_key(path) {
@@ -124,6 +125,10 @@ impl Directory {
     }
 }
 
+/// Dispatch messages in a loop, returning when the communication handle
+/// is closed. This function handles common error messages, passing
+/// other messages to the given function `f`.
+///
 fn dispatch_loop<F>(handle: &CommHandle,
                     mut f: F)
 where

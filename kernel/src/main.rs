@@ -14,7 +14,6 @@ use spin::RwLock;
 use kernel::memory;
 use kernel::syscalls;
 use kernel::process;
-use kernel::interrupts;
 use kernel::rendezvous::Rendezvous;
 use kernel::vfs;
 use kernel::message::{self, Message};

@@ -31,19 +31,19 @@ pre-emptive multitasking so far. The result is an OS that can't do
 much, but it can do it all at the same time.
 
 - The "Merriwig" kernel
-  - [X] Pre-emptive multitasking, with a round-robin scheduler
+  - [X] Pre-emptive multitasking of user and kernel threads, with a round-robin scheduler
   - [X] Program memory isolation using paging
   - [X] On-demand memory allocation using page fault handler
   - [X] Stack and heap memory management
   - [X] Frame allocator based on a bitmap tree structure
   - [X] ELF loader using the [[https://crates.io/crates/object][object crate]]
-  - [X] A [[https://man7.org/linux/man-pages/man7/vdso.7.html][vDSO]]-like fast mechanism for access to timing information from user programs
   - [X] Rendezvous message passing for all inter-process communication.
         Messages can contain communication handles or transfer ownership of memory regions
         between processes and threads.
-  - [X] 18 syscalls for memory and process control and inter-process communication
+  - [X] 18 syscalls for memory and process/thread control and inter-process communication
+  - [X] A [[https://man7.org/linux/man-pages/man7/vdso.7.html][vDSO]]-like fast mechanism for access to timing information from user programs
   - [X] Virtual file systems that can be shared between processes or per-process
-  - [ ] Capability-based security and user isolation
+        as a mechanism for capability-based security and user isolation
 
 - Drivers as userspace programs (Ring 3)
   - [X] Keyboard driver using the [[https://docs.rs/pc-keyboard/latest/pc_keyboard/][pc-keyboard]] crate
@@ -52,10 +52,11 @@ much, but it can do it all at the same time.
   - [X] TCP network stack using [[https://docs.rs/smoltcp/latest/smoltcp/][smoltcp]] in user space, with DHCP and DNS
 
 - User programs
+  - [ ] Login process and multiple users
   - [X] A basic shell
   - [X] A simple [[https://en.wikipedia.org/wiki/Gopher_(protocol)][Gopher]] browser
   - [X] A RAM disk for temporary files
-  - [ ] A basic text editor
+  - [ ] Port of the [[https://github.com/ilai-deutel/kibi][Kibi text editor]]
   - [ ] Virtio 9P to access host filesystems
 
 There is no disk driver yet, so user programs are compiled and then
