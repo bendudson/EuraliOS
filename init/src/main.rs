@@ -154,9 +154,6 @@ fn main() {
     if let Ok(mut file) = File::create("/ramdisk/gopher") {
         file.write(include_bytes!("../../user/gopher"));
     }
-    if let Ok(mut file) = File::create("/ramdisk/edit") {
-        file.write(include_bytes!("../../user/edit"));
-    }
     if let Ok(mut file) = File::create("/ramdisk/system_test") {
         file.write(include_bytes!("../../user/system_test"));
     }
