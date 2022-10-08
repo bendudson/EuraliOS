@@ -66,6 +66,7 @@ fn help() {
   rm <file>       Delete a file
   mount           List mounted filesystems
   umount <path>   Un-mount a filesystem
+  mkdir <path>    Make a directory
 "
     );
 }
@@ -91,7 +92,13 @@ fn ls(current_directory: &str, args: Vec<&str>) {
 
     if let Ok(rd) = option_rd {
         for entry in rd {
-            println!("{}", entry.unwrap().file_name());
+            if let Ok(obj) = entry {
+                if obj.metadata().unwrap().is_dir() {
+                    println!("\x1b[34m{}\x1b[m", obj.file_name());
+                } else {
+                    println!("{}", obj.file_name());
+                }
+            }
         }
     }
 }
@@ -119,6 +126,19 @@ fn rm(current_directory: &str, args: Vec<&str>) {
     if let Err(err) = fs::remove_file(Path::new(current_directory).join(file)) {
         // Failed
         println!("rm: cannot remove {}: {}", file, err);
+    }
+}
+
+/// Make a directory
+fn mkdir(current_directory: &str, args: Vec<&str>) {
+    if args.len() != 1 {
+        println!("Usage: mkdir <directory>");
+        return;
+    }
+    let arg = args.first().unwrap();
+    if let Err(err) = fs::create_dir(Path::new(current_directory).join(arg)) {
+        // Failed
+        println!("mkdir: cannot create {}: {:?}", arg, err);
     }
 }
 
@@ -178,6 +198,7 @@ Type help [Enter] to see the shell help page.
                 },
                 "umount" => umount(args),
                 "rm" => rm(&current_directory, args),
+                "mkdir" => mkdir(&current_directory, args),
                 cmd => {
                     let mut path: String = current_directory.clone();
                     path.push('/');
@@ -185,7 +206,7 @@ Type help [Enter] to see the shell help page.
                     println!("Path |{}|", path);
 
                     if let Err(err) = exec_path(&path) {
-                        println!("Couldn't open '{}'", path);
+                        println!("Couldn't open '{}': {}", path, err);
                     }
                 }
             }

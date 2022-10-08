@@ -4,6 +4,7 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::str;
+use core::fmt;
 use core::convert::AsRef;
 use serde_json::Value;
 
@@ -129,9 +130,43 @@ impl File {
     }
 }
 
+/// Metadata information about a file.
+#[derive(Clone)]
+pub struct Metadata {
+    is_dir : bool
+}
+
+impl Metadata {
+    /// Returns true if this metadata is for a directory. The result
+    /// is mutually exclusive to the result of is_file
+    pub fn is_dir(&self) -> bool {
+        self.is_dir
+    }
+
+    /// Returns true if this metadata is for a regular file.
+    pub fn is_file(&self) -> bool {
+        !self.is_dir
+    }
+}
+
+impl fmt::Debug for Metadata {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Metadata")
+            //.field("file_type", &self.file_type())
+            .field("is_dir", &self.is_dir())
+            .field("is_file", &self.is_file())
+            //.field("permissions", &self.permissions())
+            //.field("modified", &self.modified())
+            //.field("accessed", &self.accessed())
+            //.field("created", &self.created())
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Debug)]
 pub struct DirEntry {
-    name: String
+    name: String,
+    meta: Metadata
 }
 
 impl DirEntry {
@@ -139,6 +174,11 @@ impl DirEntry {
     /// other leading path component.
     pub fn file_name(&self) -> &str {
         &self.name
+    }
+
+    /// Returns the metadata for the file that this entry points at.
+    pub fn metadata(&self) -> Result<Metadata, SyscallError> {
+        Ok(self.meta.clone())
     }
 }
 
@@ -165,15 +205,30 @@ pub fn read_dir<P: AsRef<Path>>(
     let f = File::open(path)?;
     let query = f.query()?;
 
-    let entries = match query.0["files"].as_array() {
+    let mut entries = match query.0["files"].as_array() {
         Some(vec) => {
             // Transform into a Vec of DirEntry objects
             vec.iter().map(|obj| DirEntry{
-                name: String::from(obj["name"].as_str().unwrap_or("_bad_"))
+                name: String::from(obj["name"].as_str().unwrap_or("_bad_")),
+                meta: Metadata {
+                    is_dir: false
+                }
             }).collect()
         }
         _ => Vec::new()
     };
+
+    if let Some(vec) = query.0["subdirs"].as_array() {
+        // Some directories
+        for obj in vec {
+            entries.push(DirEntry{
+                name: String::from(obj["name"].as_str().unwrap_or("_bad_")),
+                meta: Metadata {
+                    is_dir: true
+                }
+            });
+        }
+    }
 
     Ok(ReadDir{
         entries
@@ -202,6 +257,36 @@ pub fn remove_file<P: AsRef<Path>>(path: P) -> Result<(), SyscallError> {
     // Send a delete message
     let bytes = file_name.bytes();
     match f.rcall(message::DELETE,
+                  (bytes.len() as u64).into(),
+                  MemoryHandle::from_u8_slice(bytes).into()) {
+        Err((err, _)) => Err(err),
+        Ok((message::OK, _, _)) => Ok(()),
+        _ => Err(syscalls::SYSCALL_ERROR_PARAM)
+    }
+}
+
+pub fn create_dir<P: AsRef<Path>>(path: P) -> Result<(), SyscallError> {
+    let path: &Path = path.as_ref();
+    println!("create_dir: {:?}", path);
+
+    // Get the directory's parent
+    let parent = match path.parent() {
+        Some(parent) => parent,
+        None => { return Err(syscalls::SYSCALL_ERROR_PARAM); }
+    };
+
+    // Get the final part of the path
+    let new_dir_name = match path.file_name() {
+        Some(name) => name,
+        None => { return Err(syscalls::SYSCALL_ERROR_PARAM); }
+    };
+
+    // Open the parent directory
+    let f = File::open(parent)?;
+
+    // Send a MKDIR message
+    let bytes = new_dir_name.bytes();
+    match f.rcall(message::MKDIR,
                   (bytes.len() as u64).into(),
                   MemoryHandle::from_u8_slice(bytes).into()) {
         Err((err, _)) => Err(err),

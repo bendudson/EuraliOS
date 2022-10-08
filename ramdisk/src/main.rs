@@ -123,6 +123,22 @@ impl Directory {
             Err(())
         }
     }
+
+    /// Make a sub-directory
+    fn mkdir (&mut self, path: &str) -> Result<(), syscalls::SyscallError> {
+        println!("[ramdisk] Making directory {}", path);
+        if path.contains(MAIN_SEP_STR) {
+            // Cannot contain separator
+            return Err(syscalls::SYSCALL_ERROR_PARAM);
+        }
+        if self.subdirs.contains_key(path) {
+            // Already exists
+            return Err(syscalls::SYSCALL_ERROR_EXISTS);
+        }
+        let new_dir = Arc::new(RwLock::new(Directory::new()));
+        self.subdirs.insert(String::from(path), new_dir);
+        Ok(())
+    }
 }
 
 /// Dispatch messages in a loop, returning when the communication handle
@@ -279,6 +295,31 @@ fn handle_directory(directory: Arc<RwLock<Directory>>,
                     }
                 }
                 Message::Long(
+                    message::MKDIR,
+                    MessageData::Value(length),
+                    MessageData::MemoryHandle(handle)) => {
+                    // Make a directory
+
+                    // Get the path string
+                    let u8_slice = handle.as_slice::<u8>(length as usize);
+                    if let Ok(path) = str::from_utf8(u8_slice) {
+                        if let Err(_err) = directory.write().mkdir(path) {
+                            syscalls::send(&comm_handle,
+                                           syscalls::Message::Short(
+                                               message::ERROR_INVALID_VALUE, 0, 0));
+                        } else {
+                            syscalls::send(&comm_handle,
+                                           syscalls::Message::Short(
+                                               message::OK, 0, 0));
+                        }
+                    } else {
+                        // UTF-8 error
+                        syscalls::send(&comm_handle,
+                                       syscalls::Message::Short(
+                                       message::ERROR_INVALID_UTF8, 0, 0));
+                    }
+                }
+                Message::Long(
                     tag,
                     MessageData::Value(length),
                     MessageData::MemoryHandle(handle)) if (tag & message::OPEN != 0) => {
@@ -339,17 +380,34 @@ fn handle_directory(directory: Arc<RwLock<Directory>>,
                         s
                     };
 
+                    // Make a list of directories
+                    let subdir_list = {
+                        let mut s = String::new();
+                        let mut it = dir.subdirs.keys().peekable();
+                        while let Some(name) = it.next() {
+                            s.reserve(name.len() + 13);
+                            s.push_str("{\"name\":\"");
+                            s.push_str(name);
+                            s.push_str("\"}");
+                            if it.peek().is_some() {
+                                s.push_str(", ");
+                            }
+                        }
+                        s
+                    };
+
                     let info = format!("{{
 \"short\": \"Ramdisk directory\",
 \"messages\": [{{\"name\": \"open\",
                  \"tag\": {open_tag}}},
                {{\"name\": \"query\",
                  \"tag\": {query_tag}}}],
-\"subdirs\": [],
+\"subdirs\": [{subdir_list}],
 \"files\": [{file_list}]}}",
                                        open_tag = message::OPEN,
                                        query_tag = message::QUERY,
-                                       file_list = file_list);
+                                       file_list = file_list,
+                                       subdir_list = subdir_list);
 
                     // Copy and send as memory handle
                     let mem_handle = syscalls::MemoryHandle::from_u8_slice(&info.as_bytes());
