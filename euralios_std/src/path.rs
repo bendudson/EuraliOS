@@ -216,6 +216,35 @@ impl PathBuf {
 
         self.inner.push(path);
     }
+
+    /// Truncates `self` to [`self.parent`].
+    ///
+    /// Returns `false` and does nothing if [`self.parent`] is [`None`].
+    /// Otherwise, returns `true`.
+    ///
+    /// [`self.parent`]: Path::parent
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::{Path, PathBuf};
+    ///
+    /// let mut p = PathBuf::from("/spirited/away.rs");
+    ///
+    /// p.pop();
+    /// assert_eq!(Path::new("/spirited"), p);
+    /// p.pop();
+    /// assert_eq!(Path::new("/"), p);
+    /// ```
+    pub fn pop(&mut self) -> bool {
+        match self.parent().map(|p| p.as_u8_slice().len()) {
+            Some(len) => {
+                self.as_mut_vec().truncate(len);
+                true
+            }
+            None => false,
+        }
+    }
 }
 
 impl fmt::Debug for PathBuf {
@@ -368,6 +397,31 @@ impl Path {
         }
     }
 
+    /// Produces an iterator over the path's components viewed as [`OsStr`]
+    /// slices.
+    ///
+    /// For more information about the particulars of how the path is separated
+    /// into components, see [`components`].
+    ///
+    /// [`components`]: Path::components
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::{self, Path};
+    /// use std::ffi::OsStr;
+    ///
+    /// let mut it = Path::new("/tmp/foo.txt").iter();
+    /// assert_eq!(it.next(), Some(OsStr::new(&path::MAIN_SEPARATOR.to_string())));
+    /// assert_eq!(it.next(), Some(OsStr::new("tmp")));
+    /// assert_eq!(it.next(), Some(OsStr::new("foo.txt")));
+    /// assert_eq!(it.next(), None)
+    /// ```
+    #[inline]
+    pub fn iter(&self) -> Iter<'_> {
+        Iter { inner: self.components() }
+    }
+
     /// Returns the `Path` without its final component, if there is one.
     ///
     /// Returns [`None`] if the path terminates in a root or prefix.
@@ -469,6 +523,13 @@ impl cmp::PartialEq for Path {
 }
 
 impl AsRef<Path> for str {
+    #[inline]
+    fn as_ref(&self) -> &Path {
+        Path::new(self)
+    }
+}
+
+impl AsRef<Path> for OsStr {
     #[inline]
     fn as_ref(&self) -> &Path {
         Path::new(self)
@@ -624,6 +685,18 @@ pub struct Components<'a> {
     // been produced from either end
     front: State,
     back: State,
+}
+
+/// An iterator over the [`Component`]s of a [`Path`], as [`OsStr`] slices.
+///
+/// This `struct` is created by the [`iter`] method on [`Path`].
+/// See its documentation for more.
+///
+/// [`iter`]: Path::iter
+#[derive(Clone)]
+#[must_use = "iterators are lazy and do nothing unless consumed"]
+pub struct Iter<'a> {
+    inner: Components<'a>,
 }
 
 impl<'a> Components<'a> {
@@ -836,6 +909,64 @@ impl<'a> cmp::PartialEq for Components<'a> {
 
         // compare back to front since absolute paths often share long prefixes
         Iterator::eq(self.clone().rev(), other.clone().rev())
+    }
+}
+
+impl fmt::Debug for Iter<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        struct DebugHelper<'a>(&'a Path);
+
+        impl fmt::Debug for DebugHelper<'_> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.debug_list().entries(self.0.iter()).finish()
+            }
+        }
+
+        f.debug_tuple("Iter").field(&DebugHelper(self.as_path())).finish()
+    }
+}
+
+impl<'a> Iter<'a> {
+    /// Extracts a slice corresponding to the portion of the path remaining for iteration.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::Path;
+    ///
+    /// let mut iter = Path::new("/tmp/foo/bar.txt").iter();
+    /// iter.next();
+    /// iter.next();
+    ///
+    /// assert_eq!(Path::new("foo/bar.txt"), iter.as_path());
+    /// ```
+    #[must_use]
+    #[inline]
+    pub fn as_path(&self) -> &'a Path {
+        self.inner.as_path()
+    }
+}
+
+impl AsRef<Path> for Iter<'_> {
+    #[inline]
+    fn as_ref(&self) -> &Path {
+        self.as_path()
+    }
+}
+
+impl AsRef<OsStr> for Iter<'_> {
+    #[inline]
+    fn as_ref(&self) -> &OsStr {
+        self.as_path().as_os_str()
+    }
+}
+
+impl<'a> Iterator for Iter<'a> {
+    type Item = &'a OsStr;
+
+    #[inline]
+    fn next(&mut self) -> Option<&'a OsStr> {
+        self.inner.next().map(Component::as_os_str)
     }
 }
 

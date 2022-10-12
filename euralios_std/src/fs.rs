@@ -8,7 +8,7 @@ use core::fmt;
 use core::convert::AsRef;
 use serde_json::Value;
 
-use crate::{path::Path,
+use crate::{path::{Path, PathBuf, Component},
             println,
             syscalls::{self, CommHandle, SyscallError, MemoryHandle},
             message::{self, rcall, Message, MessageData}};
@@ -202,6 +202,8 @@ impl Iterator for ReadDir {
 pub fn read_dir<P: AsRef<Path>>(
     path: P
 ) -> Result<ReadDir, SyscallError> {
+    let path: &Path = path.as_ref();
+
     let f = File::open(path)?;
     let query = f.query()?;
 
@@ -267,7 +269,6 @@ pub fn remove_file<P: AsRef<Path>>(path: P) -> Result<(), SyscallError> {
 
 pub fn create_dir<P: AsRef<Path>>(path: P) -> Result<(), SyscallError> {
     let path: &Path = path.as_ref();
-    println!("create_dir: {:?}", path);
 
     // Get the directory's parent
     let parent = match path.parent() {
@@ -292,5 +293,42 @@ pub fn create_dir<P: AsRef<Path>>(path: P) -> Result<(), SyscallError> {
         Err((err, _)) => Err(err),
         Ok((message::OK, _, _)) => Ok(()),
         _ => Err(syscalls::SYSCALL_ERROR_PARAM)
+    }
+}
+
+/// Returns the canonical, absolute form of a path with all intermediate
+/// components normalized and symbolic links resolved.
+pub fn canonicalize<P: AsRef<Path>>(
+    path: P
+) -> Result<PathBuf, ()> {
+    let path: &Path = path.as_ref();
+
+    let mut pathbuf = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::RootDir => {
+                pathbuf.push("/");
+            }
+            Component::ParentDir => {
+                pathbuf.pop();
+            }
+            Component::Normal(s) => {
+                pathbuf.push(s);
+            }
+            _ => {}
+        }
+    }
+    return Ok(pathbuf)
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::canonicalize;
+    use crate::path::PathBuf;
+
+    #[test_case]
+    fn canonicalize() {
+        let path_buf = canonicalize("/a/b/../c/./d").unwrap();
+        assert_eq!(path_buf, PathBuf::from("/a/c/d"));
     }
 }
