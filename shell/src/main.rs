@@ -6,18 +6,18 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::str;
 
-use euralios_std::{path::Path,
+use euralios_std::{path::{Path, PathBuf},
                    fs::{self, File},
                    io,
                    message,
                    print, println,
                    syscalls::{self, SyscallError}};
 
-fn exec_path(path: &str) -> Result<(), SyscallError> {
+fn exec_path(path: &Path) -> Result<(), SyscallError> {
     // Read binary from file
     let bin = {
         let mut bin: Vec<u8> = Vec::new();
-        let mut file = File::open(&path)?;
+        let mut file = File::open(path)?;
         file.read_to_end(&mut bin)?;
         bin
     };
@@ -72,7 +72,7 @@ fn help() {
 }
 
 /// List a directory
-fn ls(current_directory: &str, args: Vec<&str>) {
+fn ls(current_directory: &Path, args: Vec<&str>) {
     if args.len() > 1 {
         println!("Usage: ls [path]");
         return;
@@ -81,13 +81,8 @@ fn ls(current_directory: &str, args: Vec<&str>) {
     let option_rd = if args.len() == 0 {
         fs::read_dir(current_directory)
     } else {
-        let path = Path::new(args[0]);
-        if path.is_absolute() {
-            fs::read_dir(path)
-        } else {
-            // Join paths
-            fs::read_dir(current_directory)
-        }
+        let path = fs::canonicalize(PathBuf::from(current_directory).join(args[0])).unwrap();
+        fs::read_dir(path)
     };
 
     if let Ok(rd) = option_rd {
@@ -116,7 +111,7 @@ fn umount(args: Vec<&str>) {
 }
 
 /// Delete a file
-fn rm(current_directory: &str, args: Vec<&str>) {
+fn rm(current_directory: &Path, args: Vec<&str>) {
     if args.len() != 1 {
         println!("Usage: rm <file>");
         return;
@@ -130,7 +125,7 @@ fn rm(current_directory: &str, args: Vec<&str>) {
 }
 
 /// Make a directory
-fn mkdir(current_directory: &str, args: Vec<&str>) {
+fn mkdir(current_directory: &Path, args: Vec<&str>) {
     if args.len() != 1 {
         println!("Usage: mkdir <directory>");
         return;
@@ -156,7 +151,7 @@ Type help [Enter] to see the shell help page.
     let mut line_buffer = String::new();
 
     // Current Working Directory
-    let mut current_directory = String::from("/ramdisk");
+    let mut current_directory = PathBuf::from("/ramdisk");
 
     loop {
         // prompt
@@ -176,10 +171,15 @@ Type help [Enter] to see the shell help page.
                 // List directory
                 "ls" => ls(&current_directory, args),
                 // Print working directory
-                "pwd" => println!("{}", current_directory),
+                "pwd" => println!("{:?}", current_directory),
                 // Change directory
                 "cd" => {
-                    println!("Args: {:?}", args);
+                    if args.len() != 1 {
+                        println!("Usage: cd <directory>");
+                        continue;
+                    }
+                    current_directory.push(args.first().unwrap());
+                    current_directory = fs::canonicalize(current_directory).unwrap();
                 },
                 "mount" => {
                     match syscalls::list_mounts() {
@@ -200,13 +200,10 @@ Type help [Enter] to see the shell help page.
                 "rm" => rm(&current_directory, args),
                 "mkdir" => mkdir(&current_directory, args),
                 cmd => {
-                    let mut path: String = current_directory.clone();
-                    path.push('/');
-                    path.push_str(cmd);
-                    println!("Path |{}|", path);
+                    let path = fs::canonicalize(current_directory.join(cmd)).unwrap();
 
                     if let Err(err) = exec_path(&path) {
-                        println!("Couldn't open '{}': {}", path, err);
+                        println!("Couldn't open '{:?}': {}", path, err);
                     }
                 }
             }
