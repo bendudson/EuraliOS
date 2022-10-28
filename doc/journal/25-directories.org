@@ -1,5 +1,52 @@
+
 * Directories
 
 We'll now add the `mkdir`, `rmdir` and `cd` commands to the shell,
 and the message handling in the `ramdisk` program to create and
 delete directories.
+
+
+** Opening read-only
+
+To control whether files and directories can be written we need to
+be able to open them read-only.
+
+
+The Rust =std::fs::OpenOptions= builder provides a way to control
+the options used when opening a file: Do we want to write the file? If the file
+exists do we want to create it? etc.
+
+After implementing =euralios_std::fs::OpenOptions= with the same
+interface, the =fs::create_dir()= function is implemented using all
+our path utilities as:
+#+begin_src rust
+  pub fn create_dir<P: AsRef<Path>>(path: P) -> Result<(), SyscallError> {
+      let path: &Path = path.as_ref();
+
+      // Get the directory's parent
+      let parent = match path.parent() {
+          Some(parent) => parent,
+          None => { return Err(syscalls::SYSCALL_ERROR_PARAM); }
+      };
+
+      // Get the final part of the path
+      let new_dir_name = match path.file_name() {
+          Some(name) => name,
+          None => { return Err(syscalls::SYSCALL_ERROR_PARAM); }
+      };
+
+      // Open the parent directory for modifying
+      let f = OpenOptions::new().write(true).open(parent)?;
+
+      // Send a MKDIR message
+      let bytes = new_dir_name.bytes();
+      match f.rcall(message::MKDIR,
+                    (bytes.len() as u64).into(),
+                    MemoryHandle::from_u8_slice(bytes).into()) {
+          Err((err, _)) => Err(err),
+          Ok((message::OK, _, _)) => Ok(()),
+          _ => Err(syscalls::SYSCALL_ERROR_PARAM)
+      }
+  }
+#+end_src
+

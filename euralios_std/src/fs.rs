@@ -13,6 +13,170 @@ use crate::{path::{Path, PathBuf, Component},
             syscalls::{self, CommHandle, SyscallError, MemoryHandle},
             message::{self, rcall, Message, MessageData}};
 
+#[derive(Clone, Debug)]
+pub struct OpenOptions {
+    write: bool,
+    append: bool,
+    create: bool,
+    truncate: bool
+}
+
+impl OpenOptions {
+    /// Creates a blank new set of options ready for configuration.
+    ///
+    /// All options are initially set to `false`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::OpenOptions;
+    ///
+    /// let mut options = OpenOptions::new();
+    /// let file = options.read(true).open("foo.txt");
+    /// ```
+    pub fn new() -> OpenOptions {
+        OpenOptions{write: false,
+                    append: false,
+                    create: false,
+                    truncate: false}
+    }
+
+    /// Sets the option for read access.
+    ///
+    /// This option, when true, will indicate that the file should be
+    /// `read`-able if opened.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::OpenOptions;
+    ///
+    /// let file = OpenOptions::new().read(true).open("foo.txt");
+    /// ```
+    pub fn read(&mut self, read: bool) -> &mut OpenOptions {
+        self // Has no effect
+    }
+
+    /// Sets the option for write access.
+    ///
+    /// This option, when true, will indicate that the file should be
+    /// `write`-able if opened.
+    ///
+    /// If the file already exists, any write calls on it will overwrite its
+    /// contents, without truncating it.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::OpenOptions;
+    ///
+    /// let file = OpenOptions::new().write(true).open("foo.txt");
+    /// ```
+    pub fn write(&mut self, write: bool) -> &mut OpenOptions {
+        self.write = write; self
+    }
+
+    /// Sets the option for the append mode.
+    ///
+    /// This option, when true, means that writes will append to a file instead
+    /// of overwriting previous contents.
+    /// Note that setting `.write(true).append(true)` has the same effect as
+    /// setting only `.append(true)`.
+    ///
+    /// For most filesystems, the operating system guarantees that all writes are
+    /// atomic: no writes get mangled because another process writes at the same
+    /// time.
+    ///
+    /// One maybe obvious note when using append-mode: make sure that all data
+    /// that belongs together is written to the file in one operation. This
+    /// can be done by concatenating strings before passing them to [`write()`],
+    /// or using a buffered writer (with a buffer of adequate size),
+    /// and calling [`flush()`] when the message is complete.
+    ///
+    /// If a file is opened with both read and append access, beware that after
+    /// opening, and after every write, the position for reading may be set at the
+    /// end of the file. So, before writing, save the current position (using
+    /// [`seek`]`(`[`SeekFrom`]`::`[`Current`]`(0))`, and restore it before the next read.
+    ///
+    /// ## Note
+    ///
+    /// This function doesn't create the file if it doesn't exist. Use the [`create`]
+    /// method to do so.
+    ///
+    /// [`write()`]: ../../std/fs/struct.File.html#method.write
+    /// [`flush()`]: ../../std/fs/struct.File.html#method.flush
+    /// [`seek`]: ../../std/fs/struct.File.html#method.seek
+    /// [`SeekFrom`]: ../../std/io/enum.SeekFrom.html
+    /// [`Current`]: ../../std/io/enum.SeekFrom.html#variant.Current
+    /// [`create`]: #method.create
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::OpenOptions;
+    ///
+    /// let file = OpenOptions::new().append(true).open("foo.txt");
+    /// ```
+    pub fn append(&mut self, append: bool) -> &mut OpenOptions {
+        self.append = append; self
+    }
+
+    /// Sets the option for truncating a previous file.
+    ///
+    /// If a file is successfully opened with this option set it will truncate
+    /// the file to 0 length if it already exists.
+    ///
+    /// The file must be opened with write access for truncate to work.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::OpenOptions;
+    ///
+    /// let file = OpenOptions::new().write(true).truncate(true).open("foo.txt");
+    /// ```
+    pub fn truncate(&mut self, truncate: bool) -> &mut OpenOptions {
+        self.truncate = truncate; self
+    }
+
+    /// Sets the option for creating a new file.
+    ///
+    /// This option indicates whether a new file will be created if the file
+    /// does not yet already exist.
+    ///
+    /// In order for the file to be created, [`write`] or [`append`] access must
+    /// be used.
+    ///
+    /// [`write`]: #method.write
+    /// [`append`]: #method.append
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::fs::OpenOptions;
+    ///
+    /// let file = OpenOptions::new().write(true).create(true).open("foo.txt");
+    /// ```
+    pub fn create(&mut self, create: bool) -> &mut OpenOptions {
+        self.create = create; self
+    }
+
+    /// Opens a file at `path` with the options specified by `self`.
+    ///
+    pub fn open<P: AsRef<Path>>(&self, path: P) -> Result<File, SyscallError> {
+        self._open(path.as_ref())
+    }
+
+    fn _open(&self, path: &Path) -> Result<File, SyscallError> {
+        let flags = message::O_READ +
+            if self.write || self.append { message::O_WRITE } else { 0 } +
+            if self.create { message::O_CREATE } else { 0 } +
+            if self.truncate { message::O_TRUNCATE } else { 0 };
+        let handle = syscalls::open(path.as_os_str(), flags)?;
+        Ok(File(handle))
+    }
+}
+
 /// Represents a file
 ///
 /// Intended to have the same API as `std::file::File`
@@ -282,8 +446,8 @@ pub fn create_dir<P: AsRef<Path>>(path: P) -> Result<(), SyscallError> {
         None => { return Err(syscalls::SYSCALL_ERROR_PARAM); }
     };
 
-    // Open the parent directory
-    let f = File::open(parent)?;
+    // Open the parent directory for modifying
+    let f = OpenOptions::new().write(true).open(parent)?;
 
     // Send a MKDIR message
     let bytes = new_dir_name.bytes();
