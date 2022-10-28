@@ -266,6 +266,7 @@ pub const ERROR_INVALID_FORMAT: u64 = 130;
 pub const ERROR_INVALID_UTF8: u64 = 131;
 pub const ERROR_INVALID_VALUE: u64 = 132;
 pub const ERROR_UNKNOWN_MESSAGE: u64 = 133;
+pub const ERROR_DENIED: u64 = 134;
 
 /// Message types for the system PCI program
 pub mod pci {

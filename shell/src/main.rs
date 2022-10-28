@@ -118,7 +118,8 @@ fn rm(current_directory: &Path, args: Vec<&str>) {
     }
     let file = args.first().unwrap();
 
-    if let Err(err) = fs::remove_file(Path::new(current_directory).join(file)) {
+    let path = fs::canonicalize(PathBuf::from(current_directory).join(file)).unwrap();
+    if let Err(err) = fs::remove_file(path) {
         // Failed
         println!("rm: cannot remove {}: {}", file, err);
     }
@@ -131,7 +132,8 @@ fn mkdir(current_directory: &Path, args: Vec<&str>) {
         return;
     }
     let arg = args.first().unwrap();
-    if let Err(err) = fs::create_dir(Path::new(current_directory).join(arg)) {
+    let path = fs::canonicalize(PathBuf::from(current_directory).join(arg)).unwrap();
+    if let Err(err) = fs::create_dir(path) {
         // Failed
         println!("mkdir: cannot create {}: {:?}", arg, err);
     }

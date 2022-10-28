@@ -45,7 +45,10 @@ struct Directory {
 }
 
 
-fn openr(mut dir: Arc<RwLock<Directory>>, path: &Path) -> Result<CommHandle, ()> {
+/// Open a file or directory
+///
+/// This will create files but not directories
+fn open(mut dir: Arc<RwLock<Directory>>, path: &Path, flags: u64) -> Result<CommHandle, ()> {
     println!("[ramdisk] Opening {:?}", path);
 
     let mut path_iter = path.iter().peekable();
@@ -55,8 +58,9 @@ fn openr(mut dir: Arc<RwLock<Directory>>, path: &Path) -> Result<CommHandle, ()>
 
         if dir.read().subdirs.contains_key(key) {
             if path_iter.peek().is_none() {
-                // No further path components => Opening a directory
-                println!("Starting handle_directory({})", key);
+                // No further path components => Opening an existing directory
+                let readwrite = (flags & message::O_WRITE) == message::O_WRITE;
+                println!("Starting handle_directory({}, rw:{})", key, readwrite);
 
                 // Make a new communication handle pair
                 let (handle, client_handle) = syscalls::new_rendezvous()
@@ -66,7 +70,7 @@ fn openr(mut dir: Arc<RwLock<Directory>>, path: &Path) -> Result<CommHandle, ()>
 
                 // Start a thread
                 thread::spawn(move || {
-                    handle_directory(subdir, handle);
+                    handle_directory(subdir, handle, readwrite);
                 });
 
                 // Return the other handle to the client
@@ -82,20 +86,51 @@ fn openr(mut dir: Arc<RwLock<Directory>>, path: &Path) -> Result<CommHandle, ()>
                 return Err(());
             }
 
+            // No more components -> Opening an existing file
             let file = dir.read().files[key].clone();
+
+            if (flags & message::O_TRUNCATE) == message::O_TRUNCATE {
+                // Delete contents
+                file.write().clear();
+            }
 
             // Make a new communication handle pair
             let (handle, client_handle) = syscalls::new_rendezvous()
                 .map_err(|e| {println!("[ramdisk] Couldn't create Rendezvous {:?}", e);})?;
 
             // Start a thread
-            thread::spawn(move || {
-                handle_file_readonly(file, handle);
-            });
+            if (flags & message::O_WRITE) == message::O_WRITE {
+                thread::spawn(move || {
+                    handle_file_readwrite(file, handle);
+                });
+            } else {
+                thread::spawn(move || {
+                    handle_file_readonly(file, handle);
+                });
+            }
 
             // Return the other handle to the client
             return Ok(client_handle);
+        } else if path_iter.peek().is_some() {
+            // Missing a directory
+            println!("[ramdisk] Error opening path {:?}: {} not found", path, key);
+            return Err(());
+        } else if (flags & message::O_CREATE) == message::O_CREATE {
+            // Create a file
+
+            let new_file = Arc::new(RwLock::new(File::new()));
+            dir.write().files.insert(String::from(key), new_file.clone());
+
+            let (handle, client_handle) = syscalls::new_rendezvous()
+                .map_err(|e| {println!("[ramdisk] Couldn't create Rendezvous {:?}", e);})?;
+
+            thread::spawn(move || {
+                handle_file_readwrite(new_file, handle);
+            });
+
+            return Ok(client_handle);
         } else {
+            // Missing a file
             println!("[ramdisk] Error opening path {:?}: {} not found", path, key);
             return Err(());
         }
@@ -109,41 +144,6 @@ impl Directory {
             subdirs: BTreeMap::new(),
             files: BTreeMap::new()
         }
-    }
-
-    /// Open for writing
-    fn openw(&mut self, path: &str, flags: u64) -> Result<CommHandle, ()> {
-        // Strip leading "/"
-        let path = path.trim_start_matches('/');
-        println!("[ramdisk] Opening {}", path);
-
-        let file = if self.files.contains_key(path) {
-            self.files[path].clone()
-        } else if flags & message::O_CREATE != 0 {
-            // Create a new file
-            let new_file = Arc::new(RwLock::new(File::new()));
-            self.files.insert(String::from(path), new_file.clone());
-            new_file
-        } else {
-            return Err(());
-        };
-
-        if flags & message::O_TRUNCATE != 0 {
-            // Delete contents
-            file.write().clear();
-        }
-
-        // Make a new communication handle pair
-        let (handle, client_handle) = syscalls::new_rendezvous()
-            .map_err(|e| {println!("[ramdisk] Couldn't create Rendezvous {:?}", e);})?;
-
-        // Start a thread
-        thread::spawn(move || {
-            handle_file_readwrite(file, handle);
-        });
-
-        // Return the other handle to the client
-        Ok(client_handle)
     }
 
     /// Delete a file
@@ -298,8 +298,17 @@ fn handle_file_readonly(file: Arc<RwLock<File>>,
         });
 }
 
+/// Handle messages for a given directory
+///
+/// # Arguments
+///
+/// * `directory` - The directory being viewed or modified
+/// * `comm_handle` - Waits for messages on this CommHandle
+/// * `readwrite` - If true, allow modifications
+///
 fn handle_directory(directory: Arc<RwLock<Directory>>,
-                    comm_handle: CommHandle) {
+                    comm_handle: CommHandle,
+                    readwrite: bool) {
     dispatch_loop(
         &comm_handle,
         |msg| {
@@ -309,6 +318,14 @@ fn handle_directory(directory: Arc<RwLock<Directory>>,
                     MessageData::Value(length),
                     MessageData::MemoryHandle(handle)) => {
                     // Delete a file
+
+                    if !readwrite {
+                        // Error! Read-only
+                        syscalls::send(&comm_handle,
+                                       syscalls::Message::Short(
+                                           message::ERROR_DENIED, 0, 0));
+                        return;
+                    }
 
                     // Get the path string
                     let u8_slice = handle.as_slice::<u8>(length as usize);
@@ -334,6 +351,14 @@ fn handle_directory(directory: Arc<RwLock<Directory>>,
                     MessageData::Value(length),
                     MessageData::MemoryHandle(handle)) => {
                     // Make a directory
+
+                    if !readwrite {
+                        // Error! Read-only
+                        syscalls::send(&comm_handle,
+                                       syscalls::Message::Short(
+                                           message::ERROR_DENIED, 0, 0));
+                        return;
+                    }
 
                     // Get the path string
                     let u8_slice = handle.as_slice::<u8>(length as usize);
@@ -367,10 +392,16 @@ fn handle_directory(directory: Arc<RwLock<Directory>>,
                         let path = path.trim_start_matches('/');
                         let result = if flags == message::O_READ {
                             // Read-only
-                            openr(directory.clone(), Path::new(path))
+                            open(directory.clone(), Path::new(path), message::O_READ)
+                        } else if readwrite {
+                            // Write, truncate or create
+                            open(directory.clone(), Path::new(path), flags)
                         } else {
-                            // Write and/or create
-                            directory.write().openw(path, flags)
+                            // Permission denied
+                            syscalls::send(&comm_handle,
+                                           syscalls::Message::Short(
+                                           message::ERROR_DENIED, 0, 0));
+                            return;
                         };
                         match result {
                             Ok(handle) => {
@@ -438,10 +469,12 @@ fn handle_directory(directory: Arc<RwLock<Directory>>,
                  \"tag\": {open_tag}}},
                {{\"name\": \"query\",
                  \"tag\": {query_tag}}}],
+\"readwrite\": {readwrite},
 \"subdirs\": [{subdir_list}],
 \"files\": [{file_list}]}}",
                                        open_tag = message::OPEN,
                                        query_tag = message::QUERY,
+                                       readwrite = readwrite,
                                        file_list = file_list,
                                        subdir_list = subdir_list);
 
@@ -466,5 +499,5 @@ fn main() {
 
     let fs = Directory::new();
 
-    handle_directory(Arc::new(RwLock::new(fs)), STDIN.clone());
+    handle_directory(Arc::new(RwLock::new(fs)), STDIN.clone(), true);
 }
