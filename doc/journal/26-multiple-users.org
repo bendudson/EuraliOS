@@ -1,2 +1,24 @@
 * Multiple users
 
+Now that we have directories, we can combine them with the ability to
+customise the Virtual File System (VFS) of programs to create a
+multi-user system.
+
+** Specifying a subprocess VFS
+
+New processes are created with the =exec= syscall. The =param= argument
+has not been used yet but was a placeholder for some way to specify
+the virtual file system of the new process.
+
+The default is that the new process shares a VFS with its parent. Any new mount
+points added by one will be seen by the other. Another option is to start with
+a copy of the parent VFS, removing or adding mount points to customise. Finally
+we could start with an empty VFS and add paths to it.
+
+To be consistent with other messages we could try using JSON format to specify
+the VFS paths. That would mean adding a quite complex parser to the kernel, but
+what we need to do is quite simple.
+
+- First character: (S)ame, (C)opy, (E)mpty
+
+

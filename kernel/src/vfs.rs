@@ -101,4 +101,9 @@ impl VFS {
         s.push(']');
         s
     }
+
+    /// Make a copy of the internal state
+    pub fn copy(&self) -> Self {
+        VFS(Arc::new(RwLock::new(self.0.read().clone())))
+    }
 }

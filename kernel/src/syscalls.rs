@@ -90,6 +90,7 @@ use x86_64::VirtAddr;
 
 use crate::process;
 use crate::gdt;
+use crate::vfs;
 use crate::interrupts::{self, Context};
 use crate::message::Message;
 
@@ -635,7 +636,28 @@ fn sys_exec(
         // Get the VFS for this process
         // This will be set from the param string
         // For now the same as parent
-        let mounts = thread.vfs();
+
+        let mounts = if param_length == 0 {
+            thread.vfs() // Default is shared VFS
+        } else {
+            let param_slice = unsafe{slice::from_raw_parts(param, param_length as usize)};
+
+            // First byte determines the VFS to start with
+            let mut vfs = match param_slice[0] {
+                b'S' => thread.vfs(),
+                b'C' => thread.vfs().copy(),
+                b'E' => vfs::VFS::new(),
+                _ => {
+                    thread.return_error(SYSCALL_ERROR_PARAM);
+                    process::set_current_thread(thread);
+                    return;
+                }
+            };
+
+            // Further arguments add or remove paths
+
+            thread.vfs()
+        };
 
         // Copy the ELF data. The data needs to be accessible
         // within the kernel page table, but the given pointer
