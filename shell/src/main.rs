@@ -11,7 +11,7 @@ use euralios_std::{path::{Path, PathBuf},
                    io,
                    message,
                    print, println,
-                   syscalls::{self, SyscallError}};
+                   syscalls::{self, SyscallError, VFS}};
 
 fn exec_path(path: &Path) -> Result<(), SyscallError> {
     // Read binary from file
@@ -29,7 +29,8 @@ fn exec_path(path: &Path) -> Result<(), SyscallError> {
         &bin,
         0, // Permission flags
         exe_input2,
-        syscalls::STDOUT.clone());
+        syscalls::STDOUT.clone(),
+        VFS::shared());
 
     loop {
         // Wait for keyboard input

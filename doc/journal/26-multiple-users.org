@@ -1,6 +1,6 @@
 * Multiple users
 
-Now that we have directories, we can combine them with the ability to
+Now that we have [[./25-directories][directories]], we can combine them with the ability to
 customise the Virtual File System (VFS) of programs to create a
 multi-user system.
 
@@ -19,6 +19,73 @@ To be consistent with other messages we could try using JSON format to specify
 the VFS paths. That would mean adding a quite complex parser to the kernel, but
 what we need to do is quite simple.
 
-- First character: (S)ame, (C)opy, (E)mpty
+- First character: (S)hared, (C)opy, (N)ew
 
+
+** Standard library support
+
+In =euralios_std::syscalls= we can define a builder to create
+the VFS parameter string
+#+begin_src rust
+pub struct VFS {
+    s: String
+}
+#+end_src
+That string is going to be the parameter string sent to the
+=sys_exec= syscall. We then create three constructors:
+=shared()=, =copy()= and =new()=. For example
+#+begin_src rust
+  impl VFS {
+      /// Copy current VFS for new process
+      pub fn copy() -> Self {
+          VFS{s: String::from("C")}
+      }
+      ...
+  }
+#+end_src
+Modifications to this VFS then append strings
+#+begin_src rust
+  impl VFS {
+      /// Add a communication handle as a path in the VFS
+      pub fn mount(mut self, mut handle: CommHandle, path: &str) -> Self {
+          // String containing handle number
+          let handle_s = unsafe{handle.take().to_string()};
+
+          self.s.push('m'); // Code for "mount"
+          self.s.push_str(&handle_s);
+          self.s.push('|'); // Terminates handle
+          self.s.push_str(path);
+          self.s.push(':'); // Terminates path
+          self
+      }
+
+      /// Remove a path from the VFS
+      pub fn remove(mut self, path: &str) -> Self {
+          self.s.push('-');
+          self.s.push_str(path);
+          self.s.push(':'); // Terminates path
+          self
+      }
+  }
+#+end_src
+so that in =init= we can start a shell process with
+#+begin_src rust
+  // Start the process
+  syscalls::exec(
+      include_bytes!("../../user/shell"),
+      0,
+      input2,
+      console.output.clone(),
+      VFS::copy().remove("/pci").remove("/tcp")).expect("[init] Couldn't start user program");
+#+end_src
+which sends a parameter string "C-/pci:-/tcp:" to the =sys_exec=
+system call. Running the =mount= command in the shell now just lists
+=["/ramdisk","/dev/nic",]=.
+
+** Login process
+
+Using this VFS customisation method we can create processes that are
+in their own sandbox, and control the resources they and any of their
+child processes can access. To isolate users from each other we can
+now run shells with a different VFS, depending on which user logs in.
 

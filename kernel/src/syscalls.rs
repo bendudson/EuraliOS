@@ -22,7 +22,7 @@
 //!  9   yield()
 //! 10   new_rendezvous() -> (handle, handle)
 //! 11   copy_rendezvous(handle) -> handle
-//! 12   exec(flags, ELF, stdin/stdout, vfs)
+//! 12   exec(RAX: flags, RDI: ELF, RSI: stdin/stdout, RDX: vfs)
 //! 13   mount(RAX: handle, RDI: *const u8, RSI: length)
 //! 14   listmounts() -> memory_handle
 //! 15   umount(RDI: *const u8, RSI: length)
@@ -646,7 +646,7 @@ fn sys_exec(
             let mut vfs = match param_slice[0] {
                 b'S' => thread.vfs(),
                 b'C' => thread.vfs().copy(),
-                b'E' => vfs::VFS::new(),
+                b'N' => vfs::VFS::new(),
                 _ => {
                     thread.return_error(SYSCALL_ERROR_PARAM);
                     process::set_current_thread(thread);
@@ -654,9 +654,84 @@ fn sys_exec(
                 }
             };
 
-            // Further arguments add or remove paths
+            let mut it = param_slice[1..].iter();
 
-            thread.vfs()
+            // Further arguments add or remove paths
+            while let Some(ctrl) = it.next() {
+                match ctrl {
+                    b'-' => {
+                        // Remove a mount path, ending in ':'
+
+                        let path_u8: Vec<u8> = it.by_ref()
+                            .take_while(|x| **x != b':')
+                            .cloned()
+                            .collect();
+
+                        if let Ok(path_string) = str::from_utf8(&path_u8) {
+                            if let Err(_) = vfs.umount(path_string) {
+                                // Could not remove
+                                thread.return_error(SYSCALL_ERROR_PARAM);
+                                process::set_current_thread(thread);
+                                return;
+                            }
+                        } else {
+                            // Bad utf8 conversion
+                            thread.return_error(SYSCALL_ERROR_UTF8);
+                            process::set_current_thread(thread);
+                            return;
+                        }
+                    }
+                    b'm' => {
+                        // Mount a communication handle. Number (in ASCII) followed by delimiter then path
+                        // e.g. "m12|/mountpoint"
+                        let mut handle: u64 = 0;
+                        while let Some(ch) = it.next() {
+                            if (*ch >= b'0') && (*ch <= b'9') {
+                                // Digit
+                                handle = handle * 10 + (ch - b'0') as u64;
+                            } else {
+                                // delimiter
+                                break;
+                            }
+                        }
+
+                        // Get the rendezvous for this handle
+                        let rdv = match thread.take_rendezvous(handle) {
+                            Some(rdv) => rdv,
+                            None => {
+                                // Invalid handle
+                                thread.return_error(SYSCALL_ERROR_INVALID_HANDLE);
+                                process::set_current_thread(thread);
+                                return;
+                            }
+                        };
+
+                        // Get the path
+                        let path_u8: Vec<u8> = it.by_ref()
+                            .take_while(|x| **x != b':')
+                            .cloned()
+                            .collect();
+
+                        let path_string = match str::from_utf8(&path_u8) {
+                            Ok(s) => s,
+                            Err(_) => {
+                                // Bad utf8 conversion
+                                thread.return_error(SYSCALL_ERROR_UTF8);
+                                process::set_current_thread(thread);
+                                return;
+                            }
+                        };
+
+                        vfs.mount(path_string, rdv);
+                    }
+                    _ => {
+                        thread.return_error(SYSCALL_ERROR_PARAM);
+                        process::set_current_thread(thread);
+                        return;
+                    }
+                }
+            }
+            vfs
         };
 
         // Copy the ELF data. The data needs to be accessible

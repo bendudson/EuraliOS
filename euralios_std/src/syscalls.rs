@@ -1,6 +1,10 @@
 use core::arch::asm;
 use core::{fmt, ptr, slice, clone::Clone};
 
+extern crate alloc;
+use alloc::string::String;
+use alloc::string::ToString;
+
 pub use crate::message::{self, Message};
 use crate::debug_println;
 use crate::ffi::OsStr;
@@ -443,6 +447,53 @@ pub fn new_rendezvous() -> Result<(CommHandle, CommHandle), SyscallError> {
     }
 }
 
+pub struct VFS {
+    s: String
+}
+
+impl VFS {
+    /// Create a new (empty) VFS for new process
+    ///
+    pub fn new() -> Self {
+        VFS{s: String::from("N")}
+    }
+
+    /// Share current VFS with new process
+    pub fn shared() -> Self {
+        VFS{s: String::from("S")}
+    }
+
+    /// Copy current VFS for new process
+    pub fn copy() -> Self {
+        VFS{s: String::from("C")}
+    }
+
+    /// Add a communication handle as a path in the VFS
+    pub fn mount(mut self, mut handle: CommHandle, path: &str) -> Self {
+        // String containing handle number
+        let handle_s = unsafe{handle.take().to_string()};
+
+        self.s.push('m'); // Code for "mount"
+        self.s.push_str(&handle_s);
+        self.s.push('|'); // Terminates handle
+        self.s.push_str(path);
+        self.s.push(':'); // Terminates path
+        self
+    }
+
+    /// Remove a path from the VFS
+    pub fn remove(mut self, path: &str) -> Self {
+        self.s.push('-');
+        self.s.push_str(path);
+        self.s.push(':'); // Terminates path
+        self
+    }
+
+    fn as_str(&self) -> &str {
+        &self.s
+    }
+}
+
 /// Execute a new process
 ///
 /// # Arguments
@@ -457,20 +508,24 @@ pub fn exec(
     bin: &[u8],
     flags: u8,
     mut stdin: CommHandle,
-    mut stdout: CommHandle) -> Result<u64, SyscallError> {
+    mut stdout: CommHandle,
+    vfs: VFS
+) -> Result<u64, SyscallError> {
+
+    let param_str = vfs.as_str();
 
     let error: u64;
     let tid: u64;
     unsafe {
         asm!("syscall",
              // RAX contains | bin length (32) | param length (16) | flags (8) | syscall (8)
-             in("rax") SYSCALL_EXEC | ((flags as u64) << 8) | ((bin.len() as u64) << 32),
+             in("rax") SYSCALL_EXEC | ((flags as u64) << 8) | ((param_str.len() as u64) << 16) | ((bin.len() as u64) << 32),
              // RDI contains pointer to ELF binary data
              in("rdi") bin.as_ptr() as usize,
              // RSI contains STDIN & STDOUT handles
              in("rsi") ((stdin.take() as u64) << 32) | (stdout.take() as u64),
              // RDX will contain a pointer to a parameter string
-             in("rdx") 0,
+             in("rdx") param_str.as_ptr() as usize,
              lateout("rax") error,
              lateout("rdi") tid,
              out("rcx") _,

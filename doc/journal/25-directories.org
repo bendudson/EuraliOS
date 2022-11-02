@@ -50,3 +50,5 @@ our path utilities as:
   }
 #+end_src
 
+In the [[./26-multiple-users.org][next section]] we'll use directories and custom Virtual File
+Systems (VFS) to isolate multiple users from each other.

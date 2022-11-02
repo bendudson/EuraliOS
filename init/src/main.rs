@@ -5,10 +5,12 @@ use euralios_std::{debug_println,
                    console::sequences,
                    fprintln,
                    fs::File,
-                   syscalls::{self, STDIN, STDOUT, CommHandle},
+                   syscalls::{self, STDIN, STDOUT, CommHandle, VFS},
                    message::{self, rcall, Message, MessageData}};
 
 
+/// Represents a text console with an output communication handle
+/// and optional input handle
 struct Console<'a> {
     /// VGA communicator
     vga: &'a CommHandle,
@@ -40,7 +42,8 @@ impl<'a> Console<'a> {
         }
     }
 
-    ///
+    /// Launch a shell process on a new console
+    /// Returns the console to enable switching to/from this shell
     pub fn new_shell(vga_com: &'a CommHandle) -> Self {
         let mut console = Self::new(vga_com);
 
@@ -53,7 +56,8 @@ impl<'a> Console<'a> {
             include_bytes!("../../user/shell"),
             0,
             input2,
-            console.output.clone()).expect("[init] Couldn't start user program");
+            console.output.clone(),
+            VFS::copy().remove("/pci").remove("/tcp")).expect("[init] Couldn't start user program");
         console
     }
 
@@ -81,7 +85,8 @@ fn mount(
         bin,
         flags,
         input,
-        stdout).expect("[init] Couldn't start program");
+        stdout,
+        VFS::shared()).expect("[init] Couldn't start program");
 
     // Mount in filesystem
     syscalls::mount(path, input2);
@@ -97,7 +102,8 @@ fn main() {
         include_bytes!("../../user/keyboard"),
         syscalls::EXEC_PERM_IO, // I/O permissions
         STDIN.clone(),
-        STDIN.clone()).expect("[init] Couldn't start keyboard program");
+        STDIN.clone(),
+        VFS::shared()).expect("[init] Couldn't start keyboard program");
 
     // Expect a video memory buffer from the kernel
     // Note: Sent to STDOUT channel to avoid conflict with keyboard
@@ -121,7 +127,8 @@ fn main() {
         include_bytes!("../../user/vga_driver"),
         syscalls::EXEC_PERM_IO, // I/O permissions
         vga_com2.clone(),
-        vga_com2).expect("[init] Couldn't start VGA program");
+        vga_com2,
+        VFS::shared()).expect("[init] Couldn't start VGA program");
 
     // Send the video memory to the video driver
     if let Err(err) = syscalls::send(&vga_com,
