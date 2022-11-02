@@ -4,7 +4,7 @@
 use euralios_std::{debug_println,
                    console::sequences,
                    fprintln,
-                   fs::File,
+                   fs::{self, File},
                    syscalls::{self, STDIN, STDOUT, CommHandle, VFS},
                    message::{self, rcall, Message, MessageData}};
 
@@ -57,7 +57,7 @@ impl<'a> Console<'a> {
             0,
             input2,
             console.output.clone(),
-            VFS::copy().remove("/pci").remove("/tcp")).expect("[init] Couldn't start user program");
+            VFS::copy().remove("/pci").remove("/dev/nic")).expect("[init] Couldn't start user program");
         console
     }
 
@@ -157,18 +157,24 @@ fn main() {
           0, // No I/O privileges
           writer_sys.clone());
 
+    // Create a "bin" folder for system binaries
+    fs::create_dir("/ramdisk/bin");
+
     // Write some data to the ramdisk
-    if let Ok(mut file) = File::create("/ramdisk/gopher") {
+    if let Ok(mut file) = File::create("/ramdisk/bin/gopher") {
         file.write(include_bytes!("../../user/gopher"));
     }
-    if let Ok(mut file) = File::create("/ramdisk/system_test") {
+    if let Ok(mut file) = File::create("/ramdisk/bin/system_test") {
         file.write(include_bytes!("../../user/system_test"));
     }
-    if let Ok(mut file) = File::create("/ramdisk/std_test") {
+    if let Ok(mut file) = File::create("/ramdisk/bin/std_test") {
         file.write(include_bytes!("../../user/std_test"));
     }
-    if let Ok(mut file) = File::create("/ramdisk/keyboard") {
+    if let Ok(mut file) = File::create("/ramdisk/bin/keyboard") {
         file.write(include_bytes!("../../user/keyboard"));
+    }
+    if let Ok(mut file) = File::create("/ramdisk/bin/shell") {
+        file.write(include_bytes!("../../user/shell"));
     }
 
     mount("/pci", include_bytes!("../../user/pci"),

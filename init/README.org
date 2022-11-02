@@ -1,0 +1,5 @@
+* Init process "Hyacinth"
+
+This is the first user (Ring 3) process created by kernel Merriwig.
+It is responsible for setting up all other processes, including
+drivers and user login consoles.

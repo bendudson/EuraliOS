@@ -68,6 +68,7 @@ fn help() {
   mount           List mounted filesystems
   umount <path>   Un-mount a filesystem
   mkdir <path>    Make a directory
+  exit            Exit shell
 "
     );
 }
@@ -202,6 +203,7 @@ Type help [Enter] to see the shell help page.
                 "umount" => umount(args),
                 "rm" => rm(&current_directory, args),
                 "mkdir" => mkdir(&current_directory, args),
+                "exit" => return,
                 cmd => {
                     let path = fs::canonicalize(current_directory.join(cmd)).unwrap();
 
