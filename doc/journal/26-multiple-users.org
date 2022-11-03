@@ -78,7 +78,7 @@ so that in =init= we can start a shell process with
       console.output.clone(),
       VFS::copy().remove("/pci").remove("/dev/nic")).expect("[init] Couldn't start user program");
 #+end_src
-which sends a parameter string "C-/pci:-/tcp:" to the =sys_exec=
+which sends a parameter string "C-/pci:-/dev/nic:" to the =sys_exec=
 system call. Running the =mount= command in the shell now just lists
 =["/ramdisk","/tcp",]=.
 

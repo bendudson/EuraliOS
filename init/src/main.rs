@@ -53,7 +53,7 @@ impl<'a> Console<'a> {
 
         // Start the process
         syscalls::exec(
-            include_bytes!("../../user/shell"),
+            include_bytes!("../../user/login"),
             0,
             input2,
             console.output.clone(),
@@ -176,6 +176,10 @@ fn main() {
     if let Ok(mut file) = File::create("/ramdisk/bin/shell") {
         file.write(include_bytes!("../../user/shell"));
     }
+
+    // Create some home directories
+    fs::create_dir("/ramdisk/root");
+    fs::create_dir("/ramdisk/user");
 
     mount("/pci", include_bytes!("../../user/pci"),
           syscalls::EXEC_PERM_IO, // I/O permissions

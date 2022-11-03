@@ -208,9 +208,16 @@ impl File {
         Ok(File(handle))
     }
 
+    /// Convert to CommHandle
+    ///
+    /// EuraliOS only
+    pub fn to_CommHandle(self) -> CommHandle {
+        self.0
+    }
+
     /// Query a file handle
     ///
-    /// EuraliOS specific
+    /// EuraliOS only
     pub fn query(&self) -> Result<FileQuery, SyscallError> {
         match rcall(&self.0,
                     message::QUERY,
@@ -241,6 +248,8 @@ impl File {
     }
 
     /// Remote call. Send a message and wait for a reply
+    ///
+    /// EuraliOS only
     pub fn rcall(
         &self,
         data1: u64,
