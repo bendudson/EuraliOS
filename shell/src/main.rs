@@ -143,13 +143,7 @@ fn mkdir(current_directory: &Path, args: Vec<&str>) {
 
 #[no_mangle]
 fn main() {
-    println!("Welcome to EuraliOS shell!
-
-  [F1] switches to system console
-  [F2..F5] user consoles
-
-Type help [Enter] to see the shell help page.
-");
+    println!("Type help [Enter] to see the shell help page.");
 
     let stdin = io::stdin();
     let mut line_buffer = String::new();

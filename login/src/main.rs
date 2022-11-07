@@ -58,6 +58,13 @@ fn main() {
     let stdin = io::stdin();
     let mut username = String::new();
 
+    println!("Welcome to EuraliOS!
+
+  [F1] switches to system console
+  [F2..F5] user consoles
+
+");
+
     loop {
         print!("login: ");
 
