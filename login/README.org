@@ -1,0 +1,18 @@
+* Login process
+
+This is launched by =init=. It waits for a user to enter their login
+details, checks them and launches a shell for the user.
+
+This is the only part of EuraliOS that really knows about users, or
+distinguishes root from non-root users. User permissions are
+controlled by the virtual file system (VFS) they can see.  When =root=
+logs in then =login= starts a shell that shares its VFS, and so root
+can modify essential parts of the system. When another user logs in
+they get a custom VFS that only contains some paths such as their home
+directory and read-only access to =bin=.
+
+The behaviour of this program is currently hard-wired, but the idea is
+that the user names, passwords and allowed paths would be contained in
+a configuration file that users would not have direct access to.  To
+enable users to change their own passwords, login could mount a
+communication handle in each user's VFS that waits for a message.

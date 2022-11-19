@@ -3,3 +3,25 @@
 This is the first user (Ring 3) process created by kernel Merriwig.
 It is responsible for setting up all other processes, including
 drivers and user login consoles.
+
+The startup consists of
+- Start the =keyboard= process
+- Wait for a message from the kernel containing the video memory
+  handle.
+- Start the =VGA= process and send it the video memory handle.
+- Start =ramdisk=, mounted on =/ramdisk=. Write some executable
+  files to =/ramdisk/bin/=. Create directories for =root= and =user=
+  home directories.
+- Start =pci=, =rtl8139= network driver and =tcp= programs.
+
+After this it enters a loop waiting for input from the keyboard.
+=F= keys switch consoles, redirecting keyboard to different programs
+and switching the active VGA buffer. 
+
+* Known issues
+
+- Message sends and receives block and do not yet have any timeout.
+  The result is that if a program is not responding when =init=
+  tries to send a character then =init= will be suspended and the whole
+  system will become unresponsive. The solution is to add message
+  send & receive timeouts.

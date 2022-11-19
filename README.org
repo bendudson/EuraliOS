@@ -52,7 +52,7 @@ much, but it can do it all at the same time.
   - [X] TCP network stack using [[https://docs.rs/smoltcp/latest/smoltcp/][smoltcp]] in user space, with DHCP and DNS
 
 - User programs
-  - [ ] Login process and multiple users
+  - [X] Login process and multiple users
   - [X] A basic shell
   - [X] A simple [[https://en.wikipedia.org/wiki/Gopher_(protocol)][Gopher]] browser
   - [X] A RAM disk for temporary files
