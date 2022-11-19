@@ -6,6 +6,10 @@ for except, to borrow Milne's introduction, "For those, young or old,
 who like the things which I like...  Either you will enjoy it, or you
 won't. It is that sort of +book+ project."
 
+#+CAPTION: EuraliOS demonstration
+#+NAME: fig-demo
+[[./doc/euralios.gif]]
+
 *Disclaimer*: This was written by someone who doesn't (or didn't) know
 anything about Rust or operating systems. The result is probably not
 idiomatic Rust or a sensible OS design. If you are looking for a
