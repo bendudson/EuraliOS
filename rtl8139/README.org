@@ -1,0 +1,4 @@
+* RTL8139 network card driver
+
+This program runs in user space and provides an interface to the
+RTL8139 network card.

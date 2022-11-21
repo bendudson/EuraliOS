@@ -584,7 +584,7 @@ fn sys_exec(
     syscall_id: u64,
     bin: *const u8, // Binary data (ELF format)
     stdio: u64, // The stdin/stdout rendezvous handles
-    param: *const u8) {
+    param: *const u8) { // String specifying the process VFS
 
     let context = unsafe {&mut (*context_ptr)};
 

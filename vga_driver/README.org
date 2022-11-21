@@ -1,0 +1,39 @@
+* VGA text mode driver
+
+This program runs in user space, using the [[https://crates.io/crates/vga][vga crate]] to interface to
+VGA video cards in 80x25 text mode. This driver interprets a subset of
+the [[https://en.wikipedia.org/wiki/ANSI_escape_code][ANSI escape sequences]] and keeps track of multiple displays that it
+can switch between.
+
+Displays are represented by =Writer= objects, that keep track of
+what is displayed and can write to video memory if active.
+
+** Startup
+
+When first starting this program expects to receive a message of type
+=VIDEO_MEMORY= via =stdin=. That should contain a 128k (length
+=0x20000=) memory region that is mapped to video memory.
+
+** Main loop
+
+The main loop waits for messages on =stdin=. If it receives an
+=OPEN_READWRITE= message then it creates a new =Writer=, i.e. a
+new screen that can be written to. A new thread is launched
+to handle messages for this new =Writer= and a communication
+handle is returned along with the =Writer= ID.
+
+To switch between displays a =WRITE= message is sent to the main
+loop (=stdin= of the VGA driver) with the =Writer= ID. The
+current writer will be deactivated and the specified writer
+activated by copying its buffer into VGA memory.
+
+** Writer handler
+
+For each =Writer= there is a thread that waits for =WRITE= messages.
+Those can be either single characters, or strings that may contain
+ANSI escape sequences.
+
+When processing inputs the =Writer= updates an internal buffer, and if
+active also updates the VGA memory. The reason for updating both is
+that reading from VGA memory is very slow, so this avoids having to do
+this when switching displays.

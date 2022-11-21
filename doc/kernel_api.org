@@ -2,26 +2,26 @@
 
 
 
-| Syscall         | RAX 0-7 |   |   |   |   | Description                                   |
-|-----------------+---------+---+---+---+---+-----------------------------------------------|
-| fork_thread     |       0 |   |   |   |   | Creates a new thread                          |
-| exit_thread     |       1 |   |   |   |   | Terminates the calling thread                 |
-| debug_write     |       2 |   |   |   |   | Prints direct to screen. Will be removed      |
-| receive         |       3 |   |   |   |   | Wait for a message                            |
-| send            |       4 |   |   |   |   | Send a message                                |
-| send_receive    |       5 |   |   |   |   | Send and wait for reply from receiving thread |
-| open            |       6 |   |   |   |   | Open a mounted filesystem                     |
-| malloc          |       7 |   |   |   |   | Allocate a chunk of memory pages              |
-| free            |       8 |   |   |   |   | Deallocate a chunk of pages                   |
-| yield           |       9 |   |   |   |   | Puts current thread back into the scheduler   |
-| new_rendezvous  |      10 |   |   |   |   | Creates a new pair of Rendezvous handles      |
-| copy_rendezvous |      11 |   |   |   |   | Copies a Rendezvous handle                    |
-| exec            |      12 |   |   |   |   | Create a new process                          |
-| mount           |      13 |   |   |   |   | Mount a Rendezvous into the process' VFS      |
-| list_mounts     |      14 |   |   |   |   | List all mounted paths in the process' VFS    |
-| umount          |      15 |   |   |   |   | Remove a Rendezvous from the VFS              |
-| close           |      16 |   |   |   |   | Close a Rendezvous handle                     |
-| await_interrupt |      17 |   |   |   |   | Wait until a hardware interrupt occurs        |
+| Syscall         | RAX 0-7 | RAX 8-15 | RAX 16-31 | RAX 32-63 | RDI     | RSI          | RDX     | Description                                   |
+|-----------------+---------+----------+-----------+-----------+---------+--------------+---------+-----------------------------------------------|
+| fork_thread     |       0 |          |           |           |         |              |         | Creates a new thread                          |
+| exit_thread     |       1 |          |           |           |         |              |         | Terminates the calling thread                 |
+| debug_write     |       2 |          |           |           | ptr     | len          |         | Prints direct to screen. Will be removed      |
+| receive         |       3 |          |           |           |         |              |         | Wait for a message                            |
+| send            |       4 |          |           |           |         |              |         | Send a message                                |
+| send_receive    |       5 |          |           |           |         |              |         | Send and wait for reply from receiving thread |
+| open            |       6 |          |           |           | ptr     | len          |         | Open a mounted filesystem                     |
+| malloc          |       7 |          |           |           |         |              |         | Allocate a chunk of memory pages              |
+| free            |       8 |          |           |           |         |              |         | Deallocate a chunk of pages                   |
+| yield           |       9 |          |           |           |         |              |         | Puts current thread back into the scheduler   |
+| new_rendezvous  |      10 |          |           |           |         |              |         | Creates a new pair of Rendezvous handles      |
+| copy_rendezvous |      11 |          |           |           |         |              |         | Copies a Rendezvous handle                    |
+| exec            |      12 | flags    | param_len | bin_len   | bin_ptr | stdin/stdout | vfs_ptr | Create a new process                          |
+| mount           |      13 |          |           |           |         |              |         | Mount a Rendezvous into the process' VFS      |
+| list_mounts     |      14 |          |           |           |         |              |         | List all mounted paths in the process' VFS    |
+| umount          |      15 |          |           |           | ptr     | len          |         | Remove a Rendezvous from the VFS              |
+| close           |      16 |          |           |           |         |              |         | Close a Rendezvous handle                     |
+| await_interrupt |      17 |          |           |           |         |              |         | Wait until a hardware interrupt occurs        |
 
 ** Thread and process management
 

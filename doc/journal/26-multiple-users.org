@@ -2,25 +2,43 @@
 
 Now that we have [[./25-directories][directories]], we can combine them with the ability to
 customise the Virtual File System (VFS) of programs to create a
-multi-user system.
+multi-user system. Programs can only communicate with drivers etc. if
+they have a communication handle, so users can be given only limited
+access to the system drivers etc.
 
 ** Specifying a subprocess VFS
 
-New processes are created with the =exec= syscall. The =param= argument
-has not been used yet but was a placeholder for some way to specify
-the virtual file system of the new process.
+New processes are created with the =exec= syscall. The =param=
+argument (pointer in the =rdx= register) has not been used yet but was
+a placeholder for some way to specify the virtual file system of the
+new process.
 
-The default is that the new process shares a VFS with its parent. Any new mount
-points added by one will be seen by the other. Another option is to start with
-a copy of the parent VFS, removing or adding mount points to customise. Finally
-we could start with an empty VFS and add paths to it.
+The default is that the new process shares a VFS with its parent. Any
+new mount points added by one process will be seen by the
+other. Another option is to start with a copy of the parent VFS,
+removing or adding mount points to customise. Finally, we could start
+with an empty VFS and add paths to it.
 
 To be consistent with other messages we could try using JSON format to specify
 the VFS paths. That would mean adding a quite complex parser to the kernel, but
-what we need to do is quite simple.
+what we need to do is quite simple. Instead the kernel reads a custom
+string format:
 
-- First character: (S)hared, (C)opy, (N)ew
+- First byte specifies the VFS to start with: (S)hared with parent,
+  (C)opy of parent's VFS, (N)ew VFS.
 
+- Following clauses modify the VFS:
+  - Remove path: A '-' byte followed by a path terminated with a ':'
+    e.g. =-/path:= This unmounts a path from the VFS so that the
+    new process can't see it.
+  - Mount communication handle: An 'm' followed by the handle number
+    (in ASCII), a non-numerical delimiter, and a path terminating in
+    ':' e.g. =m/path/to/mount:= The communication handle is removed
+    from calling process.  [Note: If the =exec= command fails after
+    this is processed, the handle may be lost/closed].
+
+Other kinds of modifications could be added but this is sufficient to
+enable the caller to customise the VFS of the new process.
 
 ** Standard library support
 
@@ -80,7 +98,7 @@ so that in =init= we can start a shell process with
 #+end_src
 which sends a parameter string "C-/pci:-/dev/nic:" to the =sys_exec=
 system call. Running the =mount= command in the shell now just lists
-=["/ramdisk","/tcp",]=.
+=["/ramdisk","/tcp",]= because both =/pci= and =/dev/nic= have been removed.
 
 ** Running a shell inside a shell
 
@@ -105,3 +123,59 @@ in their own sandbox, and control the resources they and any of their
 child processes can access. To isolate users from each other we can
 now run shells with a different VFS, depending on which user logs in.
 
+We'll change =init= so that rather than launching =shell= on each
+VGA console, instead it launches a new process =login=. The login process
+will enter a loop waiting for a user to log in:
+
+#+begin_src rust
+  let stdin = io::stdin();
+  let mut username = String::new();
+
+  loop {
+      print!("login: ");
+
+      username.clear();
+      stdin.read_line(&mut username);
+
+      ...
+  }
+#+end_src
+
+Eventually we should have a password file, that most users can't
+directly access, but for now we can just hard-wire some user names
+and not bother with passwords. The VFS of the shell that is launched
+depends on whether the login is for 'root' or 'user':
+#+begin_src rust
+  let vfs = match username.trim() {
+      "root" => VFS::shared(), // Root sees everything
+      "user" => {
+          // Open bin directory read-only
+          let bin = OpenOptions::new().open("/ramdisk/bin").unwrap();
+          // User's home directory read-write
+          let home = OpenOptions::new().write(true).open("/ramdisk/user").unwrap();
+          // TCP stack read-write
+          let tcp = OpenOptions::new().write(true).open("/tcp").unwrap();
+          VFS::new()
+              .mount(bin.to_CommHandle(), "/bin")
+              .mount(home.to_CommHandle(), "/ramdisk")
+              .mount(tcp.to_CommHandle(), "/tcp")
+      },
+      _ => {
+          println!("Unknown login. Try 'root' or 'user'...");
+          continue;
+      }
+  };
+#+end_src
+
+Here if "root" logs in then the shell shares the VFS with the =login=
+process; If "user" logs in then they get a new VFS with only some
+paths mounted:
+- The =/ramdisk/bin= directory is opened read-only, the file converted to a communication
+  handle, and mounted in the user VFS as =/bin=. The user can therefore read (and execute)
+  these files, but can't modify or delete them.
+- A directory in the ramdisk, =/ramdisk/user= is opened read-write, and mounted as =/ramdisk=
+  in the user's VFS. They can read and write to that directory, but can't access any other part
+  of the ramdisk.
+- The =/tcp= directory is mounted in the user VFS as =/tcp=. This allows the user to open
+  connections and run e.g. the =gopher= client. They can't however access the =/dev/nic=
+  driver or =/pci= process directly.
