@@ -12,11 +12,14 @@
 
 use core::arch::asm;
 use euralios_std::{println, syscalls, message::pci,
+                   message::{self, Message},
                    syscalls::STDIN};
 use core::fmt;
 
 extern crate alloc;
 use alloc::vec::Vec;
+use alloc::string::String;
+use alloc::format;
 
 const CONFIG_ADDRESS: u16 = 0xCF8;
 const CONFIG_DATA: u16 = 0xCFC;
@@ -225,11 +228,11 @@ fn main() {
     // Enter loop waiting for messages
     loop {
         match syscalls::receive(&STDIN) {
-            Ok(message) => {
-                match message {
+            Ok(msg) => {
+                match msg {
                     // Find a device with given vendor and device ID
                     // and return a message to the same Rendezvous
-                    syscalls::Message::Short(
+                    Message::Short(
                         pci::FIND_DEVICE, vendor, device) => {
                         let vendor_id = (vendor & 0xFFFF) as u16;
                         let device_id = (device & 0xFFFF) as u16;
@@ -256,7 +259,7 @@ fn main() {
                     }
 
                     // Read Base Address Register
-                    syscalls::Message::Short(
+                    Message::Short(
                         pci::READ_BAR, address, bar_id) => {
 
                         if address > 0xFFFF_FFFF || bar_id > 5 {
@@ -279,7 +282,7 @@ fn main() {
                     }
                     // Enable bus mastering, allowing a device to use DMA
                     // https://github.com/vinc/moros/blob/trunk/src/sys/pci.rs#L74
-                    syscalls::Message::Short(
+                    Message::Short(
                         pci::ENABLE_BUS_MASTERING, address, _) => {
                         let location = PciLocation::from_address(address as u32);
 
@@ -287,6 +290,56 @@ fn main() {
                         location.write_register(1,
                                                 location.read_register(1) | (1 << 2));
                     }
+
+                    Message::Short(
+                        message::QUERY, _, _) => {
+                        // Return information about PCI devices in JSON format
+
+                        // Make a list of devices
+                        let device_list = {
+                            let mut s = String::new();
+                            let mut it = devices.iter().peekable();
+                            while let Some(device) = it.next() {
+                                s.push_str(&format!("{{
+\"name\": \"{vendor_id:04X}_{device_id:04X}\",
+\"address\": \"0x{address:0X}\",
+\"vendor_id\": \"0x{vendor_id:04X}\",
+\"device_id\": \"0x{device_id:04X}\"}}",
+                                                   address = device.location.address() as u64,
+                                                   vendor_id = device.vendor_id,
+                                                   device_id = device.device_id
+                                ));
+
+                                if it.peek().is_some() {
+                                    s.push_str(", ");
+                                }
+                            }
+                            s
+                        };
+
+                        let info = format!("{{
+\"short\": \"Ramdisk directory\",
+\"messages\": [{{\"name\": \"find_device\",
+                 \"tag\": {find_device_tag}}},
+               {{\"name\": \"read_bar\",
+                 \"tag\": {read_bar_tag}}},
+               {{\"name\": \"query\",
+                 \"tag\": {query_tag}}}],
+\"subdirs\": [],
+\"files\": [{device_list}]}}",
+                                           find_device_tag = pci::FIND_DEVICE,
+                                           read_bar_tag = pci::READ_BAR,
+                                           query_tag = message::QUERY,
+                                           device_list = device_list);
+
+                        // Copy and send as memory handle
+                        let mem_handle = syscalls::MemoryHandle::from_u8_slice(&info.as_bytes());
+                        syscalls::send(&STDIN,
+                                       syscalls::Message::Long(
+                                           message::JSON,
+                                           (info.len() as u64).into(),
+                                           mem_handle.into()));
+                    },
                     _ => {}
                 }
             },

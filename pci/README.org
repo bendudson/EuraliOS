@@ -1,0 +1,5 @@
+* PCI bus driver
+
+This runs as a Ring 3 program with IO permissions, so it can read and
+write to ports. 
+
