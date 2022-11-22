@@ -42,8 +42,8 @@ impl<'a> Console<'a> {
         }
     }
 
-    /// Launch a shell process on a new console
-    /// Returns the console to enable switching to/from this shell
+    /// Launch a login process on a new console
+    /// Returns the console to enable switching to/from this login/shell
     pub fn new_shell(vga_com: &'a CommHandle) -> Self {
         let mut console = Self::new(vga_com);
 
@@ -57,7 +57,7 @@ impl<'a> Console<'a> {
             0,
             input2,
             console.output.clone(),
-            VFS::copy().remove("/pci").remove("/dev/nic")).expect("[init] Couldn't start user program");
+            VFS::shared()).expect("[init] Couldn't start user program");
         console
     }
 
