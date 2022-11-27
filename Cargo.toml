@@ -6,6 +6,7 @@ members = [
     "euralios_std",
     "pci",
     "rtl8139",
+    "virtio_net",
     "arp",
     "tcp",
     "gopher",
