@@ -108,6 +108,16 @@ impl PciLocation {
         let prog_if = ((reg_2 >> 8) & 0xFF) as u8;
         let subclass = ((reg_2 >> 16) & 0xFF) as u8;
         let class = ((reg_2 >> 24) & 0xFF) as u8;
+
+        let reg_3 = self.read_register(3);
+
+        let header_type = ((reg_3 >> 16) & 0xFF) as u8;
+
+        let subsystem_id = if header_type == 0 {
+            let reg_B = self.read_register(0xB);
+            ((reg_B >> 16) & 0xFFFF) as u16
+        } else { 0 };
+
         Some(Device {
             location: self.clone(),
             vendor_id,
@@ -115,7 +125,9 @@ impl PciLocation {
             class,
             subclass,
             prog_if,
-            revision_id
+            revision_id,
+            header_type,
+            subsystem_id
         })
     }
 }
@@ -128,7 +140,9 @@ struct Device {
     class: u8, // The type of function the device performs
     subclass: u8, // The specific function the device performs
     prog_if: u8, // register-level programming interface, if any
-    revision_id: u8 // revision identifier. Valid IDs are allocated by the vendor
+    revision_id: u8, // revision identifier. Valid IDs are allocated by the vendor
+    header_type: u8,
+    subsystem_id: u16
 }
 
 impl Device {
@@ -304,10 +318,16 @@ fn main() {
 \"name\": \"{vendor_id:04X}_{device_id:04X}\",
 \"address\": \"0x{address:0X}\",
 \"vendor_id\": \"0x{vendor_id:04X}\",
-\"device_id\": \"0x{device_id:04X}\"}}",
-                                                   address = device.location.address() as u64,
-                                                   vendor_id = device.vendor_id,
-                                                   device_id = device.device_id
+\"device_id\": \"0x{device_id:04X}\",
+\"class\": {class},
+\"subclass\": {subclass},
+\"subsystem_id\": {subsystem_id}}}",
+                                                    address = device.location.address() as u64,
+                                                    vendor_id = device.vendor_id,
+                                                    device_id = device.device_id,
+                                                    class = device.class,
+                                                    subclass = device.subclass,
+                                                    subsystem_id = device.subsystem_id
                                 ));
 
                                 if it.peek().is_some() {
@@ -318,7 +338,7 @@ fn main() {
                         };
 
                         let info = format!("{{
-\"short\": \"Ramdisk directory\",
+\"short\": \"PCI\",
 \"messages\": [{{\"name\": \"find_device\",
                  \"tag\": {find_device_tag}}},
                {{\"name\": \"read_bar\",
