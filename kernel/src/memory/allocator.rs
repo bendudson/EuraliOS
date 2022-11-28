@@ -31,7 +31,7 @@ pub fn init_heap(
         PageTableFlags::PRESENT | PageTableFlags::WRITABLE)?;
 
     unsafe {
-        ALLOCATOR.lock().init(HEAP_START, HEAP_SIZE);
+        ALLOCATOR.lock().init(HEAP_START as *mut u8, HEAP_SIZE);
     }
 
     Ok(())
