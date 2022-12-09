@@ -166,7 +166,10 @@ We then need to mark this frame as used, by modifying the level 1 bitmap:
 #+end_src
 If this level 1 chunk is now empty, clear the bit in the level 2 bitmap:
 #+begin_src rust
-if l1_bitmap
+  if l1_bitmap == 0 {
+      l2_bitmap ^= 1 << l2_index;
+      unsafe{*l2_ptr = l2_bitmap;}
+  }
 #+end_src
 
 ** Optimisation: Timing
