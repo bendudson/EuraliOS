@@ -11,12 +11,21 @@ use euralios_std::{println,
                    ports::{outportb, outportw, outportd,
                            inportb, inportw, inportd}};
 
+// Device status field, in the order the bits are typically set
 const VIRTIO_RESET: u8 = 0;
 const VIRTIO_ACKNOWLEDGE: u8 = 1;
 const VIRTIO_DRIVER_LOADED: u8 = 2;
-const VIRTIO_DRIVER_READY: u8 = 4;
-const VIRTIO_DEVICE_ERROR: u8 = 0x40;
-const VIRTIO_DRIVER_FAILED: u8 = 0x80;
+const VIRTIO_DRIVER_FAILED: u8 = 128;
+const VIRTIO_DRIVER_FEATURES_OK: u8 = 8;
+const VIRTIO_DRIVER_OK: u8 = 4;
+const VIRTIO_DEVICE_NEEDS_RESET: u8 = 64;
+
+// Feature bits
+// 0 to 23, and 50 to 127 Feature bits for the specific device type
+// 24 to 40 Feature bits reserved for extensions to the queue and feature negotiation mechanisms
+// 41 to 49, and 128 and above Feature bits reserved for future extensions.
+
+//const VIRTIO_F_VERSION_1
 
 const REG_DEVICE_FEATURES: u16 = 0;
 const REG_GUEST_FEATURES: u16 = 4;
@@ -65,6 +74,11 @@ impl Device {
     fn reset(&mut self) -> Result<(), &'static str> {
         // reset device
         outportb(self.ioaddr + REG_STATUS, VIRTIO_RESET);
+
+        // Wait for the device to present 0 device status
+        while inportb(self.ioaddr + REG_STATUS) != VIRTIO_RESET {
+            syscalls::thread_yield(); // Wait for a while
+        }
 
         // Tell the device that we found it
         outportb(self.ioaddr + REG_STATUS, VIRTIO_ACKNOWLEDGE);

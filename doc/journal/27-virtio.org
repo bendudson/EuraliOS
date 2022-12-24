@@ -12,6 +12,11 @@ includes filesystem devices.
 There is a description of [[https://wiki.osdev.org/Virtio][Virtio on OSdev.org]], but it seems to
 describe the pre-1.0 "legacy" interface.
 
+** Configuration
+
+PCI devices provide a 256-byte configuration space that should be read
+in 32-bit chunks by reading and writing ports.
+
 
 ** Network adapter
 
