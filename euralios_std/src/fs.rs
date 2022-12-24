@@ -53,7 +53,7 @@ impl OpenOptions {
     ///
     /// let file = OpenOptions::new().read(true).open("foo.txt");
     /// ```
-    pub fn read(&mut self, read: bool) -> &mut OpenOptions {
+    pub fn read(&mut self, _read: bool) -> &mut OpenOptions {
         self // Has no effect
     }
 
