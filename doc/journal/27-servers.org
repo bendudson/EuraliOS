@@ -1,0 +1,34 @@
+* Servers
+
+
+
+** Bugfix: Locking and =if let= clauses
+
+In the =open= function there was a chain of =else if= clauses, including one like:
+#+begin_src rust
+  } else if let Ok(file) = dir.read().get_file(key) { // <- Locked
+    // Opening an existing file
+  } else if path_iter.peek().is_some() {
+    // Missing a directory
+  } else if (flags & message::O_CREATE) == message::O_CREATE {
+    // Create a file
+    let new_file = dir.write().make_file(key)?; // <- Hangs
+  }
+#+end_src
+
+This code locked up because the lock created by =dir.read()= was not released
+by the time =dir.write()= is called. A solution is to define an intermediate
+variable:
+#+begin_src rust
+  } else {
+    let result_file = dir.read().get_file(key); // <- Locks and releases
+    if let Ok(file) = result_file {
+        // Opening an existing file
+    } else if path_iter.peek().is_some() {
+        // Missing a directory
+    } else if (flags & message::O_CREATE) == message::O_CREATE {
+      // Create a file
+      let new_file = dir.write().make_file(key)?;
+    }
+  }
+#+end_src

@@ -90,53 +90,56 @@ fn open(mut dir: Arc<RwLock<dyn DirLike + Sync + Send>>, path: &Path, flags: u64
                 // Further components => Move to subdirectory
                 dir = subdir;
             }
-        } else if let Ok(file) = dir.read().get_file(key) {
-            if path_iter.peek().is_some() {
-                println!("Error opening path {:?}: {} is a file not a directory", path, key);
-                return Err(syscalls::SYSCALL_ERROR_NOT_DIR);
-            }
-            // No more components -> Opening an existing file
-
-            if (flags & message::O_TRUNCATE) == message::O_TRUNCATE {
-                // Delete contents
-                file.write().clear();
-            }
-
-            // Make a new communication handle pair
-            let (handle, client_handle) = syscalls::new_rendezvous()?;
-
-            // Start a thread
-            if (flags & message::O_WRITE) == message::O_WRITE {
-                thread::spawn(move || {
-                    handle_file_readwrite(file, handle);
-                });
-            } else {
-                thread::spawn(move || {
-                    handle_file_readonly(file, handle);
-                });
-            }
-
-            // Return the other handle to the client
-            return Ok(client_handle);
-        } else if path_iter.peek().is_some() {
-            // Missing a directory
-            println!("Error opening path {:?}: {} not found", path, key);
-            return Err(syscalls::SYSCALL_ERROR_NOTFOUND);
-        } else if (flags & message::O_CREATE) == message::O_CREATE {
-            // Create a file
-
-            let new_file = dir.write().make_file(key)?;
-            let (handle, client_handle) = syscalls::new_rendezvous()?;
-
-            thread::spawn(move || {
-                handle_file_readwrite(new_file, handle);
-            });
-
-            return Ok(client_handle);
         } else {
-            // Missing a file
-            println!("Error opening path {:?}: {} not found", path, key);
-            return Err(syscalls::SYSCALL_ERROR_NOTFOUND);
+            let result_file = dir.read().get_file(key);
+            if let Ok(file) = result_file {
+                if path_iter.peek().is_some() {
+                    println!("Error opening path {:?}: {} is a file not a directory", path, key);
+                    return Err(syscalls::SYSCALL_ERROR_NOT_DIR);
+                }
+                // No more components -> Opening an existing file
+
+                if (flags & message::O_TRUNCATE) == message::O_TRUNCATE {
+                    // Delete contents
+                    file.write().clear();
+                }
+
+                // Make a new communication handle pair
+                let (handle, client_handle) = syscalls::new_rendezvous()?;
+
+                // Start a thread
+                if (flags & message::O_WRITE) == message::O_WRITE {
+                    thread::spawn(move || {
+                        handle_file_readwrite(file, handle);
+                    });
+                } else {
+                    thread::spawn(move || {
+                        handle_file_readonly(file, handle);
+                    });
+                }
+
+                // Return the other handle to the client
+                return Ok(client_handle);
+            } else if path_iter.peek().is_some() {
+                // Missing a directory
+                println!("Error opening path {:?}: {} not found", path, key);
+                return Err(syscalls::SYSCALL_ERROR_NOTFOUND);
+            } else if (flags & message::O_CREATE) == message::O_CREATE {
+                // Create a file
+
+                let new_file = dir.write().make_file(key)?;
+                let (handle, client_handle) = syscalls::new_rendezvous()?;
+
+                thread::spawn(move || {
+                    handle_file_readwrite(new_file, handle);
+                });
+
+                return Ok(client_handle);
+            } else {
+                // Missing a file
+                println!("Error opening path {:?}: {} not found", path, key);
+                return Err(syscalls::SYSCALL_ERROR_NOTFOUND);
+            }
         }
     }
     Err(syscalls::SYSCALL_ERROR_NOTFOUND)
