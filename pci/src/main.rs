@@ -242,7 +242,7 @@ impl DirLike for Device {
 \"device_id\": \"0x{device_id:04X}\",
 \"class\": {class},
 \"subclass\": {subclass},
-\"subsystem_id\": {subsystem_id}
+\"subsystem_id\": {subsystem_id},
 \"subdirs\": [],
 \"files\": []}}",
                 address = self.location.address() as u64,
