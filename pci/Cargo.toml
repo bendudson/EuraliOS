@@ -7,3 +7,4 @@ edition = "2021"
 
 [dependencies]
 euralios_std = { path = "../euralios_std" }
+spin = "0.5.2"

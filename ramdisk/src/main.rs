@@ -64,7 +64,7 @@ pub struct Directory {
 
 impl Directory {
     fn new() -> Self {
-        Directory {
+        Self {
             subdirs: BTreeMap::new(),
             files: BTreeMap::new()
         }
@@ -179,5 +179,11 @@ fn main() {
 
     let fs = Directory::new();
 
-    handle_directory(Arc::new(RwLock::new(fs)), STDIN.clone(), true);
+    handle_directory(
+        Arc::new(RwLock::new(fs)),
+        STDIN.clone(),
+        true,
+        |message| {
+            println!("[ramdisk] Received unexpected message {:?}", message);
+        });
 }

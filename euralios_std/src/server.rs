@@ -81,7 +81,9 @@ fn open(mut dir: Arc<RwLock<dyn DirLike + Sync + Send>>, path: &Path, flags: u64
 
                 // Start a thread
                 thread::spawn(move || {
-                    handle_directory(subdir, handle, readwrite);
+                    handle_directory(subdir, handle, readwrite, |message| {
+                        println!("[handle subdir] Received unexpected message {:?}", message);
+                    });
                 });
 
                 // Return the other handle to the client
@@ -298,10 +300,16 @@ fn handle_file_readonly(file: Arc<RwLock<dyn FileLike + Sync + Send>>,
 /// * `directory` - The directory being viewed or modified
 /// * `comm_handle` - Waits for messages on this CommHandle
 /// * `readwrite` - If true, allow modifications
+/// * `handler` - A closure that will be called with any unhandled message
 ///
-pub fn handle_directory(directory: Arc<RwLock<dyn DirLike + Sync + Send>>,
-                    comm_handle: CommHandle,
-                    readwrite: bool) {
+pub fn handle_directory<F>(
+    directory: Arc<RwLock<dyn DirLike + Sync + Send>>,
+    comm_handle: CommHandle,
+    readwrite: bool,
+    mut handler: F)
+where
+    F: FnMut(syscalls::Message) -> (),
+{
     dispatch_loop(
         &comm_handle,
         |msg| {
@@ -432,7 +440,8 @@ pub fn handle_directory(directory: Arc<RwLock<dyn DirLike + Sync + Send>>,
                                        mem_handle.into()));
                 },
                 message => {
-                    println!("[handle_directory] Received unexpected message {:?}", message);
+                    // Unhandled message => Call given closure
+                    handler(message);
                 }
             }
         });
