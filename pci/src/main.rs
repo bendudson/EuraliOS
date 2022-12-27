@@ -264,7 +264,7 @@ impl DeviceCollection {
     }
 
     fn insert(&mut self, device: Device) {
-        self.devices.insert(format!("{:04X}_{:04X}]",
+        self.devices.insert(format!("{:04X}_{:04X}",
                                     device.vendor_id, device.device_id),
                             Arc::new(RwLock::new(device)));
     }
