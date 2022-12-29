@@ -84,7 +84,7 @@ fn open(mut dir: Arc<RwLock<dyn DirLike + Sync + Send>>, path: &Path, flags: u64
                     handle_directory(subdir, handle, readwrite, |message| {
                         println!("[handle subdir] Received unexpected message {:?}", message);
                     });
-                });
+                })?; // Might fail to start a thread
 
                 // Return the other handle to the client
                 return Ok(client_handle)
@@ -113,11 +113,11 @@ fn open(mut dir: Arc<RwLock<dyn DirLike + Sync + Send>>, path: &Path, flags: u64
                 if (flags & message::O_WRITE) == message::O_WRITE {
                     thread::spawn(move || {
                         handle_file_readwrite(file, handle);
-                    });
+                    })?; // Might fail to start thread
                 } else {
                     thread::spawn(move || {
                         handle_file_readonly(file, handle);
-                    });
+                    })?;
                 }
 
                 // Return the other handle to the client
@@ -134,7 +134,7 @@ fn open(mut dir: Arc<RwLock<dyn DirLike + Sync + Send>>, path: &Path, flags: u64
 
                 thread::spawn(move || {
                     handle_file_readwrite(new_file, handle);
-                });
+                })?;
 
                 return Ok(client_handle);
             } else {

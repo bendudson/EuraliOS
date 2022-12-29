@@ -5,10 +5,10 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use euralios_std::{fs::{self, File, OpenOptions},
+use euralios_std::{fs::{File, OpenOptions},
                    io,
                    message,
-                   path::{Path, PathBuf},
+                   path::Path,
                    print, println,
                    syscalls::{self, SyscallError, VFS}};
 
