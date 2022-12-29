@@ -6,7 +6,7 @@
 extern crate alloc;
 use alloc::{string::String, sync::Arc};
 use spin::RwLock;
-use core::str;
+use core::{str, cmp};
 
 use crate::{path::Path,
             println,
@@ -219,7 +219,7 @@ fn handle_file_readwrite(file: Arc<RwLock<dyn FileLike + Sync + Send>>,
                     message::READ, start, length) => {
 
                     let f = file.read();
-                    let len = f.len();
+                    let len = cmp::min(f.len(), length as usize);
 
                     if len == 0 {
                         // No data
