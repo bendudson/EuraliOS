@@ -1,9 +1,7 @@
 
-use core::arch::asm;
 use core::fmt;
 
-const CONFIG_ADDRESS: u16 = 0xCF8;
-const CONFIG_DATA: u16 = 0xCFC;
+use crate::ports::PORTS;
 
 #[derive(Clone, Copy)]
 pub struct PciLocation {
@@ -40,36 +38,14 @@ impl PciLocation {
         let addr = self.address()
             | ((register as u32) << 2);
 
-        let value: u32;
-        unsafe {
-            asm!("out dx, eax",
-                 in("dx") CONFIG_ADDRESS,
-                 in("eax") addr,
-                 options(nomem, nostack));
-
-            asm!("in eax, dx",
-                 in("dx") CONFIG_DATA,
-                 lateout("eax") value,
-                 options(nomem, nostack));
-        }
-        value
+        PORTS.lock().read(addr)
     }
 
     pub fn write_register(&self, register: u8, value: u32) {
         let addr = self.address()
             | ((register as u32) << 2);
 
-        unsafe {
-            asm!("out dx, eax",
-                 in("dx") CONFIG_ADDRESS,
-                 in("eax") addr,
-                 options(nomem, nostack));
-
-            asm!("out dx, eax",
-                 in("dx") CONFIG_DATA,
-                 in("eax") value,
-                 options(nomem, nostack));
-        }
+        PORTS.lock().write(addr, value);
     }
 
     /// Return the Device which is at this PCI bus location

@@ -23,6 +23,7 @@ use alloc::{string::String, sync::Arc};
 use alloc::format;
 use spin::RwLock;
 
+mod ports;
 mod device;
 use device::{PciLocation, Device};
 
