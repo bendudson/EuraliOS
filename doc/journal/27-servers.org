@@ -1,8 +1,180 @@
 * Servers
 
+Since the EuraliOS file system is the main way to provide and control
+access to resources, we're going to need plenty of user-space servers
+to handle messages as the [[./22-ramdisk.org][RAMdisk]] server does. To avoid repeating
+code, we'll generalise the RAMdisk code and turn the message handling
+code into a standard library module. It's also a good excuse to learn
+about Rust traits.
 
+** FileLike trait
 
-** Bugfix: Locking and =if let= clauses
+The functions to handle messages for files currently allows reading
+and writing data, and writing is simplified to just appending. A third
+function is to truncate (empty) a file in the =open= function. The
+interface to something that is like a file is therefore defined (in
+=euralios_std::server=) as
+#+begin_src rust
+  pub trait FileLike {
+      /// Number of bytes in the file
+      fn len(&self) -> usize;
+      /// Read data starting at a given offset, storing in pre-allocated slice
+      fn read(&self, start: usize, buffer: &mut [u8]) -> Result<usize, syscalls::SyscallError>;
+      /// Write data starting at given offset
+      fn write(&mut self, start: usize, buffer: &[u8]) -> Result<usize, syscalls::SyscallError>;
+      /// Delete contents
+      fn clear(&mut self) -> Result<(), syscalls::SyscallError>;
+  }
+#+end_src
+The =read= function takes a pre-allocated mutable slice as input, so
+that the caller can control memory allocation. In our case we are allocating
+memory chunks for sending in messages.
+
+Not all files may implement all of these functions, so =read=, =write=
+and =clear= have default implementations that return
+=Err(syscalls::SYSCALL_ERROR_NOT_IMPLEMENTED)=. Errors should be
+handled by the standard library code, and returned as an =ERROR=
+message to the caller. The =len= function in most cases is simple, but
+less clear for streams where the length isn't known. Perhaps that
+should also return a =Result= (or =Option=) to indicate where length
+isn't known. The =clear= function should probably also be generalised
+at some point to =truncate(length:usize)= but that isn't needed yet.
+
+** DirLike trait
+
+Directories need to look up files and subdirectories, and list their
+contents. Both files and directories could implement a common trait
+and be treated the same by directories, and my C++ instinct was to
+create more complicated types and use inheritance. Rust, or perhaps my
+lack of experience with it, seems to discourage this, with all my
+attempts at adding abstraction leading to more code and more
+complicated code. On balance I think a simpler approach is better for now,
+so files and directories are looked up separately:
+#+begin_src rust
+  pub trait DirLike {
+      /// Lookup and return shared reference to a directory
+      fn get_dir(&self, name: &str) -> Result<Arc<RwLock<dyn DirLike + Sync + Send>>, syscalls::SyscallError>;
+      /// Lookup and return shared reference to a file
+      fn get_file(&self, name: &str) -> Result<Arc<RwLock<dyn FileLike + Sync + Send>>, syscalls::SyscallError>;
+      /// Return a JSON string describing the directory and its contents
+      fn query(&self) -> String;
+#+end_src
+
+** PCI devices as a filesystem
+
+The =pci= program handles messages and behaves a bit like a file
+server.  We can simplify it by removing most of the message handling
+code for pci-specific functions like reading device BAR registers, and
+replacing them with file read/writes.
+
+The root directory of the =pci= server represents a collection of devices:
+#+begin_src rust
+struct DeviceCollection {
+    devices: BTreeMap<String, Arc<RwLock<Device>>>
+}
+#+end_src
+
+#+begin_src rust
+  impl DirLike for DeviceCollection {
+      /// Each subdirectory is a PCI Device
+      fn get_dir(&self, name: &str) -> Result<Arc<RwLock<dyn DirLike + Send + Sync>>, syscalls::SyscallError> {
+          match self.devices.get(name) {
+              Some(device) => Ok(device.clone()),
+              None => Err(syscalls::SYSCALL_ERROR_NOTFOUND)
+          }
+      }
+      /// No files; always returns not found error
+      fn get_file(&self, name: &str) -> Result<Arc<RwLock<dyn FileLike + Send + Sync>>, syscalls::SyscallError> {
+          Err(syscalls::SYSCALL_ERROR_NOTFOUND)
+      }
+      fn query(&self) -> String {
+          // Create JSON description of devices
+      }
+  }
+#+end_src
+
+For this to work the =Device= struct should also implement the =DirLike= trait:
+#+begin_src rust
+  impl DirLike for Device {
+      fn get_dir(&self, name: &str) -> Result<Arc<RwLock<dyn DirLike + Send + Sync>>, syscalls::SyscallError> {
+          Err(syscalls::SYSCALL_ERROR_NOTFOUND)
+      }
+      fn get_file(&self, name: &str) -> Result<Arc<RwLock<dyn FileLike + Send + Sync>>, syscalls::SyscallError> {
+          Err(syscalls::SYSCALL_ERROR_NOTFOUND)
+      }
+      fn query(&self) -> String {
+          // Put device information into JSON string
+      }
+  }
+#+end_src
+We don't yet have any files under each PCI device directory, but we
+can add those later to provide ways to access and configure devices.
+
+** Multi-threaded ports
+
+Since =pci= is now multi-threaded, we need to make sure that the
+different threads can't interfere with each other. Unfortunately all
+access to PCI data involves writing to the =CONFIG_ADDRESS= port
+=0xCF8= and then reading or writing port =CONFIG_DATA=, =0xCFC=.
+
+To control access we will use a [[https://docs.rs/spin/0.5.2/spin/struct.Mutex.html][mutex]] and the [[https://docs.rs/lazy_static/latest/lazy_static/][lazy_static]] crate that
+was used in parts of the kernel.
+
+Putting the functions to read and write data to the PCI configuration
+address and data ports into a =struct= implementation:
+#+begin_src rust
+  struct PciPorts {}
+
+  impl PciPorts {
+      const CONFIG_ADDRESS: u16 = 0xCF8;
+      const CONFIG_DATA: u16 = 0xCFC;
+      /// Write to Address and Data ports
+      fn write(&mut self, address: u32, value: u32) {
+          unsafe {
+              asm!("out dx, eax",
+                   in("dx") Self::CONFIG_ADDRESS,
+                   in("eax") address,
+                   options(nomem, nostack));
+
+              asm!("out dx, eax",
+                   in("dx") Self::CONFIG_DATA,
+                   in("eax") value,
+                   options(nomem, nostack));
+          }
+      }
+
+      /// Write to Address port, read from Data port
+      /// Note: Mutates ports values so needs mut self
+      fn read(&mut self, address: u32) -> u32 {
+          let value: u32;
+          unsafe {
+              asm!("out dx, eax",
+                   in("dx") Self::CONFIG_ADDRESS,
+                   in("eax") address,
+                   options(nomem, nostack));
+
+              asm!("in eax, dx",
+                   in("dx") Self::CONFIG_DATA,
+                   lateout("eax") value,
+                   options(nomem, nostack));
+          }
+          value
+      }
+  }
+#+end_src
+we can then put one of these behind a mutex:
+#+begin_src rust
+lazy_static! {
+    static ref PORTS: Mutex<PciPorts> = Mutex::new(PciPorts{});
+}
+#+end_src
+There's nothing to prevent us from modifying the ports in another part
+of the code but if all access is through this then we should avoid
+many problems. Race conditions can still occur however if a caller
+releases the mutex lock between reading and writing values to device
+registers e.g. to set or clear a bit.
+
+** Appendix: Locking and =if let= clauses
 
 In the =open= function there was a chain of =else if= clauses, including one like:
 #+begin_src rust
