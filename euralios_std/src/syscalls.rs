@@ -382,9 +382,12 @@ fn _open(path: &str, flags: u64) -> Result<CommHandle, SyscallError> {
                     message::MessageData::CommHandle(handle), _)) => {
                     return Ok(handle);
                 }
-                msg => {
-                    debug_println!("Unexpected rcall reply {:?}", msg);
-                    return Err(SYSCALL_ERROR_NOTFOUND);
+                Ok(_) => {
+                    // Unexpected message type
+                    return Err(SyscallError::new(0));
+                }
+                Err((err, _msg)) => {
+                    return Err(err);
                 }
             }
         }

@@ -62,7 +62,7 @@ pub trait DirLike {
 ///
 /// This will create files but not directories
 fn open(mut dir: Arc<RwLock<dyn DirLike + Sync + Send>>, path: &Path, flags: u64) -> Result<CommHandle, syscalls::SyscallError> {
-    println!("Opening {:?}", path);
+    println!("[std:open] Opening {:?}", path);
 
     let mut path_iter = path.iter().peekable();
     while let Some(component) = path_iter.next()  {
@@ -82,7 +82,7 @@ fn open(mut dir: Arc<RwLock<dyn DirLike + Sync + Send>>, path: &Path, flags: u64
                 // Start a thread
                 thread::spawn(move || {
                     handle_directory(subdir, handle, readwrite, |message| {
-                        println!("[handle subdir] Received unexpected message {:?}", message);
+                        println!("[std:handle subdir] Unexpected message {:?}", message);
                     });
                 })?; // Might fail to start a thread
 
@@ -103,7 +103,7 @@ fn open(mut dir: Arc<RwLock<dyn DirLike + Sync + Send>>, path: &Path, flags: u64
 
                 if (flags & message::O_TRUNCATE) == message::O_TRUNCATE {
                     // Delete contents
-                    file.write().clear();
+                    file.write().clear()?;
                 }
 
                 // Make a new communication handle pair
@@ -166,9 +166,12 @@ where
             Err(syscalls::SYSCALL_ERROR_RECV_BLOCKING) => {
                 // Waiting for a message
                 // => Send an error message
-                syscalls::send(handle,
-                               syscalls::Message::Short(
-                                   message::ERROR, 0, 0));
+                if let Err((err, _msg)) = syscalls::send(handle,
+                                                         syscalls::Message::Short(
+                                                             message::ERROR, 0, 0)) {
+                    // Failed to send. Not clear what to do here
+                    println!("[std:dispatch_loop] Blocked recv: {}", err);
+                }
                 // Wait and try again
                 syscalls::thread_yield();
             },
@@ -178,7 +181,7 @@ where
             },
             Ok(msg) => f(msg),
             Err(code) => {
-                println!("[ramdisk] Receive error {}", code);
+                println!("[std:dispatch_loop] Receive error {}", code);
                 // Wait and try again
                 syscalls::thread_yield();
             }
@@ -200,19 +203,22 @@ fn handle_file_readwrite(file: Arc<RwLock<dyn FileLike + Sync + Send>>,
                     MessageData::MemoryHandle(handle)) => {
 
                     // Append data to file
-                    match file.write().write(0, handle.as_slice::<u8>(length as usize)) {
+                    if let Err((err, _msg)) = match file.write().write(0, handle.as_slice::<u8>(length as usize)) {
                         Ok(written) => {
                             // Return success
                             syscalls::send(&comm_handle,
                                            syscalls::Message::Short(
-                                               message::OK, written as u64, 0));
+                                               message::OK, written as u64, 0))
                         },
                         Err(sys_err) => {
                             // Return error
                             syscalls::send(&comm_handle,
                                            syscalls::Message::Short(
-                                               message::ERROR, sys_err.as_u64(), 0));
+                                               message::ERROR, sys_err.as_u64(), 0))
                         }
+                    } {
+                        // Failed to send reply
+                        println!("[std:handle_file_rw] Reply failed: {}", err);
                     }
                 },
                 syscalls::Message::Short(
@@ -221,12 +227,12 @@ fn handle_file_readwrite(file: Arc<RwLock<dyn FileLike + Sync + Send>>,
                     let f = file.read();
                     let len = cmp::min(f.len(), length as usize);
 
-                    if len == 0 {
+                    if let Err((err, _msg)) = if len == 0 {
                         // No data
                         syscalls::send(&comm_handle,
                                        syscalls::Message::Short(
                                            message::ERROR,
-                                           syscalls::SYSCALL_ERROR_NO_DATA.as_u64(), 0));
+                                           syscalls::SYSCALL_ERROR_NO_DATA.as_u64(), 0))
                     } else {
                         // Allocate memory
                         let (mut mem_handle, _) = malloc(len as u64, 0).unwrap();
@@ -240,11 +246,14 @@ fn handle_file_readwrite(file: Arc<RwLock<dyn FileLike + Sync + Send>>,
                             Err(sys_err) => syscalls::send(&comm_handle,
                                                            syscalls::Message::Short(
                                                                message::ERROR, sys_err.as_u64(), 0))
-                        };
+                        }
+                    } {
+                        // Failed to send reply
+                        println!("[std:handle_file_rw] Reply failed: {}", err);
                     }
                 },
                 msg => {
-                    println!("[handle_file] -> {:?}", msg);
+                    println!("[std:handle_file_rw] unexpected {:?}", msg);
                 }
             }
         });
@@ -262,19 +271,19 @@ fn handle_file_readonly(file: Arc<RwLock<dyn FileLike + Sync + Send>>,
                     message::READ, start, length) => {
 
                     let f = file.read();
-                    let len = f.len();
+                    let len = cmp::min(f.len(), length as usize);
 
-                    if len == 0 {
+                    if let Err((err, _msg)) = if len == 0 {
                         // No data
                         syscalls::send(&comm_handle,
                                        syscalls::Message::Short(
                                            message::ERROR,
-                                           syscalls::SYSCALL_ERROR_NO_DATA.as_u64(), 0));
+                                           syscalls::SYSCALL_ERROR_NO_DATA.as_u64(), 0))
                     } else {
                         // Allocate memory
                         let (mut mem_handle, _) = malloc(len as u64, 0).unwrap();
                         // Read data
-                        match f.read(0, mem_handle.as_mut_slice(len)) {
+                        match f.read(start as usize, mem_handle.as_mut_slice(len)) {
                             Ok(nbytes) => syscalls::send(&comm_handle,
                                                          syscalls::Message::Long(
                                                              message::DATA,
@@ -283,11 +292,14 @@ fn handle_file_readonly(file: Arc<RwLock<dyn FileLike + Sync + Send>>,
                             Err(sys_err) => syscalls::send(&comm_handle,
                                                            syscalls::Message::Short(
                                                                message::ERROR, sys_err.as_u64(), 0))
-                        };
+                        }
+                    } {
+                        // Failed to send reply
+                        println!("[std:handle_file_ro] Reply failed: {}", err);
                     }
                 }
                 msg => {
-                    println!("[handle_file_readonly] -> {:?}", msg);
+                    println!("[std:handle_file_ro] unexpected {:?}", msg);
                 }
             }
         });
@@ -322,15 +334,18 @@ where
 
                     if !readwrite {
                         // Error! Read-only
-                        syscalls::send(&comm_handle,
-                                       syscalls::Message::Short(
-                                           message::ERROR_DENIED, 0, 0));
+                        if let Err((err, _msg)) = syscalls::send(&comm_handle,
+                                                                 syscalls::Message::Short(
+                                                                     message::ERROR_DENIED, 0, 0)) {
+                            // Failed to send reply
+                            println!("[std:handle_directory] Reply failed: {}", err);
+                        }
                         return;
                     }
 
                     // Get the path string
                     let u8_slice = handle.as_slice::<u8>(length as usize);
-                    if let Ok(path) = str::from_utf8(u8_slice) {
+                    if let Err((err, _msg)) = if let Ok(path) = str::from_utf8(u8_slice) {
                         match directory.write().remove_file(path) {
                             Ok(_) => syscalls::send(&comm_handle,
                                            syscalls::Message::Short(
@@ -339,12 +354,15 @@ where
                                 syscalls::send(&comm_handle,
                                                syscalls::Message::Short(
                                                    message::ERROR, sys_err.as_u64(), 0))
-                        };
+                        }
                     } else {
                         // UTF-8 error
                         syscalls::send(&comm_handle,
                                        syscalls::Message::Short(
-                                       message::ERROR_INVALID_UTF8, 0, 0));
+                                       message::ERROR_INVALID_UTF8, 0, 0))
+                    } {
+                        // Failed to send reply
+                        println!("[std:handle_directory] Reply failed: {}", err);
                     }
                 }
                 Message::Long(
@@ -355,29 +373,35 @@ where
 
                     if !readwrite {
                         // Error! Read-only
-                        syscalls::send(&comm_handle,
-                                       syscalls::Message::Short(
-                                           message::ERROR_DENIED, 0, 0));
+                        if let Err((err, _msg)) = syscalls::send(&comm_handle,
+                                                                 syscalls::Message::Short(
+                                                                     message::ERROR_DENIED, 0, 0)) {
+                            // Failed to send reply
+                            println!("[std:handle_directory] Reply failed: {}", err);
+                        }
                         return;
                     }
 
                     // Get the path string
                     let u8_slice = handle.as_slice::<u8>(length as usize);
-                    if let Ok(path) = str::from_utf8(u8_slice) {
+                    if let Err((err, _msg)) = if let Ok(path) = str::from_utf8(u8_slice) {
                         if let Err(sys_err) = directory.write().make_dir(path) {
                             syscalls::send(&comm_handle,
                                            syscalls::Message::Short(
-                                               message::ERROR, sys_err.as_u64(), 0));
+                                               message::ERROR, sys_err.as_u64(), 0))
                         } else {
                             syscalls::send(&comm_handle,
                                            syscalls::Message::Short(
-                                               message::OK, 0, 0));
+                                               message::OK, 0, 0))
                         }
                     } else {
                         // UTF-8 error
                         syscalls::send(&comm_handle,
                                        syscalls::Message::Short(
-                                       message::ERROR_INVALID_UTF8, 0, 0));
+                                       message::ERROR_INVALID_UTF8, 0, 0))
+                    } {
+                        // Failed to send reply
+                        println!("[std:handle_directory] Reply failed: {}", err);
                     }
                 }
                 Message::Long(
@@ -389,7 +413,7 @@ where
 
                     // Get the path string and try to open it
                     let u8_slice = handle.as_slice::<u8>(length as usize);
-                    if let Ok(path) = str::from_utf8(u8_slice) {
+                    if let Err((err, _msg)) = if let Ok(path) = str::from_utf8(u8_slice) {
                         let path = path.trim_start_matches('/');
                         let result = if flags == message::O_READ {
                             // Read-only
@@ -399,9 +423,11 @@ where
                             open(directory.clone(), Path::new(path), flags)
                         } else {
                             // Permission denied
-                            syscalls::send(&comm_handle,
-                                           syscalls::Message::Short(
-                                           message::ERROR_DENIED, 0, 0));
+                            if let Err((err, _msg)) = syscalls::send(&comm_handle,
+                                                                     syscalls::Message::Short(
+                                                                         message::ERROR_DENIED, 0, 0)) {
+                                println!("[std:handle_directory] Reply failed: {}", err);
+                            }
                             return;
                         };
                         match result {
@@ -410,20 +436,23 @@ where
                                 syscalls::send(&comm_handle,
                                                syscalls::Message::Long(
                                                    message::COMM_HANDLE,
-                                                   handle.into(), 0.into()));
+                                                   handle.into(), 0.into()))
                             },
                             Err(sys_err) => {
                                 // Error opening path
                                 syscalls::send(&comm_handle,
                                                syscalls::Message::Short(
-                                                   message::ERROR, sys_err.as_u64(), 0));
+                                                   message::ERROR, sys_err.as_u64(), 0))
                             }
                         }
                     } else {
                         // UTF-8 error
                         syscalls::send(&comm_handle,
                                        syscalls::Message::Short(
-                                       message::ERROR_INVALID_UTF8, 0, 0));
+                                       message::ERROR_INVALID_UTF8, 0, 0))
+                    } {
+                        // Couldn't send reply
+                        println!("[std:handle_directory] Reply failed: {}", err);
                     }
                 }
                 Message::Short(
@@ -433,11 +462,14 @@ where
 
                     // Copy and send as memory handle
                     let mem_handle = syscalls::MemoryHandle::from_u8_slice(&info.as_bytes());
-                    syscalls::send(&comm_handle,
-                                   syscalls::Message::Long(
-                                       message::JSON,
-                                       (info.len() as u64).into(),
-                                       mem_handle.into()));
+                    if let Err((err, _msg)) = syscalls::send(&comm_handle,
+                                                             syscalls::Message::Long(
+                                                                 message::JSON,
+                                                                 (info.len() as u64).into(),
+                                                                 mem_handle.into())) {
+                        // Couldn't send reply
+                        println!("[std:handle_directory] Reply failed: {}", err);
+                    }
                 },
                 message => {
                     // Unhandled message => Call given closure
