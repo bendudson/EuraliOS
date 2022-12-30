@@ -382,9 +382,12 @@ fn _open(path: &str, flags: u64) -> Result<CommHandle, SyscallError> {
                     message::MessageData::CommHandle(handle), _)) => {
                     return Ok(handle);
                 }
-                msg => {
-                    debug_println!("Unexpected rcall reply {:?}", msg);
-                    return Err(SYSCALL_ERROR_NOTFOUND);
+                Ok(_) => {
+                    // Unexpected message type
+                    return Err(SyscallError::new(0));
+                }
+                Err((err, _msg)) => {
+                    return Err(err);
                 }
             }
         }
@@ -652,6 +655,9 @@ pub const SYSCALL_ERROR_DOUBLEFREE: SyscallError = SyscallError(10);
 pub const SYSCALL_ERROR_NOMEMSLOTS: SyscallError = SyscallError(11);
 pub const SYSCALL_ERROR_CLOSED: SyscallError = SyscallError(12);
 pub const SYSCALL_ERROR_EXISTS: SyscallError = SyscallError(13); // Already exists
+pub const SYSCALL_ERROR_NOT_IMPLEMENTED: SyscallError = SyscallError(14);
+pub const SYSCALL_ERROR_NOT_DIR: SyscallError = SyscallError(15);
+pub const SYSCALL_ERROR_NO_DATA: SyscallError = SyscallError(16);
 
 impl fmt::Display for SyscallError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -670,6 +676,9 @@ impl fmt::Display for SyscallError {
                    SYSCALL_ERROR_NOMEMSLOTS => "No memory slots",
                    SYSCALL_ERROR_CLOSED => "Rendezvous closed",
                    SYSCALL_ERROR_EXISTS => "Already exists",
+                   SYSCALL_ERROR_NOT_IMPLEMENTED => "Not implemented",
+                   SYSCALL_ERROR_NOT_DIR => "Not a directory",
+                   SYSCALL_ERROR_NO_DATA => "No data",
                    _ => "Unknown error"
                })
     }

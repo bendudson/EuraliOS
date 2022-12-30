@@ -163,6 +163,7 @@ direction...
 - [[./doc/journal/25-directories.org][25. Directories]] to hierarchically organise files
 - [[./doc/journal/26-multiple-users.org][26. Multiple users]] and login process, using separate virtual file systems
   to control user capabilities
+- [[./doc/journal/27-servers.org][27. Servers]], generalising the RAMdisk server code
 
 ** Notes
 

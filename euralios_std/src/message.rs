@@ -205,6 +205,9 @@ pub fn rcall(
             Err(err_message) => {
                 return Err(err_message);
             }
+            Ok(Message::Short(ERROR, sys_err, rdata3)) => {
+                return Err((SyscallError::new(sys_err), Message::Short(ERROR, sys_err, rdata3)));
+            }
             Ok(Message::Short(rdata1, rdata2, rdata3)) => {
                 if let Some(rd1) = expect_rdata1 {
                     // Filter on first argument

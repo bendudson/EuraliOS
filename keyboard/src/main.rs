@@ -55,10 +55,13 @@ fn main() {
                     }
                 };
                 // Send the character(s) in a short message
-                syscalls::send(&STDOUT,
-                               message::Message::Short(
-                                   message::CHAR,
-                                   chars_be, 0));
+                if let Err((err, _msg)) = syscalls::send(&STDOUT,
+                                                         message::Message::Short(
+                                                             message::CHAR,
+                                                             chars_be, 0)) {
+                    // Failed to send. Probably not much to be done except panic.
+                    panic!("[keyboard] Send: {}", err);
+                }
             }
         }
     }

@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 linked_list_allocator = "0.10.2"
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+spin = "0.5.2"

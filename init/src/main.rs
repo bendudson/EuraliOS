@@ -62,9 +62,12 @@ impl<'a> Console<'a> {
     }
 
     pub fn activate(&self) {
-        syscalls::send(
+        if let Err((err, _msg)) = syscalls::send(
             self.vga,
-            Message::Short(message::WRITE, self.writer_id, 0));
+            Message::Short(message::WRITE, self.writer_id, 0)) {
+            // Failed to send message
+            debug_println!("[init] activate failed: {}", err);
+        }
     }
 }
 
@@ -89,7 +92,7 @@ fn mount(
         VFS::shared()).expect("[init] Couldn't start program");
 
     // Mount in filesystem
-    syscalls::mount(path, input2);
+    syscalls::mount(path, input2).expect("[init] Couldn't mount path");
 }
 
 #[no_mangle]
@@ -240,9 +243,11 @@ fn main() {
                     }
                     ch => {
                         if let Some(input) = &current_console.input {
-                            syscalls::send(input,
-                                           syscalls::Message::Short(
-                                               message::CHAR, ch, 0));
+                            if let Err((err, _msg)) = syscalls::send(input,
+                                                                     syscalls::Message::Short(
+                                                                         message::CHAR, ch, 0)) {
+                                fprintln!(&current_console.output, "[init] console error: {}", err);
+                            }
                         }
                     },
                 }

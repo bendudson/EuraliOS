@@ -53,7 +53,7 @@ impl OpenOptions {
     ///
     /// let file = OpenOptions::new().read(true).open("foo.txt");
     /// ```
-    pub fn read(&mut self, read: bool) -> &mut OpenOptions {
+    pub fn read(&mut self, _read: bool) -> &mut OpenOptions {
         self // Has no effect
     }
 
@@ -194,6 +194,8 @@ pub struct File(CommHandle);
 pub struct FileQuery(Value);
 
 impl File {
+    const MAX_SIZE: u64 = 0xFFFF_FFFF_FFFF_FFFF;
+
     /// Opens a file in write-only mode.
     ///
     /// This function will create a file if it does not exist, and
@@ -287,7 +289,7 @@ impl File {
     pub fn read_to_end(&mut self, buf: &mut Vec<u8>)
                        -> Result<usize, SyscallError> {
         match rcall(&self.0,
-                    message::READ, 0.into(), 0.into(),
+                    message::READ, 0.into(), Self::MAX_SIZE.into(),
                     None) {
             Ok((message::DATA, MessageData::Value(length), MessageData::MemoryHandle(data))) => {
                 let length = length as usize;

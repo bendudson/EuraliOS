@@ -19,14 +19,15 @@ pub mod ffi;
 pub mod fs;
 pub mod io;
 pub mod memory;
-pub mod message;
+pub mod message; // EuraliOS-only
 pub mod net;
 pub mod path;
 pub mod ports;
-pub mod syscalls;
+pub mod syscalls; // EuraliOS-only
 pub mod thread;
 pub mod time;
 pub mod sys;
+pub mod server; // EuraliOS-only
 
 use core::panic::PanicInfo;
 #[panic_handler]

@@ -819,6 +819,7 @@ fn sys_mount(
 
         let mut vfs = thread.vfs(); // An Arc clone of the VFS
         vfs.mount(path_string, rdv);
+        context.rax = 0; // No error (vfs.mount never fails. Probably should)
         process::set_current_thread(thread);
     }
 }
