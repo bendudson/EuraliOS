@@ -1,0 +1,9 @@
+* Keyboard driver program
+
+This program runs in Ring 3 and needs IO permissions to read data from port 0x60.
+It uses the =await_interrupt= EuraliOS syscall to wait for an interrupt to occur;
+reads the scancode from port 0x60; passes the scancode to the [[https://docs.rs/pc-keyboard/latest/pc_keyboard/][pc_keyboard]] crate;
+and then sends the corresponding character (if any) in a message to =STDOUT=.
+
+The =init= program starts this keyboard driver, configuring it so that =keyboard='s
+STDOUT is connected to the =init='s STDIN.

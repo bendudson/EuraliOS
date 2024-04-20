@@ -6,7 +6,7 @@ use linked_list_allocator::LockedHeap;
 static ALLOCATOR: LockedHeap = LockedHeap::empty();
 
 pub fn init(heap_start: usize, heap_size: usize) {
-    unsafe {ALLOCATOR.lock().init(heap_start, heap_size);}
+    unsafe {ALLOCATOR.lock().init(heap_start as *mut u8, heap_size);}
 }
 
 // Allocator error handler

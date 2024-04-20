@@ -5,10 +5,10 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use euralios_std::{fs::{self, File, OpenOptions},
+use euralios_std::{fs::{File, OpenOptions},
                    io,
                    message,
-                   path::{Path, PathBuf},
+                   path::Path,
                    print, println,
                    syscalls::{self, SyscallError, VFS}};
 
@@ -30,7 +30,7 @@ fn exec_path(path: &Path, vfs: VFS) -> Result<(), SyscallError> {
         0, // Permission flags
         exe_input2,
         syscalls::STDOUT.clone(),
-        vfs);
+        vfs)?;
 
     loop {
         // Wait for keyboard input
@@ -95,6 +95,8 @@ fn main() {
             }
         };
 
-        exec_path(Path::new("/ramdisk/bin/shell"), vfs);
+        if let Err(err) = exec_path(Path::new("/ramdisk/bin/shell"), vfs) {
+            println!("Error executing shell: {}", err);
+        }
     }
 }

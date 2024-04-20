@@ -1,0 +1,11 @@
+* Address Resolution Protocol program
+
+This is a program that demonstrates how to send and receive [[https://en.wikipedia.org/wiki/Address_Resolution_Protocol][Address
+Resolution Protocol (ARP)]] packets through a network card (assumed to
+be at =/dev/nic=), to look up hardware (MAC) addresses from IP
+addresses. More details are given in the [[../doc/journal/16-arp.org][journal section 16]].
+
+*Note* This is a simple implementation that is not suitable for actual use:
+It assumes that it's the only process using the network card, for example.
+The the =tcp= program implements a much more complete TCP stack by using
+the smoltcp]] crate.
