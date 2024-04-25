@@ -179,6 +179,9 @@ fn main() {
     if let Ok(mut file) = File::create("/ramdisk/bin/shell") {
         file.write(include_bytes!("../../user/shell"));
     }
+    if let Ok(mut file) = File::create("/ramdisk/bin/edit") {
+        file.write(include_bytes!("../../user/edit"));
+    }
 
     // Create some home directories
     fs::create_dir("/ramdisk/root");
