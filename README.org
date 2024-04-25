@@ -76,15 +76,20 @@ here]] as a git submodule.  Either clone with submodules (with e.g the
   $ git submodule update --init --recursive
 #+end_src
 
-After setting up Rust, Cargo and QEMU (see phil-opp blog), running
+After setting up Rust, Cargo and QEMU (see [[https://os.phil-opp.com/minimal-rust-kernel/][phil-opp blog]]), running
 #+begin_src bash
   $ make run
 #+end_src
 should download dependencies, build everything, and launch qemu.
 
-*Note*: You'll probably need to use the Rust nightly build. EuraliOS was
-originally developed using Rustc =1.61-nightly (6a7055661 2022-02-27)= and
-is known to work with =1.79.0-nightly (7f2fc33da 2024-04-22)=.
+*Notes*
+
+1. You'll probably need to use the Rust nightly build. EuraliOS was
+   originally developed using Rustc =1.61-nightly (6a7055661 2022-02-27)= and
+   is known to work with =1.79.0-nightly (7f2fc33da 2024-04-22)=.
+2. Rust needs to build =core= and =compiler_builtins= libraries for
+   the =x86_64-euralios= target. To do that cargo needs the rust source code,
+   which can be installed by running =rustup component add rust-src=.
 
 ** Documentation
 
