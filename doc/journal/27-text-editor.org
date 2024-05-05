@@ -1,21 +1,20 @@
-* Porting a text editor to EuraliOS
+* A text editor for EuraliOS
 
 EuraliOS really needs a simple text editor, to be able to start
 doing useful things and changing the configuration from within
-the operating system itself. Rather than writing one, we'll try
-porting an existing editor.
+the operating system itself.
 
 Ultimately it would probably be best to support a library like
 [[https://github.com/crossterm-rs/crossterm][Crossterm]] or [[https://github.com/redox-os/termion][Termion]] (used in Redox OS), that many programs
-can use to provide a terminal interface. For now we'll just support
-enough terminal escape sequences to run [[https://github.com/ilai-deutel/kibi][the Kibi text editor]].
+can use to provide a terminal interface. For now we'll write a
+simple editor, as an excuse to learn something about text editor
+data structures.
 
-* Environment
+* Command line arguments
 
-Command line arguments
-=env!= macro for compile-time constants.
+Command-line arguments in Rust are collected by calling
+=std::env::args()= (see the [[https://doc.rust-lang.org/book/ch12-01-accepting-command-line-arguments.html][Rust book]]).
 
-=euralios_std::env=
 #+begin_src rust
 pub struct Args {
 }

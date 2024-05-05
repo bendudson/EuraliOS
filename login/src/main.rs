@@ -30,7 +30,8 @@ fn exec_path(path: &Path, vfs: VFS) -> Result<(), SyscallError> {
         0, // Permission flags
         exe_input2,
         syscalls::STDOUT.clone(),
-        vfs)?;
+        vfs,
+        Vec::new())?;
 
     loop {
         // Wait for keyboard input

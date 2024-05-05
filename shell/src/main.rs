@@ -13,7 +13,7 @@ use euralios_std::{path::{Path, PathBuf},
                    print, println,
                    syscalls::{self, SyscallError, VFS}};
 
-fn exec_path(path: &Path) -> Result<(), SyscallError> {
+fn exec_path(path: &Path, args: Vec<&str>) -> Result<(), SyscallError> {
     // Read binary from file
     let bin = {
         let mut bin: Vec<u8> = Vec::new();
@@ -30,7 +30,8 @@ fn exec_path(path: &Path) -> Result<(), SyscallError> {
         0, // Permission flags
         exe_input2,
         syscalls::STDOUT.clone(),
-        VFS::shared())?;
+        VFS::shared(),
+        args)?;
 
     loop {
         // Wait for keyboard input
@@ -74,7 +75,7 @@ fn help() {
 }
 
 /// List a directory
-fn ls(current_directory: &Path, args: Vec<&str>) {
+fn ls(current_directory: &Path, args: &[&str]) {
     if args.len() > 1 {
         println!("Usage: ls [path]");
         return;
@@ -101,7 +102,7 @@ fn ls(current_directory: &Path, args: Vec<&str>) {
 }
 
 /// Unmount a path
-fn umount(args: Vec<&str>) {
+fn umount(args: &[&str]) {
     if args.len() != 1 {
         println!("Usage: umount <path>");
         return;
@@ -113,7 +114,7 @@ fn umount(args: Vec<&str>) {
 }
 
 /// Delete a file
-fn rm(current_directory: &Path, args: Vec<&str>) {
+fn rm(current_directory: &Path, args: &[&str]) {
     if args.len() != 1 {
         println!("Usage: rm <file>");
         return;
@@ -128,7 +129,7 @@ fn rm(current_directory: &Path, args: Vec<&str>) {
 }
 
 /// Make a directory
-fn mkdir(current_directory: &Path, args: Vec<&str>) {
+fn mkdir(current_directory: &Path, args: &[&str]) {
     if args.len() != 1 {
         println!("Usage: mkdir <directory>");
         return;
@@ -158,25 +159,24 @@ fn main() {
         // Read a line of input
         stdin.read_line(&mut line_buffer);
 
-        let mut line_iter = line_buffer.split_whitespace();
-        if let Some(command) = line_iter.next() {
-            let args: Vec<_> = line_iter.collect();
-            match command {
+        let mut args: Vec<_> = line_buffer.split_whitespace().collect();
+        if let Some(command) = args.first() {
+            match *command {
                 // Built-in shell commands
                 //
                 // Help
                 "help" | "?" => help(),
                 // List directory
-                "ls" => ls(&current_directory, args),
+                "ls" => ls(&current_directory, &args[1..]),
                 // Print working directory
                 "pwd" => println!("{:?}", current_directory),
                 // Change directory
                 "cd" => {
-                    if args.len() != 1 {
+                    if args.len() != 2 {
                         println!("Usage: cd <directory>");
                         continue;
                     }
-                    current_directory.push(args.first().unwrap());
+                    current_directory.push(args[1]);
                     current_directory = fs::canonicalize(current_directory).unwrap();
                 },
                 "mount" => {
@@ -194,14 +194,14 @@ fn main() {
                         }
                     }
                 },
-                "umount" => umount(args),
-                "rm" => rm(&current_directory, args),
-                "mkdir" => mkdir(&current_directory, args),
+                "umount" => umount(&args[1..]),
+                "rm" => rm(&current_directory, &args[1..]),
+                "mkdir" => mkdir(&current_directory, &args[1..]),
                 "exit" => return,
                 cmd => {
                     let path = fs::canonicalize(current_directory.join(cmd)).unwrap();
 
-                    if let Err(err) = exec_path(&path) {
+                    if let Err(err) = exec_path(&path, args) {
                         println!("Couldn't open '{:?}': {}", path, err);
                     }
                 }
