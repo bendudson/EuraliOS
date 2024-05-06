@@ -13,22 +13,78 @@ data structures.
 * Command line arguments
 
 Command-line arguments in Rust are collected by calling
-=std::env::args()= (see the [[https://doc.rust-lang.org/book/ch12-01-accepting-command-line-arguments.html][Rust book]]).
+=std::env::args()= (see the [[https://doc.rust-lang.org/book/ch12-01-accepting-command-line-arguments.html][Rust book]]). In EuraliOS the interface
+will be:
 
 #+begin_src rust
-pub struct Args {
-}
-
-pub fn args() -> Args {
-}
-
-impl Iterator for Args {
-    type Item = String;
-    fn next(&mut self) -> Option<String> {
-        None
-    }
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (0, Some(0))
-    }
-}
+  use euralios_std::env;
+  ...
+  let args: Vec<String> = env::args().collect();
 #+end_src
+
+To make this work the command-line arguments must be passed
+from the parent to the new process. One way would be to send a
+message from the parent to the child process, containing the
+arguments. This would add more syscalls to the process startup,
+and create possible deadlocks for the parent process if the
+child didn't start correctly. Instead we can use the parameter
+string that is already passed to the =exec= syscall.
+
+In [[25-multiple-users.org][Multiple Users]] the parameter string was used to specify the Virtual
+File System (VFS) of the child process. This uses a simple format with
+single character commands (e.g. 'C' copies the parent VFS, '-' removes
+a mount path). We now add another command 'A' that specifies a
+null-terminated string.
+
+The library interface to =exec= is =euralios_std::syscalls::exec=.  We
+add an =args: Vec<&str>= input, push an 'A' character to the parameter
+string followed by these strings separated by =0x03=, the =ETX=
+End-of-text ASCII control character, and terminating with a =0= byte.
+
+In the kernel =sys_exec= function the argument string is copied into a
+=Vec<u8>= on the kernel heap so that it's accessible when the page
+table is changed. It's then passed as a new input to
+=new_user_thread= in =process.rs=.
+
+The argument string is passed to the new process on the stack:
+Stacks grow downwards, to the string is put on the stack above
+the length of string. Then register =rdx= is set to the address
+of the string length. In the =_start= function (that calls the
+user =main()=) we get =args_address= from =rdx= and then store
+the =u8= slice in a =static mut= variable:
+
+#+begin_src rust
+  ARGS_SLICE = unsafe{
+      let length = *(args_address as *mut i32) as usize;
+      slice::from_raw_parts((args_address + 4) as *const u8, length)
+  };
+#+end_src
+
+Once a program starts, this slice is only read by calling an
+internal function =get_args -> &'static [u8]=.
+The user accesses this through the =env::args()= function:
+
+#+begin_src rust
+  pub fn args() -> impl Iterator<Item = String> {
+    // Convert bytes into a vector of owned strings
+    get_args()
+        .split(|&b| b == 0x03)
+        .map(|arg| String::from_utf8_lossy(arg).into_owned())
+  }
+#+end_src
+
+This splits the string on =0x03= chars, as used in the
+=euralios_std::syscalls::exec= function. We can now start
+an editor and get the command-line arguments:
+
+#+begin_src rust
+  use euralios_std::{println, env};
+
+  #[no_mangle]
+  fn main() {
+      for arg in env::args() {
+          println!("Arg: {}", arg);
+      }
+  }
+#+end_src
+
