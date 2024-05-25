@@ -2,7 +2,7 @@
 #![no_main]
 
 use euralios_std::{print, println, env,
-                   syscalls, message, console};
+                   syscalls, message, console, fs};
 extern crate alloc;
 use alloc::{str, vec, vec::Vec};
 
@@ -35,9 +35,30 @@ struct File {
     cursor: Cursor,
 }
 
+impl File {
+    fn save(&self, path: &str) {
+        let mut file = fs::File::create(path).expect("Can't open");
+        for piece in &self.pieces {
+            let bytes = match piece {
+                Piece::Original{start: start,
+                                len: len} => {
+                    &self.original[(*start)..(start + len)]
+                },
+                Piece::Add{start: start,
+                           len: len} => {
+                    &self.add[(*start)..(start + len)]
+                }
+            };
+            file.write(bytes);
+        }
+    }
+}
+
 fn display(file: &File) {
-    // Move cursor to (0,0) then erase below 
-    print!("\x1b[H\x1bJ");
+    // Move cursor to (0,0)
+    print!("\x1b[H");
+    // Note: Since we don't erase everything,
+    // we need to erase the end of each incomplete line
     for (piece_index, piece) in file.pieces.iter().enumerate() {
         let bytes = match piece {
             Piece::Original{start: start,
@@ -52,19 +73,21 @@ fn display(file: &File) {
         };
 
         if piece_index == file.cursor.piece {
-            if file.cursor.pos != bytes.len() {
-                print!("{}\x1b[40m{}\x1b[49m{}\x1b[m",
-                       unsafe{str::from_utf8_unchecked(&bytes[0 .. file.cursor.pos])},
-                       unsafe{str::from_utf8_unchecked(&bytes[file.cursor.pos .. (file.cursor.pos+1)])},
-                       unsafe{str::from_utf8_unchecked(&bytes[(file.cursor.pos + 1)..])},
-                );
-            } else {
-                print!("{}\x1b[40m_\x1b[m", unsafe{str::from_utf8_unchecked(bytes)});
-            }
+            print!("{}\x1b[40m\x1b[37m{}\x1b[m{}\x1b[m",
+                   unsafe{str::from_utf8_unchecked(&bytes[0 .. file.cursor.pos])},
+                   unsafe{str::from_utf8_unchecked(&bytes[file.cursor.pos .. (file.cursor.pos+1)])},
+                   unsafe{str::from_utf8_unchecked(&bytes[(file.cursor.pos + 1)..])},
+            );
         } else {
             print!("{}\x1b[m", unsafe{str::from_utf8_unchecked(bytes)});
         }
     }
+    if file.cursor.piece == file.pieces.len() {
+        // Print the cursor
+        print!("\x1b[40m_\x1b[m");
+    }
+    // Erase anything below
+    print!("\x1b[J");
 }
 
 #[no_mangle]
@@ -82,8 +105,11 @@ fn main() {
                                      len:4},
                      Piece::Add{start:0,
                                 len:3},],
-        cursor: Cursor {piece: 1,
-                        pos: 3} // End of the piece
+        // Note:
+        //  - piece may equal pieces.len() if at the end of the file
+        //  - If piece < pieces.len() then pos is >= 0 and < len
+        cursor: Cursor {piece: 2,
+                        pos: 0} // End of the file
     };
 
     display(&file);
@@ -93,12 +119,8 @@ fn main() {
                 message::CHAR, ch, _)) => {
                 // Received a character
 
-                print!("Received: {}", ch);
-
                 if ch == 8 {
                     // Backspace
-                    print!("Backspace");
-
                     if file.cursor.pos == 0 {
                         // Shorten the piece before this
                         if file.cursor.piece == 0 {
@@ -131,18 +153,72 @@ fn main() {
                                 }
                             },
                         }
-                    } else {
+                    } else if file.cursor.pos == 1 {
+                        // Shorten this piece
                         let piece = file.pieces[file.cursor.piece];
                         match piece {
                             Piece::Original{start: start,
                                             len: len} => {
-                                // Split in two
+                                file.pieces[file.cursor.piece] = Piece::Original{
+                                    start: start + 1,
+                                    len: len - 1
+                                };
                             },
                             Piece::Add{start: start,
                                        len: len} => {
+                                file.pieces[file.cursor.piece] = Piece::Add{
+                                    start: start + 1,
+                                    len: len - 1
+                                };
                             }
                         }
+                        file.cursor.pos = 0;
+                    } else {
+                        // Split in two
+                        let piece = file.pieces[file.cursor.piece];
+                        match piece {
+                            Piece::Original{start: start,
+                                            len: len} => {
+                                // First piece
+                                file.pieces[file.cursor.piece] = Piece::Original{
+                                    start: start,
+                                    len: file.cursor.pos - 1
+                                };
+                                // Second piece
+                                file.pieces.insert(file.cursor.piece + 1, Piece::Original{
+                                    start: start + file.cursor.pos,
+                                    len: len - file.cursor.pos
+                                });
+                            },
+                            Piece::Add{start: start,
+                                       len: len} => {
+                                // First piece
+                                file.pieces[file.cursor.piece] = Piece::Add{
+                                    start: start,
+                                    len: file.cursor.pos - 1
+                                };
+                                // Second piece
+                                file.pieces.insert(file.cursor.piece + 1, Piece::Add{
+                                    start: start + file.cursor.pos,
+                                    len: len - file.cursor.pos
+                                });
+                            }
+                        }
+                        file.cursor.piece += 1; // Second piece
+                        file.cursor.pos = 0;
                     }
+
+                } else if ch == 15 {
+                    // Ctrl-O
+
+                } else if ch == 17 {
+                    // Ctrl-Q   => Quit
+                    return;
+
+                } else if ch == 19 {
+                    // Ctrl-S
+                    file.save("/ramdisk/test.txt");
+
                 } else if ch == 127 {
                     // Delete
                     print!("Delete");
@@ -152,14 +228,13 @@ fn main() {
                     print!("Arrow Down\n");
                 } else if ch == console::sequences::ArrowRight {
                     // Shift to next character
-                    let piece_len = file.pieces[file.cursor.piece].len();
-                    if file.cursor.pos < piece_len {
-                        file.cursor.pos += 1;
+
+                    if file.cursor.piece == file.pieces.len() {
+                        continue;
                     }
-                    if ((file.cursor.pos == piece_len) &&
-                        (file.cursor.piece != file.pieces.len() - 1)) {
+                    file.cursor.pos += 1;
+                    if file.cursor.pos == file.pieces[file.cursor.piece].len() {
                         // Move to the next piece
-                        // Only on the last piece can pos == piece_len
                         file.cursor.piece += 1;
                         file.cursor.pos = 0;
                     }
@@ -182,29 +257,58 @@ fn main() {
                     file.add.resize(old_len + len_u8s, 0);
                     c.encode_utf8(&mut file.add[old_len..]);
 
-                    let piece = file.pieces[file.cursor.piece];
-                    match piece {
-                        Piece::Original{start: start,
-                                        len: len} => {
-                            // Need to create a new Add piece
-                            if file.cursor.pos == 0 {
-                                // Cursor at the start => Insert before
-                                file.pieces.insert(file.cursor.piece, Piece::Add{
-                                    start: old_len,
-                                    len: len_u8s
-                                });
-                                file.cursor.pos = len_u8s;
-                            } else if file.cursor.pos == len {
-                                // End of piece => Insert after
-                                file.cursor.piece += 1;
-                                file.pieces.insert(file.cursor.piece, Piece::Add{
-                                    start: old_len,
-                                    len: len_u8s
-                                });
-                                file.cursor.pos = len_u8s;
-                            } else {
-                                // Middle of piece => Split
+                    if file.cursor.pos == 0 {
+                        // Cursor is at the boundary between pieces
+                        // Append to previous piece or insert new
 
+                        if file.cursor.piece == 0 {
+                            // Insert
+                            file.pieces.insert(file.cursor.piece, Piece::Add{
+                                start: old_len,
+                                len: len_u8s
+                            });
+                            file.cursor.piece = 1;
+
+                        } else {
+                            let piece = file.pieces[file.cursor.piece - 1];
+                            match piece {
+                                Piece::Original{start: start,
+                                                len: len} => {
+                                    // Insert
+                                    file.pieces.insert(file.cursor.piece, Piece::Add{
+                                        start: old_len,
+                                        len: len_u8s
+                                    });
+                                    file.cursor.piece += 1;
+                                },
+                                Piece::Add{start: start,
+                                           len: len} => {
+                                    if start + len == old_len {
+                                        // Piece is at the end of the Add buffer => append
+                                        file.pieces[file.cursor.piece - 1] = Piece::Add{
+                                            start: start,
+                                            len: len + len_u8s
+                                        };
+                                    } else {
+                                        // Piece is not at the end of Add buffer
+                                        // => Create a new Add piece
+                                        file.pieces.insert(file.cursor.piece, Piece::Add{
+                                            start: old_len,
+                                            len: len_u8s
+                                        });
+                                        file.cursor.piece += 1;
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // Cursor in the middle of a piece
+                        // => Split piece in two
+
+                        let piece = file.pieces[file.cursor.piece];
+                        match piece {
+                            Piece::Original{start: start,
+                                            len: len} => {
                                 // Second half of the original piece
                                 file.pieces[file.cursor.piece] = Piece::Original{
                                     start: start + file.cursor.pos,
@@ -221,42 +325,11 @@ fn main() {
                                     len: file.cursor.pos
                                 });
 
-                                file.cursor.piece += 1; // Shift to new piece
-                                file.cursor.pos = len_u8s;
-                            }
-                        },
-                        Piece::Add{start: start,
-                                   len: len} => {
-                            if file.cursor.pos == len {
-                                // Cursor is at the end of this piece
-                                if start + len == old_len {
-                                    // Piece is at the end of the Add buffer
-                                    file.pieces[file.cursor.piece] = Piece::Add{
-                                        start: start,
-                                        len: len + len_u8s
-                                    };
-                                    file.cursor.pos += len_u8s;
-                                } else {
-                                    // Piece is not at the end of Add buffer
-                                    // => Create a new Add piece
-                                    file.cursor.piece = file.pieces.len();
-                                    file.cursor.pos = len_u8s;
-                                    file.pieces.push(Piece::Add{
-                                        start: old_len,
-                                        len: len_u8s
-                                    });
-                                }
-                            } else if file.cursor.pos == 0 {
-                                // Cursor at start of piece => Insert
-                                file.pieces.insert(file.cursor.piece, Piece::Add{
-                                    start: old_len,
-                                    len: len_u8s
-                                });
-                                file.cursor.pos = len_u8s;
-                            } else {
-                                // Cursor in the middle
-                                // => Split piece in two
-
+                                file.cursor.piece += 2; // Shift to 2nd half
+                                file.cursor.pos = 0;
+                            },
+                            Piece::Add{start: start,
+                                       len: len} => {
                                 // Second half of the original piece
                                 file.pieces[file.cursor.piece] = Piece::Add{
                                     start: start + file.cursor.pos,
@@ -273,14 +346,17 @@ fn main() {
                                     len: file.cursor.pos
                                 });
 
-                                file.cursor.piece += 1; // Shift to new piece
-                                file.cursor.pos = len_u8s;
+                                file.cursor.piece += 2; // Shift to 2nd half
+                                file.cursor.pos = 0;
                             }
                         }
                     }
                 }
                 // Update display
                 display(&file);
+                print!("\nReceived: {}", ch);
+                print!("\n\n Number of pieces: {}  cursor piece {} pos {}",
+                       file.pieces.len(), file.cursor.piece, file.cursor.pos);
             },
             _ => {
                 // Ignore
