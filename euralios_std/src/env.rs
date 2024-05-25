@@ -1,19 +1,11 @@
 extern crate alloc;
 use alloc::string::String;
 
-pub struct Args {
-}
+use crate::get_args;
 
-pub fn args() -> Args {
-    Args{}
-}
-
-impl Iterator for Args {
-    type Item = String;
-    fn next(&mut self) -> Option<String> {
-        None
-    }
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (0, Some(0))
-    }
+pub fn args() -> impl Iterator<Item = String> {
+    // Convert bytes into a vector of owned strings
+    get_args()
+        .split(|&b| b == 0x03)
+        .map(|arg| String::from_utf8_lossy(arg).into_owned())
 }

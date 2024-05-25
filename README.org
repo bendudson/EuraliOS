@@ -168,11 +168,12 @@ direction...
 - [[./doc/journal/23-keyboard.org][23. Interrupts and a better keyboard]]: Enabling user programs to receive
   hardware interrupts, and moving the keyboard driver out of the kernel
   into a user-space driver.
-- [[./doc/journal/24-text-editor.org][24. Text editor]]. Porting the [[https://github.com/ilai-deutel/kibi][Kibi]] text editor to run on EuraliOS.
-- [[./doc/journal/25-directories.org][25. Directories]] to hierarchically organise files
-- [[./doc/journal/26-multiple-users.org][26. Multiple users]] and login process, using separate virtual file systems
+- [[./doc/journal/24-directories.org][24. Directories]] to hierarchically organise files
+- [[./doc/journal/25-multiple-users.org][25. Multiple users]] and login process, using separate virtual file systems
   to control user capabilities
-- [[./doc/journal/27-servers.org][27. Servers]], generalising the RAMdisk server code
+- [[./doc/journal/26-servers.org][26. Servers]], generalising the RAMdisk server code
+- [[./doc/journal/27-text-editor.org][27. Text editor]]. Writing a text editor to run on EuraliOS.
+
 
 ** Notes
 

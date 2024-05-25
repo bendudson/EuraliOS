@@ -14,7 +14,8 @@ members = [
     "vga_driver",
     "ramdisk",
     "shell",
+    "edit",
     "login",
-    "init"
+    "init",
 ]
 

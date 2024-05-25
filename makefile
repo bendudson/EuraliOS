@@ -15,7 +15,7 @@ run : user
 # Note: init includes many others so should be last
 user: user/pci user/rtl8139 user/virtio_net user/arp user/tcp user/gopher \
       user/timing_test user/vga_driver user/ramdisk user/shell \
-      user/keyboard user/system_test user/login user/init
+      user/keyboard user/system_test user/login user/edit user/init
 
 user/% : FORCE
 	cargo build --release --bin $*
