@@ -4,7 +4,7 @@
 use euralios_std::{print, println, env,
                    syscalls, message, console, fs};
 extern crate alloc;
-use alloc::{str, vec, vec::Vec};
+use alloc::{str, vec, vec::Vec, string::String};
 
 // Represents a piece of the file
 #[derive(Clone, Copy)]
@@ -36,6 +36,33 @@ struct File {
 }
 
 impl File {
+    /// Open an existing file. If it doesn't exist return an empty File.
+    fn open(path: &str) -> File {
+        if let Ok(mut file) = fs::File::open(path) {
+            let mut buffer = Vec::<u8>::new();
+            file.read_to_end(&mut buffer).expect("Couldn't read file");
+            let len = buffer.len();
+            return File {
+                original: buffer,
+                add: Vec::new(),
+                pieces: vec![Piece::Original{start:0,
+                                             len: len}],
+                cursor: Cursor {
+                    piece: 1,
+                    pos: 0}};
+        } else {
+            // Doesn't exist (probably)
+            return File {
+                original: Vec::new(),
+                add: Vec::new(),
+                pieces: Vec::new(),
+                cursor: Cursor {
+                    piece: 0,
+                    pos: 0}};
+        }
+    }
+
+    /// Save contents of File to given path
     fn save(&self, path: &str) {
         let mut file = fs::File::create(path).expect("Can't open");
         for piece in &self.pieces {
@@ -92,25 +119,15 @@ fn display(file: &File) {
 
 #[no_mangle]
 fn main() {
-    //let args: Vec<String> = env::args().collect();
+    let args: Vec<String> = env::args().collect();
 
-    for arg in env::args() {
-        println!("Arg: {}", arg);
+    if args.len() != 2 {
+        print!("Usage: {} <file>", args[0]);
+        return;
     }
+    let file_path = &args[1];
 
-    let mut file = File{
-        original: b"test".to_vec(),
-        add: b"ing".to_vec(),
-        pieces: vec![Piece::Original{start:0,
-                                     len:4},
-                     Piece::Add{start:0,
-                                len:3},],
-        // Note:
-        //  - piece may equal pieces.len() if at the end of the file
-        //  - If piece < pieces.len() then pos is >= 0 and < len
-        cursor: Cursor {piece: 2,
-                        pos: 0} // End of the file
-    };
+    let mut file = File::open(file_path);
 
     display(&file);
     loop {
@@ -217,7 +234,7 @@ fn main() {
 
                 } else if ch == 19 {
                     // Ctrl-S
-                    file.save("/ramdisk/test.txt");
+                    file.save(file_path);
 
                 } else if ch == 127 {
                     // Delete
@@ -272,8 +289,8 @@ fn main() {
                         } else {
                             let piece = file.pieces[file.cursor.piece - 1];
                             match piece {
-                                Piece::Original{start: start,
-                                                len: len} => {
+                                Piece::Original{start: _start,
+                                                len: _len} => {
                                     // Insert
                                     file.pieces.insert(file.cursor.piece, Piece::Add{
                                         start: old_len,
@@ -364,4 +381,3 @@ fn main() {
         }
     }
 }
-
