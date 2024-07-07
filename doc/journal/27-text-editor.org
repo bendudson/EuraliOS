@@ -1,14 +1,18 @@
 * A text editor for EuraliOS
 
 EuraliOS really needs a simple text editor, to be able to start
-doing useful things and changing the configuration from within
+doing useful things like changing the configuration from within
 the operating system itself.
 
 Ultimately it would probably be best to support a library like
-[[https://github.com/crossterm-rs/crossterm][Crossterm]] or [[https://github.com/redox-os/termion][Termion]] (used in Redox OS), that many programs
+[[https://github.com/crossterm-rs/crossterm][Crossterm]] or [[https://github.com/redox-os/termion][Termion]]  (used in Redox OS), that many programs
 can use to provide a terminal interface. For now we'll write a
 simple editor, as an excuse to learn something about text editor
 data structures.
+
+The first thing our text editor needs is a way to read command line
+arguments. Well, maybe not the first thing, but it's what seemed
+achievable.
 
 * Command line arguments
 
@@ -88,3 +92,41 @@ an editor and get the command-line arguments:
   }
 #+end_src
 
+* Text editor piece table
+
+Now we can tell the editor which file to open, we need to choose how
+to represent the data in memory. Here we're going to implement a [[https://en.wikipedia.org/wiki/Piece_table][Piece
+table]], one of several data structures used in text editors (others
+include [[https://en.wikipedia.org/wiki/Gap_buffer][Gap buffers]] and [[https://en.wikipedia.org/wiki/Rope_(data_structure)][Ropes]]. For small files a simple =Vec= is
+probably sufficient).
+
+Piece tables have three components: The original text, that is read
+and never modified, an "Add buffer" that is added to (never removed)
+as the user types, and the piece table itself. The piece table
+describes the order of pieces of text in the document. Each piece can
+come from either the Original buffer or the Add buffer, and has a
+starting position in that buffer and a length.  When a file is first
+opened there is only one piece, the whole of the Original buffer. As
+text is added or deleted, more pieces are created. When the text is
+displayed on screen or saved to file, the pieces are assembled in the
+order in the piece table.
+
+We can define a Piece as:
+#+begin_src rust
+  #[derive(Clone, Copy)]
+  enum Piece {
+      // Start, len [bytes]
+      Original{start: usize, len: usize},
+      Add{start: usize, len: usize},
+  }
+#+end_src
+
+* Adding a status bar
+
+
+
+* Moving around the file
+
+Basic text editing is now working, but we can't move around by
+going up and down lines or edit files longer than a single
+screen.

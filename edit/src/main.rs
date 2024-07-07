@@ -33,6 +33,8 @@ struct File {
     add: Vec<u8>, // Add buffer
     pieces: Vec<Piece>,
     cursor: Cursor,
+    path: String,
+    changed: bool, // Changed since last save?
 }
 
 impl File {
@@ -49,7 +51,10 @@ impl File {
                                              len: len}],
                 cursor: Cursor {
                     piece: 1,
-                    pos: 0}};
+                    pos: 0},
+
+                path: String::from(path),
+                changed: false};
         } else {
             // Doesn't exist (probably)
             return File {
@@ -58,13 +63,15 @@ impl File {
                 pieces: Vec::new(),
                 cursor: Cursor {
                     piece: 0,
-                    pos: 0}};
+                    pos: 0},
+                path: String::from(path),
+                changed: false};
         }
     }
 
     /// Save contents of File to given path
-    fn save(&self, path: &str) {
-        let mut file = fs::File::create(path).expect("Can't open");
+    fn save(&self) {
+        let mut file = fs::File::create(&self.path).expect("Can't open");
         for piece in &self.pieces {
             let bytes = match piece {
                 Piece::Original{start: start,
@@ -83,7 +90,15 @@ impl File {
 
 fn display(file: &File) {
     // Move cursor to (0,0)
-    print!("\x1b[H");
+    // Set background to blue (44m); foreground white (37m)
+    print!("\x1b[H\x1b[44m\x1b[37m  {}", &file.path);
+    if file.changed {
+        // Foreground red
+        print!(" \x1b[31mchanged\x1b[37m");
+    }
+    // Clear to the right (K), reset colors
+    print!("\x1b[K\x1b[m\n");
+
     // Note: Since we don't erase everything,
     // we need to erase the end of each incomplete line
     for (piece_index, piece) in file.pieces.iter().enumerate() {
@@ -99,6 +114,9 @@ fn display(file: &File) {
             }
         };
 
+        // Note:
+        // - Add on every end of line \x1b[K to clear the remainder of the line
+        // - If cursor position is an EOL, print a ' ' to mark the cursor.
         if piece_index == file.cursor.piece {
             print!("{}\x1b[40m\x1b[37m{}\x1b[m{}\x1b[m",
                    unsafe{str::from_utf8_unchecked(&bytes[0 .. file.cursor.pos])},
@@ -224,17 +242,22 @@ fn main() {
                         file.cursor.piece += 1; // Second piece
                         file.cursor.pos = 0;
                     }
-
+                    // Mark file as changed
+                    file.changed = true;
                 } else if ch == 15 {
                     // Ctrl-O
 
                 } else if ch == 17 {
                     // Ctrl-Q   => Quit
+
+                    // Move cursor to top left, default colors, erase below
+                    print!("\x1b[H\x1b[m\x1b[J");
                     return;
 
                 } else if ch == 19 {
                     // Ctrl-S
-                    file.save(file_path);
+                    file.save();
+                    file.changed = false;
 
                 } else if ch == 127 {
                     // Delete
@@ -368,6 +391,8 @@ fn main() {
                             }
                         }
                     }
+                    // Mark as changed
+                    file.changed = true;
                 }
                 // Update display
                 display(&file);
