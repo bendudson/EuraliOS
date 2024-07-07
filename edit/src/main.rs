@@ -118,12 +118,17 @@ fn display(file: &File) {
         };
 
         let mut print_string = |s: &str| {
-            for line in s.split_inclusive('\n') {
+            let mut it = s.split('\n').peekable();
+            while let Some(line) = it.next() {
                 if line_start {
                     print!("\x1b[31m{:>4}\x1b[m ", line_number);
                     line_number += 1;
                 }
                 print!("{}", line);
+                if it.peek().is_some() {
+                    // Clear to the right then newline
+                    print!("\x1b[K\n");
+                }
                 line_start = true;
             }
             // The next piece won't start on a new line
@@ -135,8 +140,13 @@ fn display(file: &File) {
         // - If cursor position is an EOL, print a ' ' to mark the cursor.
         if piece_index == file.cursor.piece {
             print_string(unsafe{str::from_utf8_unchecked(&bytes[0 .. file.cursor.pos])});
-            print!("\x1b[40m\x1b[37m{}\x1b[m",
-                   unsafe{str::from_utf8_unchecked(&bytes[file.cursor.pos .. (file.cursor.pos+1)])});
+            if bytes[file.cursor.pos] == b'\n' {
+                // Add an extra character to mark the cursor
+                print_string("\x1b[40m\x1b[37m \x1b[m\n");
+            } else {
+                print!("\x1b[40m\x1b[37m{}\x1b[m",
+                       unsafe{str::from_utf8_unchecked(&bytes[file.cursor.pos .. (file.cursor.pos+1)])});
+            }
             print_string(unsafe{str::from_utf8_unchecked(&bytes[(file.cursor.pos + 1)..])});
 
         } else {
