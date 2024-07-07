@@ -99,6 +99,10 @@ fn display(file: &File) {
     // Clear to the right (K), reset colors
     print!("\x1b[K\x1b[m\n");
 
+    // Count lines as they are printed
+    let mut line_number = 1;
+    let mut line_start = true;
+
     // Note: Since we don't erase everything,
     // we need to erase the end of each incomplete line
     for (piece_index, piece) in file.pieces.iter().enumerate() {
@@ -109,22 +113,34 @@ fn display(file: &File) {
             },
             Piece::Add{start: start,
                        len: len} => {
-                print!("\x1b[31m"); // Set foreground to red
                 &file.add[(*start)..(start + len)]
             }
+        };
+
+        let mut print_string = |s: &str| {
+            for line in s.split_inclusive('\n') {
+                if line_start {
+                    print!("\x1b[31m{:>4}\x1b[m ", line_number);
+                    line_number += 1;
+                }
+                print!("{}", line);
+                line_start = true;
+            }
+            // The next piece won't start on a new line
+            line_start = false;
         };
 
         // Note:
         // - Add on every end of line \x1b[K to clear the remainder of the line
         // - If cursor position is an EOL, print a ' ' to mark the cursor.
         if piece_index == file.cursor.piece {
-            print!("{}\x1b[40m\x1b[37m{}\x1b[m{}\x1b[m",
-                   unsafe{str::from_utf8_unchecked(&bytes[0 .. file.cursor.pos])},
-                   unsafe{str::from_utf8_unchecked(&bytes[file.cursor.pos .. (file.cursor.pos+1)])},
-                   unsafe{str::from_utf8_unchecked(&bytes[(file.cursor.pos + 1)..])},
-            );
+            print_string(unsafe{str::from_utf8_unchecked(&bytes[0 .. file.cursor.pos])});
+            print!("\x1b[40m\x1b[37m{}\x1b[m",
+                   unsafe{str::from_utf8_unchecked(&bytes[file.cursor.pos .. (file.cursor.pos+1)])});
+            print_string(unsafe{str::from_utf8_unchecked(&bytes[(file.cursor.pos + 1)..])});
+
         } else {
-            print!("{}\x1b[m", unsafe{str::from_utf8_unchecked(bytes)});
+            print_string(unsafe{str::from_utf8_unchecked(bytes)});
         }
     }
     if file.cursor.piece == file.pieces.len() {
