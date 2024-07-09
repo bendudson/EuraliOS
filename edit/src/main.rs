@@ -1,10 +1,11 @@
 #![no_std]
 #![no_main]
 
-use euralios_std::{print, println, env,
+use euralios_std::{print, env,
                    syscalls, message, console, fs};
 extern crate alloc;
 use alloc::{str, vec, vec::Vec, string::String};
+use core::fmt::{self, Write};
 
 // Represents a piece of the file
 #[derive(Clone, Copy)]
@@ -88,16 +89,37 @@ impl File {
     }
 }
 
+struct Buffer<'a>(&'a mut [u8], usize);
+
+impl Write for Buffer<'_> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        let space_left = self.0.len() - self.1;
+        if space_left > s.len() {
+            self.0[self.1..][..s.len()].copy_from_slice(s.as_bytes());
+            self.1 += s.len();
+            Ok(())
+        } else {
+            Err(fmt::Error)
+        }
+    }
+}
+
 fn display(file: &File) {
+    // Assemble bytes into a buffer.
+    // The buffer is sent to the VGA driver without further copying
+    let buffer_limit = 8000; // Maximum number of bytes
+    let (mut mem_handle, _) = syscalls::malloc(buffer_limit as u64, 0).unwrap();
+    let mut buffer = Buffer(mem_handle.as_mut_slice(buffer_limit), 0);
+
     // Move cursor to (0,0)
     // Set background to blue (44m); foreground white (37m)
-    print!("\x1b[H\x1b[44m\x1b[37m  {}", &file.path);
+    write!(buffer, "\x1b[H\x1b[44m\x1b[37m  {}", &file.path);
     if file.changed {
         // Foreground red
-        print!(" \x1b[31mchanged\x1b[37m");
+        write!(buffer, " \x1b[31mchanged\x1b[37m");
     }
     // Clear to the right (K), reset colors
-    print!("\x1b[K\x1b[m\n");
+    write!(buffer, "\x1b[K\x1b[m\n");
 
     // Count lines as they are printed
     let mut line_number = 1;
@@ -117,17 +139,17 @@ fn display(file: &File) {
             }
         };
 
-        let mut print_string = |s: &str| {
+        let mut write_string = |buffer: &mut Buffer, s: &str| {
             let mut it = s.split('\n').peekable();
             while let Some(line) = it.next() {
                 if line_start {
-                    print!("\x1b[31m{:>4}\x1b[m ", line_number);
+                    write!(buffer, "\x1b[31m{:>4}\x1b[m ", line_number);
                     line_number += 1;
                 }
-                print!("{}", line);
+                write!(buffer, "{}", line);
                 if it.peek().is_some() {
                     // Clear to the right then newline
-                    print!("\x1b[K\n");
+                    write!(buffer, "\x1b[K\n");
                 }
                 line_start = true;
             }
@@ -139,26 +161,33 @@ fn display(file: &File) {
         // - Add on every end of line \x1b[K to clear the remainder of the line
         // - If cursor position is an EOL, print a ' ' to mark the cursor.
         if piece_index == file.cursor.piece {
-            print_string(unsafe{str::from_utf8_unchecked(&bytes[0 .. file.cursor.pos])});
+            write_string(&mut buffer, unsafe{str::from_utf8_unchecked(&bytes[0 .. file.cursor.pos])});
             if bytes[file.cursor.pos] == b'\n' {
                 // Add an extra character to mark the cursor
-                print_string("\x1b[40m\x1b[37m \x1b[m\n");
+                write_string(&mut buffer, "\x1b[40m\x1b[37m \x1b[m\n");
             } else {
-                print!("\x1b[40m\x1b[37m{}\x1b[m",
+                write!(buffer, "\x1b[40m\x1b[37m{}\x1b[m",
                        unsafe{str::from_utf8_unchecked(&bytes[file.cursor.pos .. (file.cursor.pos+1)])});
             }
-            print_string(unsafe{str::from_utf8_unchecked(&bytes[(file.cursor.pos + 1)..])});
+            write_string(&mut buffer, unsafe{str::from_utf8_unchecked(&bytes[(file.cursor.pos + 1)..])});
 
         } else {
-            print_string(unsafe{str::from_utf8_unchecked(bytes)});
+            write_string(&mut buffer, unsafe{str::from_utf8_unchecked(bytes)});
         }
     }
     if file.cursor.piece == file.pieces.len() {
         // Print the cursor
-        print!("\x1b[40m_\x1b[m");
+        write!(buffer, "\x1b[40m_\x1b[m");
     }
     // Erase anything below
-    print!("\x1b[J");
+    write!(buffer, "\x1b[J");
+
+    // Send the buffer
+    _ = message::rcall(&syscalls::STDOUT,
+                       message::WRITE,
+                       (buffer.1 as u64).into(),
+                       mem_handle.into(),
+                       None);
 }
 
 #[no_mangle]
