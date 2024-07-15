@@ -115,11 +115,13 @@ fn display(file: &File) {
     // Set background to blue (44m); foreground white (37m)
     write!(buffer, "\x1b[H\x1b[44m\x1b[37m  {}", &file.path);
     if file.changed {
-        // Foreground red
-        write!(buffer, " \x1b[31mchanged\x1b[37m");
+        // Foreground yellow (33m)
+        write!(buffer, " \x1b[33mchanged\x1b[37m");
+    } else {
+        write!(buffer, "        ");
     }
     // Clear to the right (K), reset colors
-    write!(buffer, "\x1b[K\x1b[m\n");
+    write!(buffer, "                    \x1b[36m^S Save ^Q Quit\x1b[K\x1b[m\n");
 
     // Count lines as they are printed
     let mut line_number = 1;
@@ -344,6 +346,8 @@ fn main() {
                     } else  {
                         file.cursor.pos -= 1;
                     }
+                } else if ch == 27 {
+                    // Escape
                 } else if let Some(c) = char::from_u32(ch as u32) {
                     // Extend the Add buffer and insert character into it
                     let len_u8s = c.len_utf8();

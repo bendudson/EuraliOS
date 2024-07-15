@@ -14,7 +14,7 @@ The first thing our text editor needs is a way to read command line
 arguments. Well, maybe not the first thing, but it's what seemed
 achievable.
 
-* Command line arguments
+** Command line arguments
 
 Command-line arguments in Rust are collected by calling
 =std::env::args()= (see the [[https://doc.rust-lang.org/book/ch12-01-accepting-command-line-arguments.html][Rust book]]). In EuraliOS the interface
@@ -92,7 +92,7 @@ an editor and get the command-line arguments:
   }
 #+end_src
 
-* Text editor piece table
+** Text editor piece table
 
 Now we can tell the editor which file to open, we need to choose how
 to represent the data in memory. Here we're going to implement a [[https://en.wikipedia.org/wiki/Piece_table][Piece
@@ -121,11 +121,70 @@ We can define a Piece as:
   }
 #+end_src
 
-* Adding a status bar
+** Adding a status bar
 
+It would be nice to have a status bar, to show the name of the file
+being edited, and indicate when a file has changed. I like the [[https://en.wikipedia.org/wiki/GNU_nano][nano]]
+interface with its list of shortcut keys at the bottom.
 
+Putting a bar at the bottom of the screen is harder than it seems:
+We would need to know how many rows the screen has. We're using VGA
+mode so we could hard-wire this, but for now we'll just put the
+bar at the top of the screen instead.
 
-* Moving around the file
+** More efficient output
+
+The `display` function is fast enough, but quite inefficient: It makes
+multiple calls to =print=, where one would be enough.  Each call to
+=print= allocates a new memory chunk, copies text into it, and sends
+the chunk in a message to the VGA driver to be processed.
+
+Instead we can eliminate most of this copying, and only send one
+message, by writing everything into one buffer and sending that.
+Allocate some memory:
+#+begin_src rust
+  let buffer_limit = 8000; // Maximum number of bytes
+  let (mut mem_handle, _) = syscalls::malloc(buffer_limit as u64, 0).unwrap();
+#+end_src
+
+Now we need to wrap this memory handle in an object that implements
+the =core::fmt::Write= interface.
+#+begin_src rust
+struct Buffer<'a>(&'a mut [u8], usize);
+#+end_src
+
+#+begin_src rust
+impl Write for Buffer<'_> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        let space_left = self.0.len() - self.1;
+        if space_left > s.len() {
+            self.0[self.1..][..s.len()].copy_from_slice(s.as_bytes());
+            self.1 += s.len();
+            Ok(())
+        } else {
+            Err(fmt::Error)
+        }
+    }
+}
+#+end_src
+We can now replace all =print!(...)= calls with =write!(buffer,...)=.
+Then at the end of the =display= function we send the whole buffer
+to =stdout=:
+#+begin_src rust
+  _ = message::rcall(&syscalls::STDOUT,
+                     message::WRITE,
+                     (buffer.1 as u64).into(),
+                     mem_handle.into(),
+                     None);
+#+end_src
+
+The (very) basic text editor is now working!
+
+#+CAPTION: Editing a small text file
+#+NAME: fig-edit
+[[./img/27-01-basic-editor.png]]
+
+** Editing longer files
 
 Basic text editing is now working, but we can't move around by
 going up and down lines or edit files longer than a single
