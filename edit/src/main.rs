@@ -24,6 +24,8 @@ impl Piece {
     }
 }
 
+// Represents location in a File
+#[derive(Clone, Copy)]
 struct Cursor {
     piece: usize, // Index of the piece the cursor is in
     pos: usize, // Position inside the piece
@@ -85,6 +87,87 @@ impl File {
                 }
             };
             file.write(bytes);
+        }
+    }
+
+    // Return byte at given Cursor
+    fn at(&self, cursor: Cursor) -> u8 {
+        if cursor.piece == self.pieces.len() {
+            return 0;
+        }
+        match self.pieces[cursor.piece] {
+            Piece::Original{start: start, ..} =>
+                self.original[start + cursor.pos],
+            Piece::Add{start: start, ..} =>
+                self.add[start + cursor.pos]
+        }
+    }
+
+    fn next(&self, cursor: Cursor) -> Option<Cursor> {
+        if cursor.piece == self.pieces.len() {
+            return None; // End of the file
+        }
+        if cursor.pos == self.pieces[cursor.piece].len() - 1 {
+            return Some(Cursor{piece: cursor.piece + 1,
+                               pos: 0});
+        }
+        Some(Cursor{piece: cursor.piece,
+                    pos: cursor.pos + 1})
+    }
+
+    fn previous(&self, cursor: Cursor) -> Option<Cursor> {
+        if cursor.pos == 0 {
+            if cursor.piece == 0 {
+                return None; // Start of the file
+            }
+            return Some(Cursor {piece: cursor.piece - 1,
+                                pos: self.pieces[cursor.piece - 1].len() - 1});
+        }
+        Some(Cursor{piece: cursor.piece,
+                    pos: cursor.pos - 1})
+    }
+
+    fn find(&self, start: Cursor, pattern: u8) -> Option<(Cursor, usize)> {
+        // Number of characters traversed
+        let mut ntraversed: usize = 0;
+        let mut cursor = start;
+        loop {
+            if let Some(c) = self.next(cursor) {
+                cursor = c;
+            } else {
+                break None;
+            }
+
+            // Count characters. NOTE: Assumes ASCII
+            ntraversed += 1;
+
+            // Get the byte at this location
+            if self.at(cursor) == pattern {
+                break Some((cursor, ntraversed));
+            }
+        }
+    }
+
+    // Reverse find, starting from the given cursor
+    // If found, returns a Cursor pointing to the location, and the number of characters traversed
+    fn rfind(&self, start: Cursor, pattern: u8) -> Option<(Cursor, usize)> {
+        // Number of characters traversed
+        let mut ntraversed: usize = 0;
+        let mut cursor = start;
+        loop {
+            if let Some(c) = self.previous(cursor) {
+                cursor = c;
+            } else {
+                break None;
+            }
+
+            // Count characters. NOTE: Assumes ASCII
+            ntraversed += 1;
+
+            // Get the byte at this location
+            if self.at(cursor) == pattern {
+                break Some((cursor, ntraversed));
+            }
         }
     }
 }
@@ -319,32 +402,70 @@ fn main() {
                 } else if ch == 127 {
                     // Delete
                     print!("Delete");
+
                 } else if ch == console::sequences::ArrowUp {
-                    print!("Arrow Up\n");
+                    // Scan backwards until finding a `\n`
+                    if let Some((line_end, mut nchars)) = file.rfind(file.cursor, b'\n') {
+                        // Scan backwards again
+                        let mut cursor = if let Some((line_start, _)) = file.rfind(line_end, b'\n') {
+                            line_start
+                        } else {
+                            // Start of file
+                            nchars -= 1;
+                            Cursor{piece: 0, pos: 0}
+                        };
+                        // Now move forward nchars or until end of line
+                        for _ in 0..nchars {
+                            cursor = file.next(cursor).unwrap();
+                            if file.at(cursor) == b'\n' {
+                                break;
+                            }
+                        }
+                        file.cursor = cursor;
+                    }
                 } else if ch == console::sequences::ArrowDown {
-                    print!("Arrow Down\n");
+                    // Scan backwards to find the column number
+                    let mut nchars = 1;
+                    let mut cursor = file.cursor;
+                    while let Some(c) = file.previous(cursor) {
+                        cursor = c;
+                        if file.at(cursor) == b'\n' {
+                            break;
+                        }
+                        nchars += 1;
+                    }
+                    // Find the next end of line (may already be at the end)
+                    if file.at(file.cursor) != b'\n' {
+                        if let Some((newline,_)) = file.find(file.cursor, b'\n') {
+                            file.cursor = newline;
+                        } else {
+                            // Cursor is already on the last line
+                            continue;
+                        }
+                    }
+                    // Now move forward `nchars`
+                    for _ in 0..nchars {
+                        if let Some(cursor) = file.next(file.cursor) {
+                            file.cursor = cursor;
+                            if file.at(cursor) == b'\n' {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+
                 } else if ch == console::sequences::ArrowRight {
                     // Shift to next character
 
-                    if file.cursor.piece == file.pieces.len() {
-                        continue;
-                    }
-                    file.cursor.pos += 1;
-                    if file.cursor.pos == file.pieces[file.cursor.piece].len() {
-                        // Move to the next piece
-                        file.cursor.piece += 1;
-                        file.cursor.pos = 0;
+                    if let Some(cursor) = file.next(file.cursor) {
+                        file.cursor = cursor;
                     }
                 } else if ch == console::sequences::ArrowLeft {
                     // Shift to previous character
-                    if file.cursor.pos == 0 {
-                        // At beginning of piece
-                        if file.cursor.piece > 0 {
-                            file.cursor.piece -= 1;
-                            file.cursor.pos = file.pieces[file.cursor.piece].len() - 1;
-                        }
-                    } else  {
-                        file.cursor.pos -= 1;
+
+                    if let Some(cursor) = file.previous(file.cursor) {
+                        file.cursor = cursor;
                     }
                 } else if ch == 27 {
                     // Escape
