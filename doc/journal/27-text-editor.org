@@ -121,6 +121,72 @@ We can define a Piece as:
   }
 #+end_src
 
+** Moving around in the buffer
+
+The piece table provides a nice way to insert and delete text anywhere,
+but makes moving around, say one line up or down, a little fiddly.
+To keep track of a location in the file we can define a =Cursor=:
+
+#+begin_src rust
+  #[derive(Clone, Copy)]
+struct Cursor {
+    piece: usize, // Index of the piece the cursor is in
+    pos: usize, // Position inside the piece
+}
+#+end_src
+
+Some operations that are needed in many places are moving to the next
+and previous character:
+
+#+begin_src rust
+  impl File {
+      fn next(&self, cursor: Cursor) -> Option<Cursor> {
+          if cursor.piece == self.pieces.len() {
+              return None; // End of the file
+          }
+          if cursor.pos == self.pieces[cursor.piece].len() - 1 {
+              return Some(Cursor{piece: cursor.piece + 1,
+                                 pos: 0});
+          }
+          Some(Cursor{piece: cursor.piece,
+                      pos: cursor.pos + 1})
+      }
+
+      fn previous(&self, cursor: Cursor) -> Option<Cursor> {
+          if cursor.pos == 0 {
+              if cursor.piece == 0 {
+                  return None; // Start of the file
+              }
+              return Some(Cursor {piece: cursor.piece - 1,
+                                  pos: self.pieces[cursor.piece - 1].len() - 1});
+          }
+          Some(Cursor{piece: cursor.piece,
+                      pos: cursor.pos - 1})
+      }
+  }
+#+end_src
+Note that the cursor can be on the character after the end of the file
+(=pieces= equal to =file.pieces.len()=), because it's the location
+where the next character will go. This needs to be handled
+in the function that returns the character at the cursor location:
+
+#+begin_src rust
+  impl File {
+      fn at(&self, cursor: Cursor) -> u8 {
+          if cursor.piece == self.pieces.len() {
+              return 0;
+          }
+          match self.pieces[cursor.piece] {
+              Piece::Original{start: start, ..} =>
+                  self.original[start + cursor.pos],
+              Piece::Add{start: start, ..} =>
+                  self.add[start + cursor.pos]
+          }
+      }
+  }
+#+end_src
+
+
 ** Adding a status bar
 
 It would be nice to have a status bar, to show the name of the file
@@ -189,3 +255,6 @@ The (very) basic text editor is now working!
 Basic text editing is now working, but we can't move around by
 going up and down lines or edit files longer than a single
 screen.
+
+We now need to keep track of the first character on the screen,
+and its line number.

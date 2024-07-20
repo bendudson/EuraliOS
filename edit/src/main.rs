@@ -38,6 +38,10 @@ struct File {
     cursor: Cursor,
     path: String,
     changed: bool, // Changed since last save?
+
+    // Describe where to begin display
+    display_start: Cursor,
+    line_start: usize,
 }
 
 impl File {
@@ -57,7 +61,12 @@ impl File {
                     pos: 0},
 
                 path: String::from(path),
-                changed: false};
+                changed: false,
+
+                display_start: Cursor {
+                    piece: 0,
+                    pos: 0},
+                line_start: 1};
         } else {
             // Doesn't exist (probably)
             return File {
@@ -68,7 +77,12 @@ impl File {
                     piece: 0,
                     pos: 0},
                 path: String::from(path),
-                changed: false};
+                changed: false,
+
+                display_start: Cursor {
+                    piece: 0,
+                    pos: 0},
+                line_start: 1};
         }
     }
 
@@ -207,24 +221,49 @@ fn display(file: &File) {
     write!(buffer, "                    \x1b[36m^S Save ^Q Quit\x1b[K\x1b[m\n");
 
     // Count lines as they are printed
-    let mut line_number = 1;
+    let mut line_number = file.line_start;
+    let final_line = file.line_start + 24;
     let mut line_start = true;
 
     // Note: Since we don't erase everything,
     // we need to erase the end of each incomplete line
     for (piece_index, piece) in file.pieces.iter().enumerate() {
-        let bytes = match piece {
-            Piece::Original{start: start,
-                            len: len} => {
-                &file.original[(*start)..(start + len)]
-            },
-            Piece::Add{start: start,
-                       len: len} => {
-                &file.add[(*start)..(start + len)]
+        if piece_index < file.display_start.piece {
+            continue;
+        }
+
+        let mut cursor_pos = file.cursor.pos;
+
+        let bytes = if piece_index == file.display_start.piece {
+            if cursor_pos < file.display_start.pos {
+                cursor_pos = 0;
+            } else {
+                cursor_pos -= file.display_start.pos;
+            }
+            match piece {
+                Piece::Original{start: start,
+                                len: len} => {
+                    &file.original[(*start + file.display_start.pos)..(start + len)]
+                },
+                Piece::Add{start: start,
+                           len: len} => {
+                    &file.add[(*start + file.display_start.pos)..(start + len)]
+                }
+            }
+        } else {
+            match piece {
+                Piece::Original{start: start,
+                                len: len} => {
+                    &file.original[(*start)..(start + len)]
+                },
+                Piece::Add{start: start,
+                           len: len} => {
+                    &file.add[(*start)..(start + len)]
+                }
             }
         };
 
-        let mut write_string = |buffer: &mut Buffer, s: &str| {
+        let mut write_string = |buffer: &mut Buffer, s: &str| -> bool {
             let mut it = s.split('\n').peekable();
             while let Some(line) = it.next() {
                 if line_start {
@@ -232,32 +271,45 @@ fn display(file: &File) {
                     line_number += 1;
                 }
                 write!(buffer, "{}", line);
+
                 if it.peek().is_some() {
-                    // Clear to the right then newline
-                    write!(buffer, "\x1b[K\n");
+                    // Clear to the right
+                    write!(buffer, "\x1b[K");
+                    if line_number == final_line {
+                        // End of screen
+                        return true;
+                    }
+                    write!(buffer, "\n");
                 }
                 line_start = true;
             }
             // The next piece won't start on a new line
             line_start = false;
+            return false;
         };
 
         // Note:
         // - Add on every end of line \x1b[K to clear the remainder of the line
         // - If cursor position is an EOL, print a ' ' to mark the cursor.
-        if piece_index == file.cursor.piece {
-            write_string(&mut buffer, unsafe{str::from_utf8_unchecked(&bytes[0 .. file.cursor.pos])});
-            if bytes[file.cursor.pos] == b'\n' {
+        if (piece_index == file.cursor.piece) & (cursor_pos >= 0) {
+            if write_string(&mut buffer, unsafe{str::from_utf8_unchecked(&bytes[0 .. cursor_pos])}) {
+                break;
+            }
+            if bytes[cursor_pos] == b'\n' {
                 // Add an extra character to mark the cursor
                 write_string(&mut buffer, "\x1b[40m\x1b[37m \x1b[m\n");
             } else {
                 write!(buffer, "\x1b[40m\x1b[37m{}\x1b[m",
-                       unsafe{str::from_utf8_unchecked(&bytes[file.cursor.pos .. (file.cursor.pos+1)])});
+                       unsafe{str::from_utf8_unchecked(&bytes[cursor_pos .. (cursor_pos+1)])});
             }
-            write_string(&mut buffer, unsafe{str::from_utf8_unchecked(&bytes[(file.cursor.pos + 1)..])});
+            if write_string(&mut buffer, unsafe{str::from_utf8_unchecked(&bytes[(cursor_pos + 1)..])}) {
+                break;
+            }
 
         } else {
-            write_string(&mut buffer, unsafe{str::from_utf8_unchecked(bytes)});
+            if write_string(&mut buffer, unsafe{str::from_utf8_unchecked(bytes)}) {
+                break;
+            }
         }
     }
     if file.cursor.piece == file.pieces.len() {
@@ -457,15 +509,61 @@ fn main() {
 
                 } else if ch == console::sequences::ArrowRight {
                     // Shift to next character
-
                     if let Some(cursor) = file.next(file.cursor) {
                         file.cursor = cursor;
                     }
+
                 } else if ch == console::sequences::ArrowLeft {
                     // Shift to previous character
-
                     if let Some(cursor) = file.previous(file.cursor) {
                         file.cursor = cursor;
+                    }
+
+                } else if ch == console::sequences::PageUp {
+                    if let Some((newline,_)) = file.rfind(file.display_start, b'\n') {
+                        // Beginning of this line. No line number change.
+                        file.display_start = newline;
+                    } else {
+                        continue; // Already at start of file
+                    }
+                    for _ in 0..10 {
+                        file.line_start -= 1;
+                        if let Some((newline,_)) = file.rfind(file.display_start, b'\n') {
+                            file.display_start = newline;
+                        } else {
+                            // Start of the file
+                            file.display_start = Cursor {
+                                piece: 0,
+                                pos: 0
+                            };
+                            break;
+                        }
+                    }
+                    if !((file.display_start.piece == 0) &
+                         (file.display_start.pos == 0)) {
+                        // If not at the start of the file, start
+                        // display on the character after the new line
+                        if let Some(cursor) = file.next(file.display_start) {
+                            file.display_start = cursor;
+                        }
+                    }
+
+                } else if ch == console::sequences::PageDown {
+                    for _ in 0..10 {
+                        // If start is a newline, the first line is empty
+                        if file.at(file.display_start) != b'\n' {
+                            // Find the end of the first line
+                            if let Some((newline,_)) = file.find(file.display_start, b'\n') {
+                                file.display_start = newline;
+                            } else {
+                                continue; // Already at the end
+                            }
+                        }
+                        // Start display on the character after the new line
+                        if let Some(cursor) = file.next(file.display_start) {
+                            file.display_start = cursor;
+                            file.line_start += 1
+                        }
                     }
                 } else if ch == 27 {
                     // Escape
@@ -576,9 +674,6 @@ fn main() {
                 }
                 // Update display
                 display(&file);
-                print!("\nReceived: {}", ch);
-                print!("\n\n Number of pieces: {}  cursor piece {} pos {}",
-                       file.pieces.len(), file.cursor.piece, file.cursor.pos);
             },
             _ => {
                 // Ignore
