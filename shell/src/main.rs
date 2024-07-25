@@ -13,7 +13,7 @@ use euralios_std::{path::{Path, PathBuf},
                    print, println,
                    syscalls::{self, SyscallError, VFS}};
 
-fn exec_path(path: &Path, args: Vec<&str>) -> Result<(), SyscallError> {
+fn exec_path(current_directory: &Path, path: &Path, args: Vec<&str>) -> Result<(), SyscallError> {
     // Read binary from file
     let bin = {
         let mut bin: Vec<u8> = Vec::new();
@@ -25,13 +25,20 @@ fn exec_path(path: &Path, args: Vec<&str>) -> Result<(), SyscallError> {
     // Create a communication handle for the input
     let (exe_input, exe_input2) = syscalls::new_rendezvous()?;
 
+    // Make an environment with the working directory
+    let mut env_string = String::from("PWD=");
+    env_string.push_str(current_directory
+                        .as_os_str().to_str().unwrap());
+
     syscalls::exec(
         &bin,
         0, // Permission flags
         exe_input2,
         syscalls::STDOUT.clone(),
         VFS::shared(),
-        args)?;
+        args,
+        &env_string
+    )?;
 
     loop {
         // Wait for keyboard input
@@ -159,7 +166,7 @@ fn main() {
         // Read a line of input
         stdin.read_line(&mut line_buffer);
 
-        let mut args: Vec<_> = line_buffer.split_whitespace().collect();
+        let args: Vec<_> = line_buffer.split_whitespace().collect();
         if let Some(command) = args.first() {
             match *command {
                 // Built-in shell commands
@@ -201,7 +208,7 @@ fn main() {
                 cmd => {
                     let path = fs::canonicalize(current_directory.join(cmd)).unwrap();
 
-                    if let Err(err) = exec_path(&path, args) {
+                    if let Err(err) = exec_path(&current_directory, &path, args) {
                         println!("Couldn't open '{:?}': {}", path, err);
                     }
                 }

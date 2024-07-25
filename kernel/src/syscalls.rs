@@ -584,7 +584,7 @@ fn sys_exec(
     syscall_id: u64,
     bin: *const u8, // Binary data (ELF format)
     stdio: u64, // The stdin/stdout rendezvous handles
-    param: *const u8) { // String specifying the process VFS and command-line arguments
+    param: *const u8) { // String specifying the process VFS, command-line arguments, and environment variales
 
     let context = unsafe {&mut (*context_ptr)};
 
@@ -635,22 +635,30 @@ fn sys_exec(
 
         // Get the arguments and VFS for this process
 
-        let (mounts, args) = if param_length == 0 {
+        let (mounts, args, envs) = if param_length == 0 {
             // Default is shared VFS and no arguments
-            (thread.vfs(), Vec::<u8>::new())
+            (thread.vfs(), Vec::<u8>::new(), Vec::<u8>::new())
         } else {
             let param_slice = unsafe{slice::from_raw_parts(param, param_length as usize)};
             let mut it = param_slice.iter();
 
-            // Creat a VFS, by default the same as parent
+            // Create a VFS, by default the same as parent
             let mut vfs = thread.vfs();
             let mut args = Vec::<u8>::new();
+            let mut envs = Vec::<u8>::new();
 
             while let Some(ctrl) = it.next() {
                 match ctrl {
                     // Command-line arguments. Terminated with a null character.
                     b'A' => {
                         args = it.by_ref()
+                            .take_while(|x| **x != 0)
+                            .cloned()
+                            .collect();
+                    }
+                    // Environment
+                    b'E' => {
+                        envs = it.by_ref()
                             .take_while(|x| **x != 0)
                             .cloned()
                             .collect();
@@ -732,7 +740,7 @@ fn sys_exec(
                     }
                 }
             }
-            (vfs, args)
+            (vfs, args, envs)
         };
 
         // Copy the ELF data. The data needs to be accessible
@@ -769,7 +777,8 @@ fn sys_exec(
                 ]),
                 io_privileges,
                 mounts,
-                args
+                args,
+                envs
             }) {
             Ok(new_thread) => {
                 let tid = new_thread.tid() as usize;

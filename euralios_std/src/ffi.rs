@@ -144,6 +144,16 @@ impl<T: ?Sized + AsRef<OsStr>> From<&T> for OsString {
     }
 }
 
+impl From<String> for OsString {
+    /// Converts an [`String`] into a [`OsString`]
+    ///
+    /// This conversion does not allocate or copy memory.
+    #[inline]
+    fn from(s: String) -> OsString {
+        OsString { inner: s }
+    }
+}
+
 impl OsStr {
     /// Coerces into an `OsStr` slice.
     ///

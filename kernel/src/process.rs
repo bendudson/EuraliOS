@@ -448,7 +448,8 @@ pub struct Params {
     pub handles: Vec<Arc<RwLock<Rendezvous>>>,
     pub io_privileges: bool,
     pub mounts: vfs::VFS,
-    pub args: Vec<u8> // Command-line arguments
+    pub args: Vec<u8>, // Command-line arguments
+    pub envs: Vec<u8>, // Environment variables
 }
 
 /// Create a new user thread
@@ -602,6 +603,23 @@ pub fn new_user_thread(
                     *(context.rsp as *mut i32) = length as i32;
                 }
                 context.rdx = context.rsp;
+            }
+
+            // Store environment variables on the stack
+            // with start address in RDI
+            // Note: RBX is reserved by LLVM
+            if params.envs.len() == 0 {
+                // No environment
+                context.rdi = 0;
+            } else {
+                let length = params.envs.len();
+                let user_env = unsafe{slice::from_raw_parts_mut((context.rsp - length) as *mut u8, length)};
+                user_env.copy_from_slice(&params.envs);
+                context.rsp -= length + 4;
+                unsafe{
+                    *(context.rsp as *mut i32) = length as i32;
+                }
+                context.rdi = context.rsp;
             }
 
             Ok(new_thread)

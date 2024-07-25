@@ -508,6 +508,7 @@ impl VFS {
 /// * `stdout` - The new process' STDOUT communication handle.
 /// * `vfs`    - Virtual File System specification
 /// * `args`   - Command-line arguments
+/// * `env`    - Environment string
 ///
 /// Returns the thread ID if successful, or a `SyscallError`
 pub fn exec(
@@ -516,24 +517,37 @@ pub fn exec(
     mut stdin: CommHandle,
     mut stdout: CommHandle,
     vfs: VFS,
-    args: Vec<&str>
+    args: Vec<&str>,
+    env: &str,
 ) -> Result<u64, SyscallError> {
 
     let mut params = String::new();
-    let param_str = if args.len() == 0 {
+    let param_str = if (args.len() == 0) & (env.len() == 0) {
         vfs.as_str()
     } else {
         params.push_str(vfs.as_str());
-        params.push('A'); // Start of arguments
+        if args.len() != 0 {
+            params.push('A'); // Start of arguments
 
-        let mut arg_it = args.iter().peekable();
-        while let Some(arg) = arg_it.next() {
-            params.push_str(arg);
-            if arg_it.peek().is_some() {
-                params.push(0x03 as char); // Argument separator
+            let mut arg_it = args.iter().peekable();
+            while let Some(arg) = arg_it.next() {
+                params.push_str(arg);
+                if arg_it.peek().is_some() {
+                    params.push(0x03 as char); // Argument separator
+                }
             }
+            params.push('\0'); // End of arguments
         }
-        params.push('\0'); // End of arguments
+        if env.len() != 0 {
+            if env.contains('\0') {
+                // String must not contain null characters
+                // because it will be null terminated.
+                return Err(SYSCALL_ERROR_PARAM);
+            }
+            params.push('E');
+            params.push_str(env);
+            params.push('\0'); // End of environment
+        }
         &params
     };
 
