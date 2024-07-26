@@ -1,0 +1,32 @@
+* Virtio devices
+
+http://www.dumais.io/index.php?article=aca38a9a2b065b24dfa1dee728062a12
+
+
+[[https://docs.oasis-open.org/virtio/virtio/v1.1/csprd01/virtio-v1.1-csprd01.html][Virtio 1.1 draft specificiation]]
+
+In July 2022 a new version of Virtio was released, [[https://docs.oasis-open.org/virtio/virtio/v1.2/cs01/virtio-v1.2-cs01.pdf][Virtio 1.2]] that
+includes filesystem devices.
+
+
+There is a description of [[https://wiki.osdev.org/Virtio][Virtio on OSdev.org]], but it seems to
+describe the pre-1.0 "legacy" interface.
+
+** Configuration
+
+PCI devices provide a 256-byte configuration space that should be read
+in 32-bit chunks by reading and writing ports.
+
+
+** Network adapter
+
+The QEMU run arguments can be set in =kernel/Cargo.toml=, specifying
+that the Virtio network adapter should be used:
+
+#+begin_src ini
+[package.metadata.bootimage]
+run-args = ["-nic", "user,model=virtio-net-pci"]
+#+end_src
+
+A lot of the initial setup for the Virtio network card is
+very similar to the [[./14-network.org][RTL8139 network card]] 

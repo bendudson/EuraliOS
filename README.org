@@ -174,7 +174,7 @@ direction...
   to control user capabilities
 - [[./doc/journal/26-servers.org][26. Servers]], generalising the RAMdisk server code
 - [[./doc/journal/27-text-editor.org][27. Text editor]]. Writing a text editor to run on EuraliOS.
-
+- [[./doc/journal/27-virtio.org][28. Virtio devices]]
 
 ** Notes
 
