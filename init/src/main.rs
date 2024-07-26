@@ -1,6 +1,8 @@
 #![no_std]
 #![no_main]
 
+extern crate alloc;
+use alloc::vec::Vec;
 use euralios_std::{debug_println,
                    console::sequences,
                    fprintln,
@@ -57,7 +59,9 @@ impl<'a> Console<'a> {
             0,
             input2,
             console.output.clone(),
-            VFS::shared()).expect("[init] Couldn't start user program");
+            VFS::shared(),
+            Vec::new(),
+            "").expect("[init] Couldn't start user program");
         console
     }
 
@@ -89,7 +93,9 @@ fn mount(
         flags,
         input,
         stdout,
-        VFS::shared()).expect("[init] Couldn't start program");
+        VFS::shared(),
+        Vec::new(),
+        "").expect("[init] Couldn't start program");
 
     // Mount in filesystem
     syscalls::mount(path, input2).expect("[init] Couldn't mount path");
@@ -106,7 +112,9 @@ fn main() {
         syscalls::EXEC_PERM_IO, // I/O permissions
         STDIN.clone(),
         STDIN.clone(),
-        VFS::shared()).expect("[init] Couldn't start keyboard program");
+        VFS::shared(),
+        Vec::new(),
+        "").expect("[init] Couldn't start keyboard program");
 
     // Expect a video memory buffer from the kernel
     // Note: Sent to STDOUT channel to avoid conflict with keyboard
@@ -131,7 +139,9 @@ fn main() {
         syscalls::EXEC_PERM_IO, // I/O permissions
         vga_com2.clone(),
         vga_com2,
-        VFS::shared()).expect("[init] Couldn't start VGA program");
+        VFS::shared(),
+        Vec::new(),
+        "").expect("[init] Couldn't start VGA program");
 
     // Send the video memory to the video driver
     if let Err(err) = syscalls::send(&vga_com,
@@ -178,6 +188,9 @@ fn main() {
     }
     if let Ok(mut file) = File::create("/ramdisk/bin/shell") {
         file.write(include_bytes!("../../user/shell"));
+    }
+    if let Ok(mut file) = File::create("/ramdisk/bin/edit") {
+        file.write(include_bytes!("../../user/edit"));
     }
 
     // Create some home directories

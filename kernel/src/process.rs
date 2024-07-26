@@ -12,7 +12,7 @@ use lazy_static::lazy_static;
 extern crate alloc;
 use alloc::{boxed::Box, collections::vec_deque::VecDeque, vec::Vec, sync::Arc};
 
-use core::arch::asm;
+use core::{slice, arch::asm};
 
 use crate::println;
 use crate::interrupts::{Context, INTERRUPT_CONTEXT_SIZE};
@@ -447,7 +447,9 @@ fn with_pagetable<F, R>(page_table_physaddr: u64, func: F) -> R where
 pub struct Params {
     pub handles: Vec<Arc<RwLock<Rendezvous>>>,
     pub io_privileges: bool,
-    pub mounts: vfs::VFS
+    pub mounts: vfs::VFS,
+    pub args: Vec<u8>, // Command-line arguments
+    pub envs: Vec<u8>, // Environment variables
 }
 
 /// Create a new user thread
@@ -539,7 +541,7 @@ pub fn new_user_thread(
                 let kernel_stack_end = (kernel_stack_start + KERNEL_STACK_SIZE).as_u64();
 
                 // Allocate user stack
-                let (user_stack_start, user_stack_end) = memory::allocate_user_stack(user_page_table_ptr)?;
+                let (_user_stack_start, user_stack_end) = memory::allocate_user_stack(user_page_table_ptr)?;
 
                 let mut handles = params.handles;
                 Box::new(Thread {
@@ -584,6 +586,41 @@ pub fn new_user_thread(
             // Modify the context to pass information to the new thread
             context.rax = USER_HEAP_START as usize;
             context.rcx = USER_HEAP_SIZE as usize;
+
+            // Store the arguments on the stack
+            // with start address in RDX
+            // Note: Only one page of the stack is allocated
+            //       so argument string must fit in 4k
+            if params.args.len() == 0 {
+                // No arguments
+                context.rdx = 0;
+            } else {
+                let length = params.args.len();
+                let user_args = unsafe{slice::from_raw_parts_mut((context.rsp - length) as *mut u8, length)};
+                user_args.copy_from_slice(&params.args);
+                context.rsp -= length + 4;
+                unsafe{
+                    *(context.rsp as *mut i32) = length as i32;
+                }
+                context.rdx = context.rsp;
+            }
+
+            // Store environment variables on the stack
+            // with start address in RDI
+            // Note: RBX is reserved by LLVM
+            if params.envs.len() == 0 {
+                // No environment
+                context.rdi = 0;
+            } else {
+                let length = params.envs.len();
+                let user_env = unsafe{slice::from_raw_parts_mut((context.rsp - length) as *mut u8, length)};
+                user_env.copy_from_slice(&params.envs);
+                context.rsp -= length + 4;
+                unsafe{
+                    *(context.rsp as *mut i32) = length as i32;
+                }
+                context.rdi = context.rsp;
+            }
 
             Ok(new_thread)
         });

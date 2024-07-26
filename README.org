@@ -54,13 +54,14 @@ much, but it can do it all at the same time.
   - [X] Virtual consoles and VGA text output using the [[https://crates.io/crates/vga][vga crate]]
   - [X] RTL8139 network card driver
   - [X] TCP network stack using [[https://docs.rs/smoltcp/latest/smoltcp/][smoltcp]] in user space, with DHCP and DNS
+  - [ ] Virtio network driver
 
 - User programs
   - [X] Login process and multiple users
   - [X] A basic shell
   - [X] A simple [[https://en.wikipedia.org/wiki/Gopher_(protocol)][Gopher]] browser
   - [X] A RAM disk for temporary files
-  - [ ] Port of the [[https://github.com/ilai-deutel/kibi][Kibi text editor]]
+  - [X] A text editor
   - [ ] Virtio 9P to access host filesystems
 
 There is no disk driver yet, so user programs are compiled and then
@@ -76,11 +77,20 @@ here]] as a git submodule.  Either clone with submodules (with e.g the
   $ git submodule update --init --recursive
 #+end_src
 
-After setting up Rust, Cargo and QEMU (see phil-opp blog), running
+After setting up Rust, Cargo and QEMU (see [[https://os.phil-opp.com/minimal-rust-kernel/][phil-opp blog]]), running
 #+begin_src bash
   $ make run
 #+end_src
 should download dependencies, build everything, and launch qemu.
+
+*Notes*
+
+1. You'll probably need to use the Rust nightly build. EuraliOS was
+   originally developed using Rustc =1.61-nightly (6a7055661 2022-02-27)= and
+   is known to work with =1.79.0-nightly (7f2fc33da 2024-04-22)=.
+2. Rust needs to build =core= and =compiler_builtins= libraries for
+   the =x86_64-euralios= target. To do that cargo needs the rust source code,
+   which can be installed by running =rustup component add rust-src=.
 
 ** Documentation
 
@@ -159,11 +169,11 @@ direction...
 - [[./doc/journal/23-keyboard.org][23. Interrupts and a better keyboard]]: Enabling user programs to receive
   hardware interrupts, and moving the keyboard driver out of the kernel
   into a user-space driver.
-- [[./doc/journal/24-text-editor.org][24. Text editor]]. Porting the [[https://github.com/ilai-deutel/kibi][Kibi]] text editor to run on EuraliOS.
-- [[./doc/journal/25-directories.org][25. Directories]] to hierarchically organise files
-- [[./doc/journal/26-multiple-users.org][26. Multiple users]] and login process, using separate virtual file systems
+- [[./doc/journal/24-directories.org][24. Directories]] to hierarchically organise files
+- [[./doc/journal/25-multiple-users.org][25. Multiple users]] and login process, using separate virtual file systems
   to control user capabilities
-- [[./doc/journal/27-servers.org][27. Servers]], generalising the RAMdisk server code
+- [[./doc/journal/26-servers.org][26. Servers]], generalising the RAMdisk server code
+- [[./doc/journal/27-text-editor.org][27. Text editor]]. Writing a text editor to run on EuraliOS.
 - [[./doc/journal/27-virtio.org][28. Virtio devices]]
 
 ** Notes
