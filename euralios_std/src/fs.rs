@@ -11,7 +11,8 @@ use serde_json::Value;
 use crate::{path::{Path, PathBuf, Component},
             println,
             syscalls::{self, CommHandle, SyscallError, MemoryHandle},
-            message::{self, rcall, Message, MessageData}};
+            message::{self, rcall, Message, MessageData},
+            env};
 
 #[derive(Clone, Debug)]
 pub struct OpenOptions {
@@ -172,7 +173,15 @@ impl OpenOptions {
             if self.write || self.append { message::O_WRITE } else { 0 } +
             if self.create { message::O_CREATE } else { 0 } +
             if self.truncate { message::O_TRUNCATE } else { 0 };
-        let handle = syscalls::open(path.as_os_str(), flags)?;
+
+        let pwd_or_err = env::current_dir();
+        let handle = if path.is_relative() & pwd_or_err.is_ok() {
+            let mut abspath = pwd_or_err.unwrap();
+            abspath.push(path);
+            syscalls::open(abspath.as_os_str(), flags)?
+        } else {
+            syscalls::open(path.as_os_str(), flags)?
+        };
         Ok(File(handle))
     }
 }
@@ -201,12 +210,26 @@ impl File {
     /// This function will create a file if it does not exist, and
     /// will truncate it if it does.
     pub fn create<P: AsRef<Path>>(path: P) -> Result<File, SyscallError> {
-        let handle = syscalls::open(path.as_ref().as_os_str(), message::O_WRITE + message::O_CREATE + message::O_TRUNCATE)?;
+        let pwd_or_err = env::current_dir();
+        let handle = if path.as_ref().is_relative() & pwd_or_err.is_ok() {
+            let mut abspath = pwd_or_err.unwrap();
+            abspath.push(path.as_ref());
+            syscalls::open(abspath.as_os_str(), message::O_WRITE + message::O_CREATE + message::O_TRUNCATE)?
+        } else {
+            syscalls::open(path.as_ref().as_os_str(), message::O_WRITE + message::O_CREATE + message::O_TRUNCATE)?
+        };
         Ok(File(handle))
     }
 
     pub fn open<P: AsRef<Path>>(path: P) -> Result<File, SyscallError> {
-        let handle = syscalls::open(path.as_ref().as_os_str(), message::O_READ)?;
+        let pwd_or_err = env::current_dir();
+        let handle = if path.as_ref().is_relative() & pwd_or_err.is_ok() {
+            let mut abspath = pwd_or_err.unwrap();
+            abspath.push(path.as_ref());
+            syscalls::open(abspath.as_os_str(), message::O_READ)?
+        } else {
+            syscalls::open(path.as_ref().as_os_str(), message::O_READ)?
+        };
         Ok(File(handle))
     }
 

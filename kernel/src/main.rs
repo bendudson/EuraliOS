@@ -38,7 +38,9 @@ fn kernel_thread_main() {
                 init_screen.clone()
             ]),
             io_privileges: true,
-            mounts: vfs::VFS::new() // Create a Virtual File System
+            mounts: vfs::VFS::new(), // Create a Virtual File System
+            args: Vec::new(),
+            envs: Vec::new(),
         }).unwrap();
 
     // Allocate a memory chunk mapping video memory

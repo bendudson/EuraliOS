@@ -584,7 +584,7 @@ fn sys_exec(
     syscall_id: u64,
     bin: *const u8, // Binary data (ELF format)
     stdio: u64, // The stdin/stdout rendezvous handles
-    param: *const u8) { // String specifying the process VFS
+    param: *const u8) { // String specifying the process VFS, command-line arguments, and environment variales
 
     let context = unsafe {&mut (*context_ptr)};
 
@@ -633,32 +633,41 @@ fn sys_exec(
         let io_privileges = (flags & EXEC_PERM_IO == EXEC_PERM_IO) &&
             ((context.rflags & 0x3000) == 0x3000);
 
-        // Get the VFS for this process
-        // This will be set from the param string
-        // For now the same as parent
+        // Get the arguments and VFS for this process
 
-        let mounts = if param_length == 0 {
-            thread.vfs() // Default is shared VFS
+        let (mounts, args, envs) = if param_length == 0 {
+            // Default is shared VFS and no arguments
+            (thread.vfs(), Vec::<u8>::new(), Vec::<u8>::new())
         } else {
             let param_slice = unsafe{slice::from_raw_parts(param, param_length as usize)};
+            let mut it = param_slice.iter();
 
-            // First byte determines the VFS to start with
-            let mut vfs = match param_slice[0] {
-                b'S' => thread.vfs(),
-                b'C' => thread.vfs().copy(),
-                b'N' => vfs::VFS::new(),
-                _ => {
-                    thread.return_error(SYSCALL_ERROR_PARAM);
-                    process::set_current_thread(thread);
-                    return;
-                }
-            };
+            // Create a VFS, by default the same as parent
+            let mut vfs = thread.vfs();
+            let mut args = Vec::<u8>::new();
+            let mut envs = Vec::<u8>::new();
 
-            let mut it = param_slice[1..].iter();
-
-            // Further arguments add or remove paths
             while let Some(ctrl) = it.next() {
                 match ctrl {
+                    // Command-line arguments. Terminated with a null character.
+                    b'A' => {
+                        args = it.by_ref()
+                            .take_while(|x| **x != 0)
+                            .cloned()
+                            .collect();
+                    }
+                    // Environment
+                    b'E' => {
+                        envs = it.by_ref()
+                            .take_while(|x| **x != 0)
+                            .cloned()
+                            .collect();
+                    }
+                    // These determine the VFS to start with
+                    b'S' => {vfs = thread.vfs();}
+                    b'C' => {vfs = thread.vfs().copy();}
+                    b'N' => {vfs = vfs::VFS::new()}
+                    // Further arguments add or remove paths
                     b'-' => {
                         // Remove a mount path, ending in ':'
 
@@ -731,7 +740,7 @@ fn sys_exec(
                     }
                 }
             }
-            vfs
+            (vfs, args, envs)
         };
 
         // Copy the ELF data. The data needs to be accessible
@@ -767,7 +776,9 @@ fn sys_exec(
                     stdin, stdout
                 ]),
                 io_privileges,
-                mounts
+                mounts,
+                args,
+                envs
             }) {
             Ok(new_thread) => {
                 let tid = new_thread.tid() as usize;

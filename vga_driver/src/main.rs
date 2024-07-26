@@ -310,14 +310,18 @@ impl<'a, S: Screen + TextWriter> Writer<'a, S> {
                                                 }
                                             }
                                             "K" | "0K" => { // Clear right of cursor
+
+                                                let blank = ScreenCharacter::new(
+                                                    b' ', self.color);
+
                                                 for col in self.column..S::WIDTH {
-                                                    self.buffer[self.row * S::WIDTH + col] = self.blank;
+                                                    self.buffer[self.row * S::WIDTH + col] = blank;
                                                 }
                                                 if let Some((_, buffer)) = lock_buffer {
                                                     for col in self.column..S::WIDTH {
                                                         unsafe {
                                                             buffer.add(self.row * S::WIDTH + col)
-                                                                .write_volatile(self.blank);
+                                                                .write_volatile(blank);
                                                         }
                                                     }
                                                 }
