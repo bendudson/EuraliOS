@@ -453,7 +453,6 @@ fn main() {
 
                 } else if ch == 127 {
                     // Delete
-                    print!("Delete");
 
                 } else if ch == console::sequences::ArrowUp {
                     // Scan backwards until finding a `\n`

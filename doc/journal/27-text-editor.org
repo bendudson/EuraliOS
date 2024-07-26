@@ -376,17 +376,112 @@ in the function that returns the character at the cursor location:
   }
 #+end_src
 
+With the =next= and =previous= methods we can move around the file
+character by character, e.g. an =ArrowRight= character can be handled
+with:
+
+#+begin_src rust
+  } else if ch == console::sequences::ArrowRight {
+      // Shift to next character
+      if let Some(cursor) = file.next(file.cursor) {
+          file.cursor = cursor;
+      }
+#+end_src
+
+Moving up and down lines requires a bit more work: We need to know
+which column the cursor is on, and find which character is at the
+corresponding column on the line above or below. To implement this
+it is useful to have =File::find= and =File::rfind= methods e.g.
+
+#+begin_src rust
+  // Reverse find, starting from the given cursor
+  // If found, returns a Cursor pointing to the location, and the number of characters traversed
+  fn rfind(&self, start: Cursor, pattern: u8) -> Option<(Cursor, usize)> {
+      // Number of characters traversed
+      let mut ntraversed: usize = 0;
+      let mut cursor = start;
+      loop {
+          if let Some(c) = self.previous(cursor) {
+              cursor = c;
+          } else {
+              break None;
+          }
+
+          // Count characters. NOTE: Assumes ASCII
+          ntraversed += 1;
+
+          // Get the byte at this location
+          if self.at(cursor) == pattern {
+              break Some((cursor, ntraversed));
+          }
+      }
+  }
+#+end_src
+
+With this we can handle =ArrowUp= characters by counting backwards to the beginning
+of the line, then finding the start of the previous line, and counting forwards to
+find the right column:
+
+#+begin_src rust
+  } else if ch == console::sequences::ArrowUp {
+      // Scan backwards until finding a `\n`
+      if let Some((line_end, mut nchars)) = file.rfind(file.cursor, b'\n') {
+          // Scan backwards again
+          let mut cursor = if let Some((line_start, _)) = file.rfind(line_end, b'\n') {
+              line_start
+          } else {
+              // Start of file
+              nchars -= 1;
+              Cursor{piece: 0, pos: 0}
+          };
+          // Now move forward nchars or until end of line
+          for _ in 0..nchars {
+              cursor = file.next(cursor).unwrap();
+              if file.at(cursor) == b'\n' {
+                  break;
+              }
+          }
+          file.cursor = cursor;
+      }
+#+end_src
+
+A nice feature to add would be to keep track of the line number over
+repeated =ArrowUp= and =ArrowDown= characters, so that the column
+of the original line is kept, even if the cursor goes through
+lines with fewer characters.
 
 ** Adding a status bar
 
-It would be nice to have a status bar, to show the name of the file
-being edited, and indicate when a file has changed. I like the [[https://en.wikipedia.org/wiki/GNU_nano][nano]]
-interface with its list of shortcut keys at the bottom.
+A status bar takes up one of the 25 lines of text, but is useful to
+show the name of the file being edited, and indicate when a file has
+changed. I like the [[https://en.wikipedia.org/wiki/GNU_nano][nano]] interface with its list of shortcut keys at
+the bottom. At least it's clear how to exit the editor.
 
-Putting a bar at the bottom of the screen is harder than it seems:
-We would need to know how many rows the screen has. We're using VGA
-mode so we could hard-wire this, but for now we'll just put the
-bar at the top of the screen instead.
+Putting a bar at the bottom of the screen is harder than it seems: We
+would need to know how many rows the screen has. We're using VGA mode
+so we could hard-wire this, but for now we'll just put the bar at the
+top of the screen instead. [Note: A little lower down we'll have to
+hard-wire the number of lines anyway, to know when to stop printing a
+page. By then the bar at the top had grown on me].
+
+The code below creates a top line with a blue background. The file
+path is displayed on the left, followed by an indicator of whether the
+file has changed since the last save (in yellow). To the right we
+print the shortcuts for Save and Quit in light blue: It's nice to tell
+new users how to get out of the program.
+#+begin_src rust
+  // Move cursor to (0,0)
+  // Set background to blue (44m); foreground white (37m)
+  print!("\x1b[H\x1b[44m\x1b[37m  {}", &file.path);
+  if file.changed {
+      // Foreground yellow (33m)
+      print!(" \x1b[33mchanged\x1b[37m");
+  } else {
+      print!("        ");
+  }
+  // Clear to the right (K), reset colors
+  print!("                    \x1b[36m^S Save ^Q Quit\x1b[K\x1b[m\n");
+#+end_src
 
 ** More efficient output
 
@@ -429,8 +524,8 @@ to =stdout=:
 #+begin_src rust
   _ = message::rcall(&syscalls::STDOUT,
                      message::WRITE,
-                     (buffer.1 as u64).into(),
-                     mem_handle.into(),
+                     (buffer.1 as u64).into(), // Length
+                     mem_handle.into(), // Memory
                      None);
 #+end_src
 
@@ -449,6 +544,79 @@ screen.
 We now need to keep track of the first character on the screen, and
 its line number. The fiddly part of this (I found) was ensuring that
 the line number and character index stay in sync as the page is moved
-up and down.
+up and down:
 
+#+begin_src rust
+  // Describe where to begin display
+  display_start: Cursor,
+  line_start: usize,
+#+end_src
+
+To keep track of the location in the piece buffer we use the same
+=Cursor= struct as for the editing cursor, and a =usize= for the
+first line number. In the =display= function we skip pieces
+before the =display_start= piece, and handle the case where
+the display start is inside a piece:
+
+#+begin_src rust
+  for (piece_index, piece) in file.pieces.iter().enumerate() {
+      if piece_index < file.display_start.piece {
+          continue;
+      }
+
+      let mut cursor_pos = file.cursor.pos;
+
+      let bytes = if piece_index == file.display_start.piece {
+          if cursor_pos < file.display_start.pos {
+              cursor_pos = 0;
+          } else {
+              cursor_pos -= file.display_start.pos;
+          }
+#+end_src
+
+Moving the page up and down is complicated because we want to start
+the page on the character after the new line ('\n'). If a line is
+empty, however, then the next character is also a new line.  The way
+that seemed to work was to first figure out how to move one line, and
+then repeat it ten times:
+
+#+begin_src rust
+  } else if ch == console::sequences::PageDown {
+      for _ in 0..10 {
+          // If start is a newline, the first line is empty
+          if file.at(file.display_start) != b'\n' {
+              // Find the end of the first line
+              if let Some((newline,_)) = file.find(file.display_start, b'\n') {
+                  file.display_start = newline;
+              } else {
+                  continue; // Already at the end
+              }
+          }
+          // Start display on the character after the new line
+          if let Some(cursor) = file.next(file.display_start) {
+              file.display_start = cursor;
+              file.line_start += 1
+          }
+      }
+#+end_src
+
+** Still to do
+
+There are many things still to be done to make this editor more
+usable. In no particular order:
+
+- Handle UTF8 characters. The =next=, =previous=, =find= and =rfind=
+  routines move around the text buffer in bytes, rather than
+  characters. EuraliOS currently can't display (or enter) non-ASCII
+  characters so this is hard to test for now.
+- Handle the delete key
+- Keep cursor column number across multiple =ArrowUp= and =ArrowDown= characters.
+- Ensure that the editing cursor is always on screen: Currently the
+  page up/down characters don't move the cursor, and moving the cursor
+  outside the display doesn't change the display. Editing while the
+  cursor is before the display start can cause a panic because it
+  changes the piece count.
+- Add an Undo feature. This can be done by tracking changes to the piece table,
+  or by pushing inverse operations into a stack.
+- Add search, syntax highlighting, and other creature comforts.
 
