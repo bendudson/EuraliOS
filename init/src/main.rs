@@ -192,9 +192,6 @@ fn main() {
     if let Ok(mut file) = File::create("/ramdisk/bin/edit") {
         file.write(include_bytes!("../../user/edit"));
     }
-    if let Ok(mut file) = File::create("/ramdisk/bin/cc") {
-        file.write(include_bytes!("../../user/cc"));
-    }
 
     // Create some home directories
     fs::create_dir("/ramdisk/root");

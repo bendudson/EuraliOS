@@ -1,0 +1,21 @@
+* Text editor
+
+User program to edit plain ASCII text files.
+
+** How to use
+
+Running the =/bin/edit filename= will open or create the file
+specified in the first argument.
+
+#+CAPTION: Text editor with line numbers
+#+NAME: fig-edit
+[[../doc/journal/img/27-01-basic-editor.png]]
+
+=Ctrl-S= saves the file, and =Ctrl-Q= quits the program.  Arrow keys
+move the editing cursor, and =PgUp= / =PgDn= move the page up and
+down.
+
+** How does it work
+
+Uses a [[https://en.wikipedia.org/wiki/Piece_table][Piece table]] to manage text changes.  See [[../doc/journal/27-text-editor.org][Journal section 27]] for
+some details.

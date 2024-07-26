@@ -54,13 +54,14 @@ much, but it can do it all at the same time.
   - [X] Virtual consoles and VGA text output using the [[https://crates.io/crates/vga][vga crate]]
   - [X] RTL8139 network card driver
   - [X] TCP network stack using [[https://docs.rs/smoltcp/latest/smoltcp/][smoltcp]] in user space, with DHCP and DNS
+  - [ ] Virtio network driver
 
 - User programs
   - [X] Login process and multiple users
   - [X] A basic shell
   - [X] A simple [[https://en.wikipedia.org/wiki/Gopher_(protocol)][Gopher]] browser
   - [X] A RAM disk for temporary files
-  - [ ] Port of the [[https://github.com/ilai-deutel/kibi][Kibi text editor]]
+  - [X] A text editor
   - [ ] Virtio 9P to access host filesystems
 
 There is no disk driver yet, so user programs are compiled and then
